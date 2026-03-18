@@ -10,7 +10,7 @@ describe('ChannelRegistry', () => {
   });
 
   it('registers and retrieves an adapter factory', async () => {
-    const { ChannelRegistry } = await import('./registry.js');
+    const { ChannelRegistry } = await import('@src/channels/registry.js');
     const registry = new ChannelRegistry();
     const factory = () => ({ init: vi.fn(), start: vi.fn(), stop: vi.fn(), send: vi.fn(), status: vi.fn() } as any);
     registry.register('test', factory);
@@ -18,20 +18,20 @@ describe('ChannelRegistry', () => {
   });
 
   it('unregistered type returns undefined', async () => {
-    const { ChannelRegistry } = await import('./registry.js');
+    const { ChannelRegistry } = await import('@src/channels/registry.js');
     const registry = new ChannelRegistry();
     expect(registry.get('telegram')).toBeUndefined();
   });
 
   it('built-in adapters available after import via registerChannel', async () => {
-    const { globalRegistry, registerChannel } = await import('./registry.js');
+    const { globalRegistry, registerChannel } = await import('@src/channels/registry.js');
     const factory = () => ({} as any);
     registerChannel('test-builtin', factory);
     expect(globalRegistry.get('test-builtin')).toBeDefined();
   });
 
   it('initChannels starts only enabled adapters', async () => {
-    const { ChannelRegistry } = await import('./registry.js');
+    const { ChannelRegistry } = await import('@src/channels/registry.js');
     const registry = new ChannelRegistry();
 
     const startA = vi.fn().mockResolvedValue(undefined);
@@ -42,7 +42,7 @@ describe('ChannelRegistry', () => {
     registry.register('ch-a', () => ({ init: initA, start: startA, stop: vi.fn(), send: vi.fn(), status: () => 'disconnected' } as any));
     registry.register('ch-b', () => ({ init: initB, start: startB, stop: vi.fn(), send: vi.fn(), status: () => 'disconnected' } as any));
 
-    const { MessageBus } = await import('./interface.js');
+    const { MessageBus } = await import('@src/channels/interface.js');
     const bus = new MessageBus();
 
     const config = {
@@ -61,14 +61,14 @@ describe('ChannelRegistry', () => {
   });
 
   it('load error for custom adapter does not crash — other channels start', async () => {
-    const { ChannelRegistry } = await import('./registry.js');
+    const { ChannelRegistry } = await import('@src/channels/registry.js');
     const registry = new ChannelRegistry();
 
     const startGood = vi.fn().mockResolvedValue(undefined);
     const initGood = vi.fn().mockResolvedValue(undefined);
     registry.register('good', () => ({ init: initGood, start: startGood, stop: vi.fn(), send: vi.fn(), status: () => 'disconnected' } as any));
 
-    const { MessageBus } = await import('./interface.js');
+    const { MessageBus } = await import('@src/channels/interface.js');
     const bus = new MessageBus();
 
     const config = {
@@ -86,12 +86,12 @@ describe('ChannelRegistry', () => {
   });
 
   it('initChannels returns map of running adapters', async () => {
-    const { ChannelRegistry } = await import('./registry.js');
+    const { ChannelRegistry } = await import('@src/channels/registry.js');
     const registry = new ChannelRegistry();
 
     registry.register('ch-x', () => ({ init: vi.fn().mockResolvedValue(undefined), start: vi.fn().mockResolvedValue(undefined), stop: vi.fn(), send: vi.fn(), status: () => 'disconnected' } as any));
 
-    const { MessageBus } = await import('./interface.js');
+    const { MessageBus } = await import('@src/channels/interface.js');
     const bus = new MessageBus();
 
     const config = { channels: { 'ch-x': { enabled: true } } } as any;

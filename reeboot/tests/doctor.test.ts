@@ -31,14 +31,14 @@ describe('doctor', () => {
   });
 
   it('runDoctor returns array of check results', async () => {
-    const { runDoctor } = await import('./doctor.js');
+    const { runDoctor } = await import('@src/doctor.js');
     const results = await runDoctor({ configPath, reebotDir: tmpDir, skipNetwork: true });
     expect(Array.isArray(results)).toBe(true);
     expect(results.length).toBeGreaterThan(0);
   });
 
   it('each result has name, status, and message fields', async () => {
-    const { runDoctor } = await import('./doctor.js');
+    const { runDoctor } = await import('@src/doctor.js');
     const results = await runDoctor({ configPath, reebotDir: tmpDir, skipNetwork: true });
     for (const r of results) {
       expect(r).toHaveProperty('name');
@@ -49,7 +49,7 @@ describe('doctor', () => {
   });
 
   it('exits 0 when all checks pass or only have warnings', async () => {
-    const { runDoctor, doctorExitCode } = await import('./doctor.js');
+    const { runDoctor, doctorExitCode } = await import('@src/doctor.js');
     const results = await runDoctor({ configPath, reebotDir: tmpDir, skipNetwork: true });
     const code = doctorExitCode(results);
     // May be 0 or 1 — just check it's a number
@@ -57,7 +57,7 @@ describe('doctor', () => {
   });
 
   it('config check passes for valid config', async () => {
-    const { runDoctor } = await import('./doctor.js');
+    const { runDoctor } = await import('@src/doctor.js');
     const results = await runDoctor({ configPath, reebotDir: tmpDir, skipNetwork: true });
     const configCheck = results.find(r => r.name.toLowerCase().includes('config'));
     expect(configCheck).toBeDefined();
@@ -66,7 +66,7 @@ describe('doctor', () => {
 
   it('config check fails for invalid config', async () => {
     writeFileSync(configPath, '{invalid json!!');
-    const { runDoctor } = await import('./doctor.js');
+    const { runDoctor } = await import('@src/doctor.js');
     const results = await runDoctor({ configPath, reebotDir: tmpDir, skipNetwork: true });
     const configCheck = results.find(r => r.name.toLowerCase().includes('config'));
     expect(configCheck).toBeDefined();
@@ -74,7 +74,7 @@ describe('doctor', () => {
   });
 
   it('disk check passes when sufficient space', async () => {
-    const { runDoctor } = await import('./doctor.js');
+    const { runDoctor } = await import('@src/doctor.js');
     const results = await runDoctor({ configPath, reebotDir: tmpDir, skipNetwork: true });
     const diskCheck = results.find(r => r.name.toLowerCase().includes('disk'));
     expect(diskCheck).toBeDefined();
@@ -83,7 +83,7 @@ describe('doctor', () => {
   });
 
   it('API key check is skipped when skipNetwork is true', async () => {
-    const { runDoctor } = await import('./doctor.js');
+    const { runDoctor } = await import('@src/doctor.js');
     const results = await runDoctor({ configPath, reebotDir: tmpDir, skipNetwork: true });
     const apiCheck = results.find(r => r.name.toLowerCase().includes('api key'));
     // With skipNetwork, it should be warn/skipped or not present
@@ -93,7 +93,7 @@ describe('doctor', () => {
   });
 
   it('doctorExitCode returns 1 if any check fails', async () => {
-    const { doctorExitCode } = await import('./doctor.js');
+    const { doctorExitCode } = await import('@src/doctor.js');
     const results = [
       { name: 'Config', status: 'pass' as const, message: 'OK' },
       { name: 'Disk', status: 'fail' as const, message: 'No space' },
@@ -102,7 +102,7 @@ describe('doctor', () => {
   });
 
   it('doctorExitCode returns 0 if only warnings', async () => {
-    const { doctorExitCode } = await import('./doctor.js');
+    const { doctorExitCode } = await import('@src/doctor.js');
     const results = [
       { name: 'Config', status: 'pass' as const, message: 'OK' },
       { name: 'Disk', status: 'warn' as const, message: 'Low space' },
@@ -111,7 +111,7 @@ describe('doctor', () => {
   });
 
   it('formatResult outputs ✓ for pass, ✗ for fail, ⚠ for warn', async () => {
-    const { formatResult } = await import('./doctor.js');
+    const { formatResult } = await import('@src/doctor.js');
     expect(formatResult({ name: 'Config', status: 'pass', message: 'OK' })).toContain('✓');
     expect(formatResult({ name: 'Config', status: 'fail', message: 'Bad' })).toContain('✗');
     expect(formatResult({ name: 'Config', status: 'warn', message: 'Warn' })).toContain('⚠');

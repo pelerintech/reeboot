@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { MessageBus, createIncomingMessage } from './channels/interface.js';
-import type { IncomingMessage } from './channels/interface.js';
+import { MessageBus, createIncomingMessage } from '@src/channels/interface.js';
+import type { IncomingMessage } from '@src/channels/interface.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ describe('Orchestrator rate-limit handling', () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    ({ Orchestrator } = await import('./orchestrator.js'));
+    ({ Orchestrator } = await import('@src/orchestrator.js'));
     bus = new MessageBus();
     adapter = makeAdapter();
   });
@@ -140,7 +140,7 @@ describe('Orchestrator turn timeout', () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    ({ Orchestrator } = await import('./orchestrator.js'));
+    ({ Orchestrator } = await import('@src/orchestrator.js'));
     bus = new MessageBus();
     adapter = makeAdapter();
   });

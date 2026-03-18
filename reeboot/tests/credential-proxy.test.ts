@@ -21,7 +21,7 @@ describe('credential proxy', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
-    ({ startProxy, stopProxy } = await import('./credential-proxy.js'));
+    ({ startProxy, stopProxy } = await import('@src/credential-proxy.js'));
   });
 
   afterEach(async () => {

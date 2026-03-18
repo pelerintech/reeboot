@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 describe('AgentRunner interfaces (1.1)', () => {
   it('AgentRunner and related types are importable from agent-runner module', async () => {
     // This will fail until interface.ts exists
-    const mod = await import('./interface.js');
+    const mod = await import('@src/agent-runner/interface.js');
     expect(mod).toBeDefined();
     // Types themselves are not runtime values — just verifying the module loads cleanly
   });
@@ -13,8 +13,8 @@ describe('AgentRunner interfaces (1.1)', () => {
 
 describe('createRunner factory (1.1)', () => {
   it('"pi" runner config creates a runner without throwing', async () => {
-    const { createRunner } = await import('./index.js');
-    const { defaultConfig } = await import('../config.js');
+    const { createRunner } = await import('@src/agent-runner/index.js');
+    const { defaultConfig } = await import('@src/config.js');
     const config = {
       ...defaultConfig,
       agent: { ...defaultConfig.agent, runner: 'pi' as const, model: defaultConfig.agent.model },
@@ -25,8 +25,8 @@ describe('createRunner factory (1.1)', () => {
   });
 
   it('unknown runner value throws descriptive error', async () => {
-    const { createRunner } = await import('./index.js');
-    const { defaultConfig } = await import('../config.js');
+    const { createRunner } = await import('@src/agent-runner/index.js');
+    const { defaultConfig } = await import('@src/config.js');
     const config = { ...defaultConfig, agent: { ...defaultConfig.agent, runner: 'unknown' as any } };
     expect(() => createRunner({ id: 'main', workspacePath: '/tmp/test-ctx' }, config)).toThrow(
       'Unknown agent runner: unknown',
@@ -38,7 +38,7 @@ describe('createRunner factory (1.1)', () => {
 
 describe('PiAgentRunner (1.3)', () => {
   it('dispose() is idempotent — calling twice does not throw', async () => {
-    const { PiAgentRunner } = await import('./pi-runner.js');
+    const { PiAgentRunner } = await import('@src/agent-runner/pi-runner.js');
     const mockLoader = { reload: vi.fn(), getExtensions: vi.fn(() => ({ extensions: [], errors: [], runtime: {} })), getSkills: vi.fn(() => ({ skills: [], diagnostics: [] })), getPrompts: vi.fn(() => ({ prompts: [], diagnostics: [] })), getThemes: vi.fn(() => ({ themes: [], diagnostics: [] })), getAgentsFiles: vi.fn(() => ({ agentsFiles: [] })), getSystemPrompt: vi.fn(() => undefined), getAppendSystemPrompt: vi.fn(() => []), getPathMetadata: vi.fn(() => new Map()), extendResources: vi.fn() };
     const runner = new PiAgentRunner({ id: 'main', workspacePath: '/tmp' }, mockLoader as any);
     await runner.dispose();
@@ -46,7 +46,7 @@ describe('PiAgentRunner (1.3)', () => {
   });
 
   it('reload() triggers loader.reload()', async () => {
-    const { PiAgentRunner } = await import('./pi-runner.js');
+    const { PiAgentRunner } = await import('@src/agent-runner/pi-runner.js');
     const mockLoader = { reload: vi.fn().mockResolvedValue(undefined), getExtensions: vi.fn(() => ({ extensions: [], errors: [], runtime: {} })), getSkills: vi.fn(() => ({ skills: [], diagnostics: [] })), getPrompts: vi.fn(() => ({ prompts: [], diagnostics: [] })), getThemes: vi.fn(() => ({ themes: [], diagnostics: [] })), getAgentsFiles: vi.fn(() => ({ agentsFiles: [] })), getSystemPrompt: vi.fn(() => undefined), getAppendSystemPrompt: vi.fn(() => []), getPathMetadata: vi.fn(() => new Map()), extendResources: vi.fn() };
     const runner = new PiAgentRunner({ id: 'main', workspacePath: '/tmp' }, mockLoader as any);
     await runner.reload();
@@ -54,7 +54,7 @@ describe('PiAgentRunner (1.3)', () => {
   });
 
   it('abort() before any prompt does not throw', async () => {
-    const { PiAgentRunner } = await import('./pi-runner.js');
+    const { PiAgentRunner } = await import('@src/agent-runner/pi-runner.js');
     const mockLoader = { reload: vi.fn(), getExtensions: vi.fn(() => ({ extensions: [], errors: [], runtime: {} })), getSkills: vi.fn(() => ({ skills: [], diagnostics: [] })), getPrompts: vi.fn(() => ({ prompts: [], diagnostics: [] })), getThemes: vi.fn(() => ({ themes: [], diagnostics: [] })), getAgentsFiles: vi.fn(() => ({ agentsFiles: [] })), getSystemPrompt: vi.fn(() => undefined), getAppendSystemPrompt: vi.fn(() => []), getPathMetadata: vi.fn(() => new Map()), extendResources: vi.fn() };
     const runner = new PiAgentRunner({ id: 'main', workspacePath: '/tmp' }, mockLoader as any);
     expect(() => runner.abort()).not.toThrow();

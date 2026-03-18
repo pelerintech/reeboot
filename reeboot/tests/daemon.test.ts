@@ -39,7 +39,7 @@ describe('daemon mode — macOS', () => {
   });
 
   it('startDaemon on macOS generates plist file', async () => {
-    const { startDaemon } = await import('./daemon.js');
+    const { startDaemon } = await import('@src/daemon.js');
     await startDaemon({
       platform: 'darwin',
       reebotBin: '/usr/local/bin/reeboot',
@@ -52,7 +52,7 @@ describe('daemon mode — macOS', () => {
   });
 
   it('plist file contains correct binary path', async () => {
-    const { startDaemon } = await import('./daemon.js');
+    const { startDaemon } = await import('@src/daemon.js');
     await startDaemon({
       platform: 'darwin',
       reebotBin: '/usr/local/bin/reeboot',
@@ -68,7 +68,7 @@ describe('daemon mode — macOS', () => {
   });
 
   it('startDaemon on macOS calls launchctl load', async () => {
-    const { startDaemon } = await import('./daemon.js');
+    const { startDaemon } = await import('@src/daemon.js');
     await startDaemon({
       platform: 'darwin',
       reebotBin: '/usr/local/bin/reeboot',
@@ -83,7 +83,7 @@ describe('daemon mode — macOS', () => {
   });
 
   it('stopDaemon on macOS calls launchctl unload', async () => {
-    const { stopDaemon } = await import('./daemon.js');
+    const { stopDaemon } = await import('@src/daemon.js');
     await stopDaemon({
       platform: 'darwin',
       launchAgentsDir,
@@ -96,7 +96,7 @@ describe('daemon mode — macOS', () => {
   });
 
   it('plist references log directory for stdout/stderr', async () => {
-    const { startDaemon } = await import('./daemon.js');
+    const { startDaemon } = await import('@src/daemon.js');
     await startDaemon({
       platform: 'darwin',
       reebotBin: '/usr/local/bin/reeboot',
@@ -131,7 +131,7 @@ describe('daemon mode — Linux', () => {
   });
 
   it('startDaemon on Linux generates systemd unit file', async () => {
-    const { startDaemon } = await import('./daemon.js');
+    const { startDaemon } = await import('@src/daemon.js');
     await startDaemon({
       platform: 'linux',
       reebotBin: '/usr/local/bin/reeboot',
@@ -144,7 +144,7 @@ describe('daemon mode — Linux', () => {
   });
 
   it('systemd unit file contains correct ExecStart', async () => {
-    const { startDaemon } = await import('./daemon.js');
+    const { startDaemon } = await import('@src/daemon.js');
     await startDaemon({
       platform: 'linux',
       reebotBin: '/usr/local/bin/reeboot',
@@ -159,7 +159,7 @@ describe('daemon mode — Linux', () => {
   });
 
   it('startDaemon on Linux calls systemctl enable --now', async () => {
-    const { startDaemon } = await import('./daemon.js');
+    const { startDaemon } = await import('@src/daemon.js');
     await startDaemon({
       platform: 'linux',
       reebotBin: '/usr/local/bin/reeboot',
@@ -174,7 +174,7 @@ describe('daemon mode — Linux', () => {
   });
 
   it('stopDaemon on Linux calls systemctl stop', async () => {
-    const { stopDaemon } = await import('./daemon.js');
+    const { stopDaemon } = await import('@src/daemon.js');
     await stopDaemon({
       platform: 'linux',
       systemdDir,

@@ -56,7 +56,7 @@ describe('Task REST API', () => {
     `);
     db.prepare("INSERT INTO contexts (id, name) VALUES ('main', 'main')").run();
 
-    ({ startServer, stopServer } = await import('./server.js'));
+    ({ startServer, stopServer } = await import('@src/server.js'));
   });
 
   afterEach(async () => {

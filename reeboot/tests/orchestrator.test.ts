@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { MessageBus, createIncomingMessage } from './channels/interface.js';
-import type { IncomingMessage } from './channels/interface.js';
+import { MessageBus, createIncomingMessage } from '@src/channels/interface.js';
+import type { IncomingMessage } from '@src/channels/interface.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ describe('Orchestrator routing', () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    ({ Orchestrator } = await import('./orchestrator.js'));
+    ({ Orchestrator } = await import('@src/orchestrator.js'));
     bus = new MessageBus();
     adapter = makeAdapter();
     runner = makeRunner();

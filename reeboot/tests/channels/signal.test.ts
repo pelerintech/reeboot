@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { MessageBus } from './interface.js';
+import { MessageBus } from '@src/channels/interface.js';
 
 // ─── fetch mock ───────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ describe('SignalAdapter', () => {
     mockExecSync.mockReturnValue(Buffer.from('running'));
     mockFetch.mockResolvedValue(makeReceiveResponse([]));
 
-    const mod = await import('./signal.js');
+    const mod = await import('@src/channels/signal.js');
     SignalAdapter = mod.SignalAdapter;
     bus = new MessageBus();
     adapter = new SignalAdapter({
@@ -224,7 +224,7 @@ describe('detectSignalContainer', () => {
   it('returns true if signal-cli-rest-api container is already running', async () => {
     mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
 
-    const { detectSignalContainer } = await import('./signal.js');
+    const { detectSignalContainer } = await import('@src/channels/signal.js');
     const running = detectSignalContainer();
     expect(running).toBe(true);
   });
@@ -232,7 +232,7 @@ describe('detectSignalContainer', () => {
   it('returns false if container is not running', async () => {
     mockExecSync.mockReturnValue(Buffer.from(''));
 
-    const { detectSignalContainer } = await import('./signal.js');
+    const { detectSignalContainer } = await import('@src/channels/signal.js');
     const running = detectSignalContainer();
     expect(running).toBe(false);
   });

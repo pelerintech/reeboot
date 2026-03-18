@@ -82,7 +82,7 @@ describe('Scheduler', () => {
 
     db = makeDb();
     orchestrator = makeOrchestrator();
-    const mod = await import('./scheduler.js');
+    const mod = await import('@src/scheduler.js');
     Scheduler = mod.Scheduler;
   });
 
@@ -211,7 +211,7 @@ describe('scheduler-tool extension', () => {
   });
 
   it('schedule_task inserts row and registers job (valid cron)', async () => {
-    const { createSchedulerTools } = await import('./scheduler.js');
+    const { createSchedulerTools } = await import('@src/scheduler.js');
     const orchestrator = makeOrchestrator();
     const scheduler = { registerJob: vi.fn(), cancelJob: vi.fn() };
     const tools = createSchedulerTools(db, scheduler as any);
@@ -229,7 +229,7 @@ describe('scheduler-tool extension', () => {
   });
 
   it('schedule_task returns error for invalid cron expression', async () => {
-    const { createSchedulerTools } = await import('./scheduler.js');
+    const { createSchedulerTools } = await import('@src/scheduler.js');
     const orchestrator = makeOrchestrator();
     const scheduler = { registerJob: vi.fn(), cancelJob: vi.fn() };
     const tools = createSchedulerTools(db, scheduler as any);
@@ -249,7 +249,7 @@ describe('scheduler-tool extension', () => {
       "INSERT INTO tasks (id, context_id, schedule, prompt, enabled) VALUES ('lt1', 'main', '* * * * *', 'List me', 1)"
     ).run();
 
-    const { createSchedulerTools } = await import('./scheduler.js');
+    const { createSchedulerTools } = await import('@src/scheduler.js');
     const scheduler = { registerJob: vi.fn(), cancelJob: vi.fn() };
     const tools = createSchedulerTools(db, scheduler as any);
 
@@ -264,7 +264,7 @@ describe('scheduler-tool extension', () => {
       "INSERT INTO tasks (id, context_id, schedule, prompt, enabled) VALUES ('ct1', 'main', '* * * * *', 'Cancel me', 1)"
     ).run();
 
-    const { createSchedulerTools } = await import('./scheduler.js');
+    const { createSchedulerTools } = await import('@src/scheduler.js');
     const scheduler = { registerJob: vi.fn(), cancelJob: vi.fn() };
     const tools = createSchedulerTools(db, scheduler as any);
 
@@ -276,7 +276,7 @@ describe('scheduler-tool extension', () => {
   });
 
   it('cancel_task returns error for unknown task id', async () => {
-    const { createSchedulerTools } = await import('./scheduler.js');
+    const { createSchedulerTools } = await import('@src/scheduler.js');
     const scheduler = { registerJob: vi.fn(), cancelJob: vi.fn() };
     const tools = createSchedulerTools(db, scheduler as any);
 

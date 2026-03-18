@@ -48,7 +48,7 @@ describe('packages', () => {
   // ── installPackage ─────────────────────────────────────────────────────────
 
   it('installPackage(npm:...) runs npm install to packages dir', async () => {
-    const { installPackage } = await import('./packages.js');
+    const { installPackage } = await import('@src/packages.js');
     await installPackage('npm:reeboot-github-tools', { configPath, reebotDir: tmpDir });
 
     expect(mockSpawnSync).toHaveBeenCalledWith(
@@ -59,7 +59,7 @@ describe('packages', () => {
   });
 
   it('installPackage adds identifier to config.extensions.packages', async () => {
-    const { installPackage } = await import('./packages.js');
+    const { installPackage } = await import('@src/packages.js');
     await installPackage('npm:reeboot-github-tools', { configPath, reebotDir: tmpDir });
 
     const config = JSON.parse(require('fs').readFileSync(configPath, 'utf-8'));
@@ -69,14 +69,14 @@ describe('packages', () => {
   it('installPackage returns error message when npm fails', async () => {
     mockSpawnSync.mockReturnValue({ status: 1, stdout: Buffer.from(''), stderr: Buffer.from('Not found') });
 
-    const { installPackage } = await import('./packages.js');
+    const { installPackage } = await import('@src/packages.js');
     await expect(
       installPackage('npm:does-not-exist-xxxxxx', { configPath, reebotDir: tmpDir })
     ).rejects.toThrow();
   });
 
   it('installPackage(git:...) passes git URL to npm install', async () => {
-    const { installPackage } = await import('./packages.js');
+    const { installPackage } = await import('@src/packages.js');
     await installPackage('git:github.com/user/my-extension', { configPath, reebotDir: tmpDir });
 
     expect(mockSpawnSync).toHaveBeenCalledWith(
@@ -94,7 +94,7 @@ describe('packages', () => {
       extensions: { packages: ['npm:reeboot-github-tools'] },
     }));
 
-    const { uninstallPackage } = await import('./packages.js');
+    const { uninstallPackage } = await import('@src/packages.js');
     await uninstallPackage('reeboot-github-tools', { configPath, reebotDir: tmpDir });
 
     const config = JSON.parse(require('fs').readFileSync(configPath, 'utf-8'));
@@ -102,7 +102,7 @@ describe('packages', () => {
   });
 
   it('uninstallPackage throws when package not in config', async () => {
-    const { uninstallPackage } = await import('./packages.js');
+    const { uninstallPackage } = await import('@src/packages.js');
     await expect(
       uninstallPackage('package-not-installed', { configPath, reebotDir: tmpDir })
     ).rejects.toThrow('Package not installed');
@@ -113,7 +113,7 @@ describe('packages', () => {
       extensions: { packages: ['npm:reeboot-github-tools'] },
     }));
 
-    const { uninstallPackage } = await import('./packages.js');
+    const { uninstallPackage } = await import('@src/packages.js');
     await uninstallPackage('reeboot-github-tools', { configPath, reebotDir: tmpDir });
 
     expect(mockSpawnSync).toHaveBeenCalledWith(
@@ -126,7 +126,7 @@ describe('packages', () => {
   // ── listPackages ───────────────────────────────────────────────────────────
 
   it('listPackages returns empty array when no packages installed', async () => {
-    const { listPackages } = await import('./packages.js');
+    const { listPackages } = await import('@src/packages.js');
     const result = await listPackages({ configPath, reebotDir: tmpDir });
     expect(result).toEqual([]);
   });
@@ -136,7 +136,7 @@ describe('packages', () => {
       extensions: { packages: ['npm:reeboot-github-tools', 'npm:reeboot-browser'] },
     }));
 
-    const { listPackages } = await import('./packages.js');
+    const { listPackages } = await import('@src/packages.js');
     const result = await listPackages({ configPath, reebotDir: tmpDir });
     expect(result).toHaveLength(2);
     expect(result.map((p: any) => p.spec)).toContain('npm:reeboot-github-tools');

@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi, type MockedFunction } from 'vitest';
 import { EventEmitter } from 'events';
-import { MessageBus } from './interface.js';
+import { MessageBus } from '@src/channels/interface.js';
 
 // ─── Baileys mock ─────────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ describe('WhatsAppAdapter', () => {
     mockSocket.sendMessage = vi.fn().mockResolvedValue({});
 
     // Provide a temp auth dir
-    const { WhatsAppAdapter } = await import('./whatsapp.js');
+    const { WhatsAppAdapter } = await import('@src/channels/whatsapp.js');
     bus = new MessageBus();
     adapter = new WhatsAppAdapter('/tmp/test-wa-auth');
   });

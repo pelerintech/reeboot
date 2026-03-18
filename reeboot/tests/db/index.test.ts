@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  const mod = await import('./index.js');
+  const mod = await import('@src/db/index.js');
   try { mod.closeDb(); } catch { /* already closed */ }
   // Reset module singleton between tests
   rmSync(tmpDir, { recursive: true, force: true });
@@ -20,14 +20,14 @@ afterEach(async () => {
 
 describe('openDatabase()', () => {
   it('creates database file on first run', async () => {
-    const { openDatabase } = await import('./index.js');
+    const { openDatabase } = await import('@src/db/index.js');
     const { existsSync } = await import('fs');
     openDatabase(dbPath);
     expect(existsSync(dbPath)).toBe(true);
   });
 
   it('all 5 tables are present after schema push', async () => {
-    const { openDatabase } = await import('./index.js');
+    const { openDatabase } = await import('@src/db/index.js');
     const db = openDatabase(dbPath);
     const tables = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
@@ -41,7 +41,7 @@ describe('openDatabase()', () => {
   });
 
   it('existing database is connected without data loss', async () => {
-    const { openDatabase, closeDb } = await import('./index.js');
+    const { openDatabase, closeDb } = await import('@src/db/index.js');
     const db1 = openDatabase(dbPath);
     db1.prepare("INSERT INTO contexts (id, name, status) VALUES ('ctx1', 'Test', 'active')").run();
     closeDb();
@@ -54,7 +54,7 @@ describe('openDatabase()', () => {
   });
 
   it('enforces foreign key constraints', async () => {
-    const { openDatabase } = await import('./index.js');
+    const { openDatabase } = await import('@src/db/index.js');
     const db = openDatabase(dbPath);
     expect(() => {
       db.prepare(
@@ -66,7 +66,7 @@ describe('openDatabase()', () => {
 
 describe('getDb() singleton', () => {
   it('returns the same instance on repeated calls', async () => {
-    const { openDatabase, getDb } = await import('./index.js');
+    const { openDatabase, getDb } = await import('@src/db/index.js');
     openDatabase(dbPath);
     const a = getDb();
     const b = getDb();
@@ -76,7 +76,7 @@ describe('getDb() singleton', () => {
 
 describe('closeDb()', () => {
   it('closes the connection cleanly', async () => {
-    const { openDatabase, closeDb, getDb } = await import('./index.js');
+    const { openDatabase, closeDb, getDb } = await import('@src/db/index.js');
     openDatabase(dbPath);
     closeDb();
     expect(() => getDb()).toThrow(/closed/i);

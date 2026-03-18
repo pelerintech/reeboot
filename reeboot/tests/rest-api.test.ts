@@ -19,7 +19,7 @@ beforeEach(async () => {
   db = new Database(join(tmpDir, 'test.db'));
 
   vi.resetModules();
-  ({ startServer, stopServer } = await import('./server.js'));
+  ({ startServer, stopServer } = await import('@src/server.js'));
 });
 
 afterEach(async () => {

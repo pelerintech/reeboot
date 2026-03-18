@@ -21,7 +21,7 @@ afterEach(() => {
 
 describe('loadConfig()', () => {
   it('returns defaults when config file does not exist', async () => {
-    const { loadConfig } = await import('./config.js');
+    const { loadConfig } = await import('@src/config.js');
     const cfg = loadConfig(join(tmpDir, 'config.json'));
     expect(cfg.channels.web.enabled).toBe(true);
     expect(cfg.channels.web.port).toBe(3000);
@@ -29,7 +29,7 @@ describe('loadConfig()', () => {
   });
 
   it('returns typed config when a valid file exists', async () => {
-    const { loadConfig } = await import('./config.js');
+    const { loadConfig } = await import('@src/config.js');
     const configPath = join(tmpDir, 'config.json');
     writeFileSync(configPath, JSON.stringify({
       agent: { name: 'Hal', model: { provider: 'anthropic', id: 'claude-3-opus-20240229', apiKey: 'sk-test' } }
@@ -42,7 +42,7 @@ describe('loadConfig()', () => {
   });
 
   it('merges partial config with defaults', async () => {
-    const { loadConfig } = await import('./config.js');
+    const { loadConfig } = await import('@src/config.js');
     const configPath = join(tmpDir, 'config.json');
     writeFileSync(configPath, JSON.stringify({ agent: { name: 'Hal' } }));
     const cfg = loadConfig(configPath);
@@ -52,14 +52,14 @@ describe('loadConfig()', () => {
   });
 
   it('throws on invalid JSON', async () => {
-    const { loadConfig } = await import('./config.js');
+    const { loadConfig } = await import('@src/config.js');
     const configPath = join(tmpDir, 'config.json');
     writeFileSync(configPath, '{ bad json ]]');
     expect(() => loadConfig(configPath)).toThrow(/Failed to parse config/);
   });
 
   it('throws on Zod schema violation', async () => {
-    const { loadConfig } = await import('./config.js');
+    const { loadConfig } = await import('@src/config.js');
     const configPath = join(tmpDir, 'config.json');
     writeFileSync(configPath, JSON.stringify({
       channels: { web: { port: 'not-a-number' } }
@@ -68,21 +68,21 @@ describe('loadConfig()', () => {
   });
 
   it('overrides channels.web.port via REEBOOT_PORT', async () => {
-    const { loadConfig } = await import('./config.js');
+    const { loadConfig } = await import('@src/config.js');
     process.env.REEBOOT_PORT = '4000';
     const cfg = loadConfig(join(tmpDir, 'config.json'));
     expect(cfg.channels.web.port).toBe(4000);
   });
 
   it('overrides logging.level via REEBOOT_LOG_LEVEL', async () => {
-    const { loadConfig } = await import('./config.js');
+    const { loadConfig } = await import('@src/config.js');
     process.env.REEBOOT_LOG_LEVEL = 'warn';
     const cfg = loadConfig(join(tmpDir, 'config.json'));
     expect(cfg.logging.level).toBe('warn');
   });
 
   it('overrides server.token via REEBOOT_API_TOKEN', async () => {
-    const { loadConfig } = await import('./config.js');
+    const { loadConfig } = await import('@src/config.js');
     process.env.REEBOOT_API_TOKEN = 'my-secret';
     const cfg = loadConfig(join(tmpDir, 'config.json'));
     expect(cfg.server.token).toBe('my-secret');
@@ -91,7 +91,7 @@ describe('loadConfig()', () => {
 
 describe('saveConfig()', () => {
   it('writes config atomically and can be read back', async () => {
-    const { loadConfig, saveConfig, defaultConfig } = await import('./config.js');
+    const { loadConfig, saveConfig, defaultConfig } = await import('@src/config.js');
     const configPath = join(tmpDir, 'config.json');
     const cfg = { ...defaultConfig, agent: { ...defaultConfig.agent, name: 'Saved' } };
     saveConfig(cfg, configPath);

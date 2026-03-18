@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { MessageBus, createIncomingMessage } from './channels/interface.js';
-import { Orchestrator } from './orchestrator.js';
-import type { IncomingMessage } from './channels/interface.js';
+import { MessageBus, createIncomingMessage } from '@src/channels/interface.js';
+import { Orchestrator } from '@src/orchestrator.js';
+import type { IncomingMessage } from '@src/channels/interface.js';
 
 function makeMsg(content: string, overrides: Partial<IncomingMessage> = {}): IncomingMessage {
   return createIncomingMessage({

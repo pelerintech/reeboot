@@ -49,7 +49,7 @@ beforeEach(async () => {
 
   // Re-import server fresh each test
   vi.resetModules();
-  ({ startServer, stopServer } = await import('./server.js'));
+  ({ startServer, stopServer } = await import('@src/server.js'));
 });
 
 afterEach(async () => {

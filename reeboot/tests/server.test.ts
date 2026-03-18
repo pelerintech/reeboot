@@ -4,7 +4,7 @@ let startServer: any;
 let stopServer: any;
 
 beforeEach(async () => {
-  ({ startServer, stopServer } = await import('./server.js'));
+  ({ startServer, stopServer } = await import('@src/server.js'));
 });
 
 afterEach(async () => {

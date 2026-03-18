@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { MessageBus, createIncomingMessage } from './channels/interface.js';
-import { Orchestrator } from './orchestrator.js';
+import { MessageBus, createIncomingMessage } from '@src/channels/interface.js';
+import { Orchestrator } from '@src/orchestrator.js';
 
 function makeMsg(content = 'Hello') {
   return createIncomingMessage({

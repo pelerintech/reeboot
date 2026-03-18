@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe('runWizard() non-interactive mode', () => {
   it('writes config.json with provided values', async () => {
-    const { runWizard } = await import('./setup-wizard.js');
+    const { runWizard } = await import('@src/setup-wizard.js');
     const configPath = join(tmpDir, '.reeboot', 'config.json');
     await runWizard({
       interactive: false,
@@ -34,7 +34,7 @@ describe('runWizard() non-interactive mode', () => {
   });
 
   it('scaffolds required directories', async () => {
-    const { runWizard } = await import('./setup-wizard.js');
+    const { runWizard } = await import('@src/setup-wizard.js');
     const configDir = join(tmpDir, '.reeboot');
     await runWizard({
       interactive: false,
@@ -54,7 +54,7 @@ describe('runWizard() non-interactive mode', () => {
   });
 
   it('copies AGENTS.md templates from templates/', async () => {
-    const { runWizard } = await import('./setup-wizard.js');
+    const { runWizard } = await import('@src/setup-wizard.js');
     const configDir = join(tmpDir, '.reeboot');
     await runWizard({
       interactive: false,
@@ -70,7 +70,7 @@ describe('runWizard() non-interactive mode', () => {
   });
 
   it('does not overwrite existing AGENTS.md', async () => {
-    const { runWizard } = await import('./setup-wizard.js');
+    const { runWizard } = await import('@src/setup-wizard.js');
     const configDir = join(tmpDir, '.reeboot');
 
     // Pre-create an AGENTS.md
