@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reeboot WebChat</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --border: #2a2a2a;
+      --text: #e0e0e0;
+      --text-muted: #888;
+      --accent: #4f9cf9;
+      --user-bg: #1e3a5f;
+      --assistant-bg: #1a1a1a;
+      --tool-bg: #1e2a1e;
+      --error: #e05252;
+      --radius: 8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+    }
+
+    header h1 { font-size: 1rem; font-weight: 600; }
+
+    #status {
+      margin-left: auto;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #555;
+    }
+    #status-dot.connected { background: #4caf50; }
+    #status-dot.connecting { background: #ff9800; }
+    #status-dot.error { background: var(--error); }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .message {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      line-height: 1.5;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .message.user {
+      background: var(--user-bg);
+      align-self: flex-end;
+      border-bottom-right-radius: 2px;
+    }
+
+    .message.assistant {
+      background: var(--assistant-bg);
+      border: 1px solid var(--border);
+      align-self: flex-start;
+      border-bottom-left-radius: 2px;
+    }
+
+    .message.assistant.streaming::after {
+      content: '▋';
+      animation: blink 1s step-end infinite;
+      color: var(--accent);
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .message.error-msg {
+      background: #2a1515;
+      border: 1px solid var(--error);
+      color: var(--error);
+      align-self: center;
+      font-size: 0.8rem;
+    }
+
+    .tool-indicator {
+      background: var(--tool-bg);
+      border: 1px solid #2d4a2d;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      color: #7db87d;
+      align-self: flex-start;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tool-indicator summary { list-style: none; }
+    .tool-indicator summary::-webkit-details-marker { display: none; }
+
+    .tool-details {
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      white-space: pre-wrap;
+    }
+
+    footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    #input-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    #input {
+      flex: 1;
+      background: #111;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      resize: none;
+      min-height: 42px;
+      max-height: 160px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    #input:focus { border-color: var(--accent); }
+    #input:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    button {
+      border: none;
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      white-space: nowrap;
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #send-btn {
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    #send-btn:hover:not(:disabled) { opacity: 0.85; }
+
+    #cancel-btn {
+      background: #3a1515;
+      color: var(--error);
+      display: none;
+    }
+    #cancel-btn.visible { display: block; }
+    #cancel-btn:hover:not(:disabled) { opacity: 0.85; }
+
+    .hint {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 6px;
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 Reeboot</h1>
+  <div id="status">
+    <div id="status-dot" class="connecting"></div>
+    <span id="status-text">Connecting…</span>
+  </div>
+</header>
+
+<div id="messages"></div>
+
+<footer>
+  <div id="input-row">
+    <textarea
+      id="input"
+      placeholder="Send a message…"
+      rows="1"
+      autocomplete="off"
+      spellcheck="true"
+    ></textarea>
+    <button id="send-btn" disabled>Send</button>
+    <button id="cancel-btn">Cancel</button>
+  </div>
+  <div class="hint">Enter to send · Shift+Enter for newline</div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Config ─────────────────────────────────────────────────────────────────
+  const contextId = 'main';
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${location.host}/ws/chat/${contextId}`;
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let ws = null;
+  let isBusy = false;
+  let currentAssistantEl = null;
+  let reconnectDelay = 1000;
+
+  // ── Elements ───────────────────────────────────────────────────────────────
+  const messagesEl  = document.getElementById('messages');
+  const inputEl     = document.getElementById('input');
+  const sendBtn     = document.getElementById('send-btn');
+  const cancelBtn   = document.getElementById('cancel-btn');
+  const statusDot   = document.getElementById('status-dot');
+  const statusText  = document.getElementById('status-text');
+
+  // ── Status helpers ─────────────────────────────────────────────────────────
+  function setStatus(state, text) {
+    statusDot.className = state;
+    statusText.textContent = text;
+  }
+
+  // ── UI helpers ─────────────────────────────────────────────────────────────
+  function appendMessage(role, text) {
+    const el = document.createElement('div');
+    el.className = `message ${role}`;
+    el.textContent = text;
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return el;
+  }
+
+  function appendError(text) {
+    const el = document.createElement('div');
+    el.className = 'message error-msg';
+    el.textContent = `⚠ ${text}`;
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function appendToolIndicator(toolName) {
+    const el = document.createElement('details');
+    el.className = 'tool-indicator';
+    const summary = document.createElement('summary');
+    summary.textContent = `⚙ ${toolName}`;
+    el.appendChild(summary);
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return el;
+  }
+
+  function setBusy(busy) {
+    isBusy = busy;
+    inputEl.disabled = busy;
+    sendBtn.disabled = busy || ws?.readyState !== WebSocket.OPEN;
+    if (busy) {
+      cancelBtn.classList.add('visible');
+    } else {
+      cancelBtn.classList.remove('visible');
+      currentAssistantEl?.classList.remove('streaming');
+      currentAssistantEl = null;
+    }
+  }
+
+  // ── Auto-resize textarea ───────────────────────────────────────────────────
+  inputEl.addEventListener('input', () => {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
+  });
+
+  // ── Send ───────────────────────────────────────────────────────────────────
+  function sendMessage() {
+    const content = inputEl.value.trim();
+    if (!content || isBusy || ws?.readyState !== WebSocket.OPEN) return;
+
+    appendMessage('user', content);
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+
+    ws.send(JSON.stringify({ type: 'message', content }));
+    setBusy(true);
+
+    // Prepare streaming assistant bubble
+    currentAssistantEl = appendMessage('assistant', '');
+    currentAssistantEl.classList.add('streaming');
+  }
+
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  sendBtn.addEventListener('click', sendMessage);
+
+  cancelBtn.addEventListener('click', () => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'cancel' }));
+    }
+    setBusy(false);
+  });
+
+  // ── WebSocket ──────────────────────────────────────────────────────────────
+  function connect() {
+    setStatus('connecting', 'Connecting…');
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      reconnectDelay = 1000;
+      // Wait for connected message before enabling input
+    };
+
+    ws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+
+      switch (msg.type) {
+        case 'connected':
+          setStatus('connected', `Connected · ${contextId}`);
+          sendBtn.disabled = false;
+          break;
+
+        case 'text_delta':
+          if (currentAssistantEl) {
+            currentAssistantEl.textContent += msg.delta;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+          break;
+
+        case 'tool_call_start': {
+          const toolEl = appendToolIndicator(msg.toolName);
+          toolEl.dataset.toolCallId = msg.toolCallId;
+          break;
+        }
+
+        case 'tool_call_end': {
+          // Find the open tool indicator and add result
+          const open = messagesEl.querySelector(
+            `.tool-indicator[data-tool-call-id="${msg.toolCallId}"]`
+          );
+          if (open) {
+            const details = document.createElement('div');
+            details.className = 'tool-details';
+            const result = typeof msg.result === 'string' ? msg.result : JSON.stringify(msg.result, null, 2);
+            details.textContent = result.slice(0, 500) + (result.length > 500 ? '…' : '');
+            open.appendChild(details);
+            if (msg.isError) open.style.borderColor = '#5a2a2a';
+          }
+          break;
+        }
+
+        case 'message_end':
+          setBusy(false);
+          break;
+
+        case 'cancelled':
+          setBusy(false);
+          appendError('Turn cancelled.');
+          break;
+
+        case 'error':
+          setBusy(false);
+          appendError(msg.message || 'Unknown error');
+          break;
+      }
+    };
+
+    ws.onclose = (e) => {
+      setStatus('error', `Disconnected (${e.code})`);
+      sendBtn.disabled = true;
+      setBusy(false);
+
+      // Reconnect unless intentionally closed
+      if (e.code !== 1000) {
+        setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      }
+    };
+
+    ws.onerror = () => {
+      setStatus('error', 'Connection error');
+    };
+  }
+
+  connect();
+})();
+</script>
+</body>
+</html>

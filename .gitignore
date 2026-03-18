@@ -1,0 +1,46 @@
+# ─── Node / npm ───────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+
+# ─── TypeScript build output ──────────────────────────────────────────────────
+dist/
+*.d.ts.map
+*.js.map
+
+# ─── Test / coverage ──────────────────────────────────────────────────────────
+coverage/
+.vitest/
+node_modules/.vite/
+
+# ─── Runtime data (never commit user data or secrets) ─────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.local
+.env.*.local
+
+# ─── reeboot runtime dirs (created at first run, user-specific) ───────────────
+# ~/.reeboot/ lives outside the repo, but guard against accidental inclusion
+reeboot/logs/
+reeboot/channels/*/auth/
+
+# ─── OS artefacts ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ─── Editor config (project-agnostic; keep .editorconfig if present) ─────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ─── Cache directories ────────────────────────────────────────────────────────
+.cache/
+.parcel-cache/
