@@ -79,7 +79,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
       if (qr) {
         console.log('\n📱 Scan this QR code with WhatsApp (Settings → Linked Devices → Link a Device):\n');
-        qrTerminal.default.generate(qr, { small: true });
+        (qrTerminal as any).default.generate(qr, { small: true });
         console.log('');
       }
 

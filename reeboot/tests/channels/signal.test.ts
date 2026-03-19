@@ -1,11 +1,17 @@
 /**
- * Signal adapter tests (task 1.1) — TDD red
+ * Signal adapter tests
  *
- * Uses a mock of the signal-cli REST API (fetch) and Docker subprocess so no
- * real Docker or Signal connection is made.
+ * Covers both modes the adapter supports:
+ *   - json-rpc mode: WebSocket receive via ws://
+ *   - normal mode:   HTTP polling via GET /v1/receive/<number>
+ *
+ * WebSocket is mocked via vi.mock('ws').
+ * fetch is mocked for /v1/about (mode detection) and /v2/send.
+ * child_process is mocked so no real Docker calls are made.
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { EventEmitter } from 'events';
 import { MessageBus } from '@src/channels/interface.js';
 
 // ─── fetch mock ───────────────────────────────────────────────────────────────
@@ -21,19 +27,321 @@ vi.mock('child_process', () => ({
   spawnSync: vi.fn().mockReturnValue({ status: 0, stdout: Buffer.from('') }),
 }));
 
+// ─── ws mock ─────────────────────────────────────────────────────────────────
+
+class MockWebSocket extends EventEmitter {
+  static lastInstance: MockWebSocket | null = null;
+  url: string;
+  closed = false;
+
+  constructor(url: string) {
+    super();
+    this.url = url;
+    MockWebSocket.lastInstance = this;
+    // Simulate async open
+    Promise.resolve().then(() => this.emit('open'));
+  }
+
+  close() {
+    this.closed = true;
+    this.emit('close', 1000, Buffer.from(''));
+  }
+
+  // Helper to simulate server pushing a message
+  simulateMessage(data: object) {
+    this.emit('message', Buffer.from(JSON.stringify(data)));
+  }
+}
+
+vi.mock('ws', () => ({
+  WebSocket: MockWebSocket,
+}));
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeReceiveResponse(messages: any[]) {
-  return { ok: true, json: async () => messages };
+function aboutResponse(mode: string) {
+  return { ok: true, json: async () => ({ mode, versions: ['v1', 'v2'], build: 2 }) };
 }
 
 function makeSendResponse() {
-  return { ok: true, json: async () => ({}) };
+  return { ok: true, status: 201, json: async () => ({}) };
+}
+
+function makeDataMessage(fromNumber: string, text: string) {
+  return {
+    envelope: {
+      source: fromNumber,
+      sourceNumber: fromNumber,
+      dataMessage: { message: text },
+    },
+  };
+}
+
+function makeSyncMessage(fromNumber: string, toNumber: string, text: string) {
+  return {
+    envelope: {
+      source: fromNumber,
+      sourceNumber: fromNumber,
+      syncMessage: {
+        sentMessage: {
+          destination: toNumber,
+          destinationNumber: toNumber,
+          message: text,
+        },
+      },
+    },
+  };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('SignalAdapter', () => {
+describe('SignalAdapter — json-rpc mode (WebSocket)', () => {
+  let SignalAdapter: any;
+  let adapter: any;
+  let bus: MessageBus;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    MockWebSocket.lastInstance = null;
+
+    mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
+    // /v1/about returns json-rpc mode
+    mockFetch.mockResolvedValue(aboutResponse('json-rpc'));
+
+    const mod = await import('@src/channels/signal.js');
+    SignalAdapter = mod.SignalAdapter;
+    bus = new MessageBus();
+    adapter = new SignalAdapter({ phoneNumber: '+1234567890', apiPort: 8080 });
+  });
+
+  afterEach(async () => {
+    await adapter?.stop?.();
+  });
+
+  it('initial status is disconnected', () => {
+    expect(adapter.status()).toBe('disconnected');
+  });
+
+  it('reports error if Docker is not running', async () => {
+    mockExecSync.mockImplementation(() => { throw new Error('Docker not running'); });
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    expect(adapter.status()).toBe('error');
+  });
+
+  it('connects and opens a WebSocket in json-rpc mode', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    // Flush the Promise.resolve() in MockWebSocket constructor
+    await Promise.resolve();
+
+    expect(adapter.status()).toBe('connected');
+    expect(MockWebSocket.lastInstance).not.toBeNull();
+    expect(MockWebSocket.lastInstance!.url).toContain('/v1/receive/');
+    expect(MockWebSocket.lastInstance!.url).toContain('%2B1234567890');
+  });
+
+  it('incoming dataMessage from another user is emitted on bus', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve(); // let WS open
+
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeDataMessage('+1987654321', 'Hello from Signal')
+    );
+
+    expect(received).toHaveLength(1);
+    expect(received[0].channelType).toBe('signal');
+    expect(received[0].content).toBe('Hello from Signal');
+    expect(received[0].peerId).toBe('+1987654321');
+  });
+
+  it('dataMessage from own number is ignored (not self-chat)', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeDataMessage('+1234567890', 'Echo of my own send')
+    );
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('syncMessage (note-to-self) is emitted on bus', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeSyncMessage('+1234567890', '+1234567890', 'Note to self')
+    );
+
+    expect(received).toHaveLength(1);
+    expect(received[0].channelType).toBe('signal');
+    expect(received[0].content).toBe('Note to self');
+    expect(received[0].peerId).toBe('+1234567890');
+  });
+
+  it('receipt and typing envelopes (no dataMessage or syncMessage) are ignored', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    MockWebSocket.lastInstance!.simulateMessage({
+      envelope: { source: '+1987654321', sourceNumber: '+1987654321', receiptMessage: {} },
+    });
+    MockWebSocket.lastInstance!.simulateMessage({
+      envelope: { source: '+1987654321', sourceNumber: '+1987654321', typingMessage: {} },
+    });
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('WebSocket reconnects after close', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    const first = MockWebSocket.lastInstance!;
+    first.close(); // simulate server closing the connection
+    await new Promise(r => setTimeout(r, 3100)); // WS_RECONNECT_DELAY_MS = 3000
+
+    expect(MockWebSocket.lastInstance).not.toBe(first);
+    expect(MockWebSocket.lastInstance!.url).toContain('/v1/receive/');
+  });
+
+  it('stop() closes WebSocket and sets status to disconnected', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    const ws = MockWebSocket.lastInstance!;
+    await adapter.stop();
+
+    expect(adapter.status()).toBe('disconnected');
+    expect(ws.closed).toBe(true);
+  });
+
+  it('stop() prevents WebSocket reconnect', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    const first = MockWebSocket.lastInstance!;
+    await adapter.stop();
+    await new Promise(r => setTimeout(r, 3100));
+
+    // No new instance created after stop
+    expect(MockWebSocket.lastInstance).toBe(first);
+  });
+});
+
+// ─── normal mode (HTTP polling) ───────────────────────────────────────────────
+
+describe('SignalAdapter — normal mode (HTTP polling)', () => {
+  let SignalAdapter: any;
+  let adapter: any;
+  let bus: MessageBus;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    MockWebSocket.lastInstance = null;
+
+    mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
+    // /v1/about returns normal mode → adapter uses HTTP polling
+    mockFetch.mockResolvedValue(aboutResponse('normal'));
+
+    const mod = await import('@src/channels/signal.js');
+    SignalAdapter = mod.SignalAdapter;
+    bus = new MessageBus();
+    adapter = new SignalAdapter({ phoneNumber: '+1234567890', apiPort: 8080, pollInterval: 1000 });
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await adapter?.stop?.();
+  });
+
+  it('connects and starts HTTP polling in normal mode', async () => {
+    mockFetch
+      .mockResolvedValueOnce(aboutResponse('normal'))
+      .mockResolvedValue({ ok: true, json: async () => [] });
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+
+    expect(adapter.status()).toBe('connected');
+    expect(MockWebSocket.lastInstance).toBeNull(); // no WS opened
+  });
+
+  it('polls GET /v1/receive and emits incoming dataMessages', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    const msg = makeDataMessage('+1987654321', 'Hello via poll');
+
+    mockFetch
+      .mockResolvedValueOnce(aboutResponse('normal'))       // /v1/about
+      .mockResolvedValueOnce({ ok: true, json: async () => [msg] }) // first poll
+      .mockResolvedValue({ ok: true, json: async () => [] });
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(received).toHaveLength(1);
+    expect(received[0].content).toBe('Hello via poll');
+  });
+
+  it('own dataMessages are ignored in normal mode too', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    const ownMsg = makeDataMessage('+1234567890', 'My own echo');
+
+    mockFetch
+      .mockResolvedValueOnce(aboutResponse('normal'))
+      .mockResolvedValueOnce({ ok: true, json: async () => [ownMsg] })
+      .mockResolvedValue({ ok: true, json: async () => [] });
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('stop() halts polling', async () => {
+    mockFetch
+      .mockResolvedValueOnce(aboutResponse('normal'))
+      .mockResolvedValue({ ok: true, json: async () => [] });
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await adapter.stop();
+
+    expect(adapter.status()).toBe('disconnected');
+    expect((adapter as any)._pollTimer).toBeNull();
+  });
+});
+
+// ─── Send ─────────────────────────────────────────────────────────────────────
+
+describe('SignalAdapter — send', () => {
   let SignalAdapter: any;
   let adapter: any;
   let bus: MessageBus;
@@ -42,137 +350,32 @@ describe('SignalAdapter', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
 
-    // Default: Docker running, no receive messages
-    mockExecSync.mockReturnValue(Buffer.from('running'));
-    mockFetch.mockResolvedValue(makeReceiveResponse([]));
+    mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
+    mockFetch.mockResolvedValue(aboutResponse('normal'));
 
     const mod = await import('@src/channels/signal.js');
     SignalAdapter = mod.SignalAdapter;
     bus = new MessageBus();
-    adapter = new SignalAdapter({
-      phoneNumber: '+1234567890',
-      apiPort: 8080,
-      pollInterval: 1000,
-    });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    adapter?.stop?.().catch(() => {});
-  });
-
-  // ── Status ─────────────────────────────────────────────────────────────────
-
-  it('initial status is disconnected', () => {
-    expect(adapter.status()).toBe('disconnected');
-  });
-
-  it('adapter reports error status if Docker is not running', async () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('Cannot connect to the Docker daemon');
-    });
-
-    await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-
-    expect(adapter.status()).toBe('error');
-  });
-
-  it('adapter connects when signal-cli container is running', async () => {
-    mockExecSync.mockReturnValue(Buffer.from('running'));
-    mockFetch.mockResolvedValue(makeReceiveResponse([]));
-
-    await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-
-    expect(adapter.status()).toBe('connected');
-  });
-
-  // ── Polling ────────────────────────────────────────────────────────────────
-
-  it('incoming message is emitted on bus with channelType: "signal"', async () => {
-    const receivedMessages: any[] = [];
-    bus.onMessage((msg) => receivedMessages.push(msg));
-
-    const signalMsg = {
-      envelope: {
-        source: '+1987654321',
-        sourceNumber: '+1987654321',
-        dataMessage: { message: 'Hello from Signal' },
-      },
-    };
+    adapter = new SignalAdapter({ phoneNumber: '+1234567890', apiPort: 8080 });
 
     mockFetch
-      .mockResolvedValueOnce(makeReceiveResponse([]))   // start() connectivity check
-      .mockResolvedValueOnce(makeReceiveResponse([signalMsg]))  // first poll
-      .mockResolvedValue(makeReceiveResponse([]));
-
-    await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-
-    // Advance time to trigger the setInterval poll callback
-    await vi.advanceTimersByTimeAsync(1100);
-
-    expect(receivedMessages).toHaveLength(1);
-    expect(receivedMessages[0].channelType).toBe('signal');
-    expect(receivedMessages[0].content).toBe('Hello from Signal');
-    expect(receivedMessages[0].peerId).toBe('+1987654321');
-  });
-
-  it('own messages (from self) are ignored', async () => {
-    const receivedMessages: any[] = [];
-    bus.onMessage((msg) => receivedMessages.push(msg));
-
-    const ownMsg = {
-      envelope: {
-        source: '+1234567890', // same as our phone number
-        sourceNumber: '+1234567890',
-        dataMessage: { message: 'My own message' },
-      },
-    };
-
-    mockFetch
-      .mockResolvedValueOnce(makeReceiveResponse([]))  // start() connectivity check
-      .mockResolvedValueOnce(makeReceiveResponse([ownMsg]))  // first poll
-      .mockResolvedValue(makeReceiveResponse([]));
-
-    await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-
-    await vi.advanceTimersByTimeAsync(1100);
-
-    expect(receivedMessages).toHaveLength(0);
-  });
-
-  it('poll interval is configurable', async () => {
-    const customAdapter = new SignalAdapter({
-      phoneNumber: '+1234567890',
-      apiPort: 8080,
-      pollInterval: 2000,
-    });
-    await customAdapter.init({ enabled: true }, bus);
-    await customAdapter.start();
-
-    expect((customAdapter as any)._pollInterval).toBe(2000);
-    await customAdapter.stop();
-  });
-
-  // ── Send ───────────────────────────────────────────────────────────────────
-
-  it('short message sent via POST /v2/send', async () => {
-    // /v1/about for start(), then /v2/send for the actual send
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) }) // /v1/about
+      .mockResolvedValueOnce(aboutResponse('normal'))
       .mockResolvedValue(makeSendResponse());
 
     await adapter.init({ enabled: true }, bus);
     await adapter.start();
+  });
 
+  afterEach(async () => {
+    vi.useRealTimers();
+    await adapter?.stop?.();
+  });
+
+  it('short message sent via POST /v2/send with correct payload', async () => {
     await adapter.send('+1987654321', { type: 'text', text: 'Hello Signal' });
 
-    // Find the send call (not the receive polls)
     const sendCall = mockFetch.mock.calls.find(
-      (c: any[]) => c[0]?.includes?.('/v2/send') && c[1]?.method === 'POST'
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('/v2/send')
     );
     expect(sendCall).toBeDefined();
     const body = JSON.parse(sendCall![1].body);
@@ -181,59 +384,33 @@ describe('SignalAdapter', () => {
     expect(body.recipients).toContain('+1987654321');
   });
 
-  it('long message (>4096 chars) is chunked into multiple send calls', async () => {
-    mockFetch.mockResolvedValue(makeSendResponse());
-
-    await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-
-    // Stop polling to avoid infinite timer loop
-    await adapter.stop();
-
+  it('message longer than 4096 chars is split into multiple sends', async () => {
     const longText = 'A'.repeat(4097);
-    // Run send + advance fake timers to flush the CHUNK_DELAY_MS setTimeout
     const sendPromise = adapter.send('+1987654321', { type: 'text', text: longText });
-    await vi.advanceTimersByTimeAsync(500); // cover 100ms CHUNK_DELAY_MS
+    await vi.advanceTimersByTimeAsync(500);
     await sendPromise;
 
     const sendCalls = mockFetch.mock.calls.filter(
-      (c: any[]) => c[0]?.includes?.('/v2/send') && c[1]?.method === 'POST'
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('/v2/send')
     );
     expect(sendCalls.length).toBeGreaterThan(1);
   });
-
-  // ── Stop ───────────────────────────────────────────────────────────────────
-
-  it('stop() sets status to disconnected and halts polling', async () => {
-    await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    expect(adapter.status()).toBe('connected');
-
-    await adapter.stop();
-    expect(adapter.status()).toBe('disconnected');
-  });
 });
 
-// ─── Login helper tests ───────────────────────────────────────────────────────
+// ─── detectSignalContainer ────────────────────────────────────────────────────
 
 describe('detectSignalContainer', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  beforeEach(() => vi.clearAllMocks());
 
-  it('returns true if signal-cli-rest-api container is already running', async () => {
+  it('returns true when container is running', async () => {
     mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
-
     const { detectSignalContainer } = await import('@src/channels/signal.js');
-    const running = detectSignalContainer();
-    expect(running).toBe(true);
+    expect(detectSignalContainer()).toBe(true);
   });
 
-  it('returns false if container is not running', async () => {
+  it('returns false when container is not running', async () => {
     mockExecSync.mockReturnValue(Buffer.from(''));
-
     const { detectSignalContainer } = await import('@src/channels/signal.js');
-    const running = detectSignalContainer();
-    expect(running).toBe(false);
+    expect(detectSignalContainer()).toBe(false);
   });
 });

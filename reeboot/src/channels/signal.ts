@@ -2,11 +2,16 @@
  * Signal channel adapter
  *
  * Uses bbernhard/signal-cli-rest-api Docker sidecar.
- * Polls GET /v1/receive/<number> at a configurable interval.
- * Sends via POST /v2/send.
+ *
+ * Receive strategy depends on the API mode reported by /v1/about:
+ *   - json-rpc mode → WebSocket on ws://host/v1/receive/<number>
+ *   - normal/native mode → HTTP polling GET /v1/receive/<number>
+ *
+ * Sends via POST /v2/send (same for all modes).
  */
 
 import { execSync } from 'child_process';
+import { WebSocket } from 'ws';
 import type { ChannelAdapter, ChannelConfig, MessageBus, MessageContent, ChannelStatus } from './interface.js';
 import { createIncomingMessage } from './interface.js';
 import { registerChannel } from './registry.js';
@@ -15,6 +20,7 @@ const CHUNK_SIZE = 4096;
 const CHUNK_DELAY_MS = 100;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_API_PORT = 8080;
+const WS_RECONNECT_DELAY_MS = 3000;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -29,7 +35,6 @@ export interface SignalAdapterOptions {
 /**
  * Check if a signal-cli-rest-api Docker container is running.
  * Returns true if found, false otherwise.
- * Throws if Docker itself is not available/running.
  */
 export function detectSignalContainer(): boolean {
   try {
@@ -61,7 +66,14 @@ export class SignalAdapter implements ChannelAdapter {
   private _status: ChannelStatus = 'disconnected';
   private _connectedAt: string | null = null;
   private _bus: MessageBus | null = null;
+
+  // HTTP polling (normal/native mode)
   private _pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  // WebSocket (json-rpc mode)
+  private _ws: WebSocket | null = null;
+  private _wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private _wsStopped = false;
 
   readonly _phoneNumber: string;
   readonly _apiPort: number;
@@ -77,8 +89,11 @@ export class SignalAdapter implements ChannelAdapter {
     return `http://127.0.0.1:${this._apiPort}`;
   }
 
+  private get _wsBaseUrl(): string {
+    return `ws://127.0.0.1:${this._apiPort}`;
+  }
+
   async init(config: ChannelConfig, bus: MessageBus): Promise<void> {
-    // Apply config overrides
     const signalConfig = config as any;
     if (signalConfig.phoneNumber) this._setPhoneNumber(signalConfig.phoneNumber);
     if (signalConfig.apiPort) this._setApiPort(signalConfig.apiPort);
@@ -86,43 +101,81 @@ export class SignalAdapter implements ChannelAdapter {
     this._status = 'disconnected';
   }
 
-  // Hacky setters to allow config override (readonly fields are set in constructor)
   private _setPhoneNumber(n: string) { (this as any)._phoneNumber = n; }
   private _setApiPort(p: number) { (this as any)._apiPort = p; }
 
   async start(): Promise<void> {
-    // Check Docker is available
     if (!isDockerRunning()) {
       this._status = 'error';
       console.error('[Signal] Docker is not running — cannot start Signal adapter');
       return;
     }
 
-    // Check container is up
     if (!detectSignalContainer()) {
       console.warn('[Signal] signal-cli-rest-api container not found — try: reeboot channels login signal');
-      // Still connect; the API calls will fail but status shows "connected" once we verify the API
     }
 
-    // Verify REST API is reachable by calling the health/about endpoint
+    // Detect API mode from /v1/about
+    let mode = 'normal';
     try {
       const res = await fetch(`${this._baseUrl}/v1/about`);
-      if (!res.ok && res.status !== 404) {
-        throw new Error(`HTTP ${res.status}`);
+      if (res.ok) {
+        const body = await res.json() as any;
+        mode = body?.mode ?? 'normal';
       }
-      this._status = 'connected';
-      this._connectedAt = new Date().toISOString();
-      console.log('[Signal] Connected ✓ — polling for messages');
     } catch {
-      // Fallback: just mark as connected (container check passed above)
-      this._status = 'connected';
-      this._connectedAt = new Date().toISOString();
-      console.log('[Signal] Connected ✓ — polling for messages');
+      // Assume normal mode if unreachable
     }
 
-    // Start polling
-    this._startPolling();
+    this._status = 'connected';
+    this._connectedAt = new Date().toISOString();
+
+    if (mode === 'json-rpc') {
+      console.log('[Signal] Connected ✓ — listening via WebSocket (json-rpc mode)');
+      this._wsStopped = false;
+      this._connectWebSocket();
+    } else {
+      console.log(`[Signal] Connected ✓ — polling for messages (${mode} mode)`);
+      this._startPolling();
+    }
   }
+
+  // ── WebSocket receive (json-rpc mode) ──────────────────────────────────────
+
+  private _connectWebSocket(): void {
+    if (this._wsStopped || !this._phoneNumber) return;
+
+    const encoded = encodeURIComponent(this._phoneNumber);
+    const url = `${this._wsBaseUrl}/v1/receive/${encoded}`;
+
+    const ws = new WebSocket(url);
+    this._ws = ws;
+
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        this._handleIncomingMessage(msg);
+      } catch {
+        // Ignore unparseable frames
+      }
+    });
+
+    ws.on('error', (err) => {
+      console.error(`[Signal] WebSocket error: ${err.message}`);
+    });
+
+    ws.on('close', () => {
+      this._ws = null;
+      if (!this._wsStopped) {
+        // Reconnect after delay
+        this._wsReconnectTimer = setTimeout(() => {
+          this._connectWebSocket();
+        }, WS_RECONNECT_DELAY_MS);
+      }
+    });
+  }
+
+  // ── HTTP polling (normal/native mode) ─────────────────────────────────────
 
   private _startPolling(): void {
     if (this._pollTimer) return;
@@ -139,7 +192,7 @@ export class SignalAdapter implements ChannelAdapter {
       const encoded = encodeURIComponent(this._phoneNumber);
       const res = await fetch(`${this._baseUrl}/v1/receive/${encoded}`);
       if (!res.ok) return;
-      const messages: any[] = await res.json();
+      const messages: any[] = await res.json() as any[];
       for (const msg of messages) {
         this._handleIncomingMessage(msg);
       }
@@ -148,38 +201,64 @@ export class SignalAdapter implements ChannelAdapter {
     }
   }
 
+  // ── Shared message handler ─────────────────────────────────────────────────
+
   private _handleIncomingMessage(msg: any): void {
     const envelope = msg?.envelope;
     if (!envelope) return;
 
     const source: string = envelope.sourceNumber ?? envelope.source ?? '';
-    const dataMessage = envelope.dataMessage;
-    if (!dataMessage) return;
+    let text = '';
+    let peerId = source;
 
-    const text: string = dataMessage.message ?? '';
+    if (envelope.dataMessage) {
+      // Regular incoming message from another user — ignore if it's from ourselves
+      if (source === this._phoneNumber) return;
+      text = envelope.dataMessage.message ?? '';
+    } else if (envelope.syncMessage?.sentMessage) {
+      // Note-to-self: message synced from our own device
+      const sent = envelope.syncMessage.sentMessage;
+      text = sent.message ?? '';
+      peerId = sent.destinationNumber ?? sent.destination ?? source;
+    }
+
     if (!text) return;
-
-    // Ignore own messages
-    if (source === this._phoneNumber) return;
 
     this._bus?.publish(
       createIncomingMessage({
         channelType: 'signal',
-        peerId: source,
+        peerId,
         content: text,
         raw: msg,
       })
     );
   }
 
+  // ── Stop ───────────────────────────────────────────────────────────────────
+
   async stop(): Promise<void> {
+    // Stop HTTP polling
     if (this._pollTimer) {
       clearInterval(this._pollTimer);
       this._pollTimer = null;
     }
+
+    // Stop WebSocket
+    this._wsStopped = true;
+    if (this._wsReconnectTimer) {
+      clearTimeout(this._wsReconnectTimer);
+      this._wsReconnectTimer = null;
+    }
+    if (this._ws) {
+      this._ws.close();
+      this._ws = null;
+    }
+
     this._status = 'disconnected';
     this._connectedAt = null;
   }
+
+  // ── Send ───────────────────────────────────────────────────────────────────
 
   async send(peerId: string, content: MessageContent): Promise<void> {
     const text = content.text ?? '';
@@ -214,6 +293,8 @@ export class SignalAdapter implements ChannelAdapter {
       throw new Error(`Signal send failed: HTTP ${res.status}`);
     }
   }
+
+  // ── Status ─────────────────────────────────────────────────────────────────
 
   status(): ChannelStatus {
     return this._status;

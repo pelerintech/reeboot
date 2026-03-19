@@ -2,10 +2,28 @@
 
 ---
 
+## Project conventions
+
+### Test files live in `reeboot/tests/`, not colocated with source
+All test files are located under `reeboot/tests/`, mirroring the `src/` directory structure (e.g. `src/channels/signal.ts` → `tests/channels/signal.test.ts`). Test files are excluded from the TypeScript compilation (`tsconfig.json` `exclude` already covers `**/*.test.ts`). Vitest is configured with `include: ['tests/**/*.test.ts']` and an `@src` alias pointing at `./src`, so every test imports source modules as `@src/foo.js` rather than with fragile relative `../../` paths. This keeps `src/` free of test noise and makes it easy to browse source files without test files interleaved.
+
+---
+
 ## Week 4 Decisions (Change: signal-scheduler-packages)
 
-### Signal adapter uses REST polling, not webhook
-`bbernhard/signal-cli-rest-api` supports both REST polling (`GET /v1/receive/<number>`) and WebSocket streaming. The polling approach is simpler and avoids exposing a webhook endpoint to the Docker container. Poll interval: 1 second (configurable via `config.channels.signal.pollInterval`). This is adequate for personal use messaging latency. The adapter connects by verifying the `/v1/about` endpoint is reachable; if Docker is not running, `adapter.status()` returns `'error'`.
+### Signal adapter uses WebSocket in json-rpc mode, HTTP polling as fallback
+`bbernhard/signal-cli-rest-api` supports three container modes: `normal`, `native`, and `json-rpc`. The receive strategy depends on which mode the container reports via `GET /v1/about`:
+
+- **`json-rpc` mode (recommended):** The adapter opens a persistent WebSocket connection to `ws://127.0.0.1:<port>/v1/receive/<number>`. signal-cli runs as a long-lived daemon inside the container, so the WS stays open and messages are pushed as they arrive. On disconnect, the adapter automatically reconnects after 3 seconds. This is the correct mode for high-frequency use — it avoids the per-request process-spawn overhead of `normal` mode.
+- **`normal`/`native` mode (fallback):** The adapter falls back to HTTP polling at a configurable interval (default: 1 second, via `config.channels.signal.pollInterval`). This still works but causes file-lock contention on macOS when poll interval is short, since `normal` mode spawns a new `signal-cli` process per request.
+
+The adapter detects the mode at `start()` time by calling `/v1/about` and reading the `mode` field. No config flag is required — mode is entirely determined by how the Docker container was started.
+
+**Note-to-self (Signal's "Saved Messages"):** Regular incoming messages from other users arrive as `envelope.dataMessage`. Messages sent to yourself arrive as `envelope.syncMessage.sentMessage` — a sync event pushed to all linked devices. The adapter handles both: `dataMessage` from your own number is filtered (outgoing echo), but `syncMessage.sentMessage` is passed through so note-to-self chat works the same as WhatsApp's self-chat.
+
+**Docker setup:** The container must be started with `MODE=json-rpc` and device linking must be done in `native` mode (which is the correct mode for the QR linking handshake). In practice: start in `native` mode to link, then switch to `json-rpc` for production use. The QR code endpoint (`GET /v1/qrcodelink`) returns a PNG image — open it with `curl -o /tmp/qr.png ... && open /tmp/qr.png` rather than printing to terminal.
+
+If Docker is not running, `adapter.status()` returns `'error'`.
 
 ### Credential proxy is opt-in, defaults to off in OS mode
 `src/credential-proxy.ts` starts a second Fastify instance on `127.0.0.1:3001` only when `config.credentialProxy.enabled === true` (default: false). In Phase 1, the agent process already has full access to config/env, so the proxy is only useful for sandboxed modes (Phase 3). The `X-Reeboot-Provider` header selects the target provider (anthropic, openai, google, openrouter) and the real API key is injected from config. The proxy always binds loopback only.

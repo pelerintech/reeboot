@@ -300,8 +300,15 @@ channels
       await adapter.stop();
       process.exit(0);
     } else if (type === 'signal') {
-      const { execSync, spawnSync } = await import('child_process');
+      const { execSync, spawnSync, spawn } = await import('child_process');
       const { createInterface } = await import('readline');
+      const { homedir } = await import('os');
+      const { join } = await import('path');
+      const { mkdirSync } = await import('fs');
+      const qrTerminal = await import('qrcode-terminal');
+
+      const SIGNAL_API_PORT = 8080;
+      const signalDir = join(homedir(), '.reeboot', 'channels', 'signal');
 
       console.log('\n📡 Signal setup via signal-cli-rest-api\n');
 
@@ -317,20 +324,34 @@ channels
         process.exit(1);
       }
 
-      // Step 2: Check if container already running
-      let containerRunning = false;
-      try {
-        const out = execSync(
-          'docker ps --filter name=signal-cli-rest-api --format "{{.Names}}"',
-          { stdio: ['pipe', 'pipe', 'pipe'] }
-        ).toString().trim();
-        containerRunning = out.includes('signal-cli-rest-api');
-      } catch { /* ignore */ }
+      // Step 2: Check / start container in native mode (required for linking)
+      const isContainerRunning = () => {
+        try {
+          return execSync(
+            'docker ps --filter name=signal-cli-rest-api --format "{{.Names}}"',
+            { stdio: ['pipe', 'pipe', 'pipe'] }
+          ).toString().trim().includes('signal-cli-rest-api');
+        } catch { return false; }
+      };
 
-      if (containerRunning) {
-        console.log('\n✓ signal-cli-rest-api is already running — skipping Docker steps.');
+      const isContainerStopped = () => {
+        try {
+          return execSync(
+            'docker ps -a --filter name=signal-cli-rest-api --filter status=exited --format "{{.Names}}"',
+            { stdio: ['pipe', 'pipe', 'pipe'] }
+          ).toString().trim().includes('signal-cli-rest-api');
+        } catch { return false; }
+      };
+
+      if (isContainerRunning()) {
+        console.log('\n  ℹ signal-cli-rest-api is already running.');
+        console.log('  Restarting in native mode for linking...');
+        spawnSync('docker', ['stop', 'signal-cli-rest-api'], { stdio: 'pipe' });
+        spawnSync('docker', ['rm', 'signal-cli-rest-api'], { stdio: 'pipe' });
+      } else if (isContainerStopped()) {
+        spawnSync('docker', ['rm', 'signal-cli-rest-api'], { stdio: 'pipe' });
       } else {
-        // Step 3: Pull image
+        // Pull image
         console.log('\nStep 2: Pulling bbernhard/signal-cli-rest-api...');
         const pull = spawnSync('docker', ['pull', 'bbernhard/signal-cli-rest-api:latest'], {
           stdio: 'inherit',
@@ -340,65 +361,177 @@ channels
           process.exit(1);
         }
         console.log('  ✓ Image pulled');
-
-        // Step 4: Start container
-        console.log('\nStep 3: Starting signal-cli-rest-api container...');
-        const { homedir } = await import('os');
-        const { join } = await import('path');
-        const { mkdirSync } = await import('fs');
-        const signalDir = join(homedir(), '.reeboot', 'channels', 'signal');
-        mkdirSync(signalDir, { recursive: true });
-
-        const start = spawnSync('docker', [
-          'run', '-d',
-          '--name', 'signal-cli-rest-api',
-          '-p', '8080:8080',
-          '-v', `${signalDir}:/home/.local/share/signal-cli`,
-          'bbernhard/signal-cli-rest-api:latest',
-        ], { stdio: 'inherit' });
-
-        if (start.status !== 0) {
-          console.error('  ✗ Failed to start container. It may already exist (stopped).');
-          console.error('    Try: docker start signal-cli-rest-api');
-          process.exit(1);
-        }
-        console.log('  ✓ Container started on port 8080');
-
-        // Wait for container to be ready
-        console.log('\n  Waiting for signal-cli to initialize...');
-        await new Promise(r => setTimeout(r, 3000));
       }
 
-      // Step 5: Registration / linking guidance
+      // Start container in native mode (required for QR linking handshake)
+      console.log('\nStep 3: Starting container in native mode for linking...');
+      mkdirSync(signalDir, { recursive: true });
+
+      const start = spawnSync('docker', [
+        'run', '-d',
+        '--name', 'signal-cli-rest-api',
+        '-p', `${SIGNAL_API_PORT}:8080`,
+        '-v', `${signalDir}:/home/.local/share/signal-cli`,
+        '-e', 'MODE=native',
+        'bbernhard/signal-cli-rest-api:latest',
+      ], { stdio: 'pipe' });
+
+      if (start.status !== 0) {
+        console.error('  ✗ Failed to start container.');
+        console.error(start.stderr?.toString());
+        process.exit(1);
+      }
+
+      // Wait for native mode to be ready
+      process.stdout.write('  Waiting for signal-cli to initialize...');
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        process.stdout.write('.');
+        try {
+          const res = await fetch(`http://127.0.0.1:${SIGNAL_API_PORT}/v1/about`);
+          if (res.ok) { console.log(' ✓'); break; }
+        } catch { /* not ready yet */ }
+        if (i === 14) { console.log(''); console.error('  ✗ Container did not become ready in time.'); process.exit(1); }
+      }
+
+      // Step 4: Register or link
       const rl = createInterface({ input: process.stdin, output: process.stdout });
       const ask = (q: string) => new Promise<string>((r) => rl.question(q, r));
 
       console.log('\nStep 4: Register or link your phone number');
       console.log('  (a) Register a new number via SMS/voice');
-      console.log('  (b) Link an existing Signal account (requires existing Signal app)');
-      const choice = await ask('\nEnter (a) or (b): ');
+      console.log('  (b) Link an existing Signal account (scan QR in terminal)');
+      const choice = (await ask('\nEnter (a) or (b): ')).trim().toLowerCase();
 
-      if (choice.trim().toLowerCase() === 'b') {
-        console.log('\nTo link an existing Signal account:');
-        console.log('  1. Open your Signal app on your phone');
-        console.log('  2. Go to Settings → Linked Devices → + button');
-        console.log('  3. Run this command in another terminal:');
-        console.log('     curl -X GET "http://localhost:8080/v1/qrcodelink?device_name=reeboot"');
-        console.log('  4. Scan the QR code from the curl output with your Signal app');
-        console.log('\nAfter linking, add to your ~/.reeboot/config.json:');
-        console.log('  "channels": { "signal": { "enabled": true, "phoneNumber": "+YOURNUMBER" } }');
+      if (choice === 'b') {
+        // Get the sgnl:// URI directly from signal-cli inside the container
+        // then render it as ASCII QR — no external tools needed
+        console.log('\n📱 Generating QR code...\n');
+
+        const linkProc = spawn('docker', [
+          'exec', 'signal-cli-rest-api',
+          'signal-cli', 'link', '--name', 'reeboot',
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+        let linked = false;
+
+        await new Promise<void>((resolve, reject) => {
+          let output = '';
+
+          linkProc.stdout.on('data', (chunk: Buffer) => {
+            output += chunk.toString();
+            const match = output.match(/(sgnl:\/\/[^\s\n]+)/);
+            if (match && !linked) {
+              const uri = match[1];
+              (qrTerminal as any).default.generate(uri, { small: true });
+              console.log('Scan this QR code with your Signal app:');
+              console.log('  Settings → Linked Devices → + button\n');
+              console.log('Waiting for you to scan...');
+            }
+          });
+
+          linkProc.on('close', (code: number) => {
+            if (code === 0) {
+              linked = true;
+              resolve();
+            } else {
+              reject(new Error(`signal-cli link exited with code ${code}`));
+            }
+          });
+
+          linkProc.on('error', reject);
+        }).catch((err) => {
+          console.error(`\n  ✗ Linking failed: ${err.message}`);
+          rl.close();
+          process.exit(1);
+        });
+
+        console.log('  ✓ Device linked successfully!');
+
       } else {
-        const phone = await ask('\nEnter your phone number (e.g., +1234567890): ');
-        console.log(`\nRegistering ${phone.trim()} via SMS...`);
-        console.log(`  Run: curl -X POST "http://localhost:8080/v1/register/${encodeURIComponent(phone.trim())}"`);
-        const code = await ask('\nEnter the verification code you received: ');
-        console.log(`  Run: curl -X POST "http://localhost:8080/v1/register/${encodeURIComponent(phone.trim())}/code/${code.trim()}"`);
-        console.log('\nAfter verifying, add to your ~/.reeboot/config.json:');
-        console.log(`  "channels": { "signal": { "enabled": true, "phoneNumber": "${phone.trim()}" } }`);
+        // Register a new number
+        const phone = (await ask('\nEnter your phone number (e.g., +1234567890): ')).trim();
+
+        console.log(`\nSending verification SMS to ${phone}...`);
+        const regRes = await fetch(
+          `http://127.0.0.1:${SIGNAL_API_PORT}/v1/register/${encodeURIComponent(phone)}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+        );
+        if (!regRes.ok) {
+          const body = await regRes.text();
+          console.error(`  ✗ Registration failed: ${body}`);
+          rl.close();
+          process.exit(1);
+        }
+        console.log('  ✓ SMS sent');
+
+        const code = (await ask('Enter the verification code you received: ')).trim();
+        const verRes = await fetch(
+          `http://127.0.0.1:${SIGNAL_API_PORT}/v1/register/${encodeURIComponent(phone)}/code/${code}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+        );
+        if (!verRes.ok) {
+          const body = await verRes.text();
+          console.error(`  ✗ Verification failed: ${body}`);
+          rl.close();
+          process.exit(1);
+        }
+        console.log('  ✓ Number verified');
       }
 
       rl.close();
-      console.log('\nDone! Run "reeboot start" to activate Signal messaging.\n');
+
+      // Step 5: Restart container in json-rpc mode for production use
+      console.log('\nStep 5: Restarting container in json-rpc mode for production...');
+      spawnSync('docker', ['stop', 'signal-cli-rest-api'], { stdio: 'pipe' });
+      spawnSync('docker', ['rm', 'signal-cli-rest-api'], { stdio: 'pipe' });
+
+      const restart = spawnSync('docker', [
+        'run', '-d',
+        '--name', 'signal-cli-rest-api',
+        '--restart', 'always',
+        '-p', `${SIGNAL_API_PORT}:8080`,
+        '-v', `${signalDir}:/home/.local/share/signal-cli`,
+        '-e', 'MODE=json-rpc',
+        'bbernhard/signal-cli-rest-api:latest',
+      ], { stdio: 'pipe' });
+
+      if (restart.status !== 0) {
+        console.error('  ✗ Failed to restart container in json-rpc mode.');
+        console.error(restart.stderr?.toString());
+        process.exit(1);
+      }
+      console.log('  ✓ Container running in json-rpc mode');
+
+      // Detect phone number from accounts
+      process.stdout.write('\nDetecting registered phone number...');
+      let detectedPhone = '';
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        process.stdout.write('.');
+        try {
+          const res = await fetch(`http://127.0.0.1:${SIGNAL_API_PORT}/v1/accounts`);
+          if (res.ok) {
+            const accounts = await res.json() as string[];
+            if (accounts.length > 0) { detectedPhone = accounts[0]; break; }
+          }
+        } catch { /* not ready yet */ }
+      }
+      console.log(detectedPhone ? ` ✓ ${detectedPhone}` : ' (could not detect — check manually)');
+
+      console.log('\n✅ Signal setup complete!');
+      console.log('\nAdd this to your ~/.reeboot/config.json:');
+      console.log(JSON.stringify({
+        channels: {
+          signal: {
+            enabled: true,
+            phoneNumber: detectedPhone || '+YOURNUMBER',
+            apiPort: SIGNAL_API_PORT,
+            pollInterval: 1000,
+          }
+        }
+      }, null, 2));
+      console.log('\nThen run: reeboot start\n');
       process.exit(0);
     } else {
       console.log(`channels login ${type}: not yet implemented`);
