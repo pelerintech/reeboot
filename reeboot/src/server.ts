@@ -1,4 +1,5 @@
 import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
+import { startHeartbeat } from './scheduler/heartbeat.js';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { readFileSync } from 'fs';
@@ -222,6 +223,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         setGlobalScheduler(schedulerInstance);
         _scheduler = schedulerInstance;
         console.log('[server] Scheduler started');
+
+        // ── Heartbeat init (after scheduler) ───────────────────────────
+        if (appConfig.heartbeat && _orchestrator) {
+          startHeartbeat(appConfig.heartbeat, db, _orchestrator);
+          if (appConfig.heartbeat.enabled) {
+            console.log('[server] System heartbeat started');
+          }
+        }
       } catch (err) {
         console.error('[server] Scheduler init failed:', err);
       }
@@ -371,10 +380,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
       return reply.status(400).send({ error: 'schedule and prompt are required' });
     }
 
-    // Validate cron expression
-    const { validate: cronValidate } = await import('node-cron');
-    if (!cronValidate(schedule)) {
-      return reply.status(400).send({ error: 'Invalid cron expression' });
+    // Validate schedule string (supports cron, interval, or ISO datetime)
+    const { detectScheduleType } = await import('./scheduler/parse.js');
+    try {
+      detectScheduleType(schedule);
+    } catch {
+      return reply.status(400).send({ error: 'invalid schedule expression' });
     }
 
     const { nanoid: nanoId } = await import('nanoid');
@@ -576,6 +587,10 @@ export async function stopServer(): Promise<void> {
     try { await _credProxy.close(); } catch { /* ignore */ }
     _credProxy = null;
   }
+
+  // Stop heartbeat
+  const { stopHeartbeat } = await import('./scheduler/heartbeat.js');
+  stopHeartbeat();
 
   // Stop scheduler
   if (_scheduler) {

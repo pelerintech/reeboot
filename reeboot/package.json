@@ -1,23 +1,36 @@
 {
   "name": "reeboot",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Personal AI agent running locally, reachable via WhatsApp, Signal, or WebChat",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "reeboot": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "exports": {
-    ".": {
-      "import": "./dist/index.js"
-    },
-    "./channels": {
-      "import": "./dist/channels/interface.js"
-    }
+    ".": "./dist/index.js",
+    "./channels": "./dist/channels/interface.js"
   },
+  "files": [
+    "dist/",
+    "extensions/",
+    "skills/",
+    "templates/",
+    "container/",
+    "webchat/"
+  ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22"
   },
+  "keywords": [
+    "ai",
+    "agent",
+    "whatsapp",
+    "signal",
+    "personal-ai",
+    "llm"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
@@ -28,16 +41,18 @@
     "@fastify/static": "^9.0.0",
     "@fastify/websocket": "^11.2.0",
     "@mariozechner/pi-coding-agent": "latest",
+    "@mozilla/readability": "^0.5.0",
     "@types/ws": "^8.18.1",
     "@whiskeysockets/baileys": "6.7.21",
     "better-sqlite3": "^11.6.0",
     "commander": "^12.1.0",
+    "cron-parser": "^4.9.0",
     "drizzle-kit": "^0.20.0",
     "drizzle-orm": "^0.31.0",
     "fastify": "^5.0.0",
     "inquirer": "^12.0.0",
+    "linkedom": "^0.16.11",
     "nanoid": "^5.0.0",
-    "node-cron": "^4.2.1",
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
     "qrcode-terminal": "^0.12.0",
@@ -47,7 +62,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^20.11.0",
-    "@types/node-cron": "^3.0.11",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
     "vitest": "^1.3.0"

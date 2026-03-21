@@ -33,6 +33,13 @@ const ExtensionsConfigSchema = z.object({
   core: ExtensionsCoreConfigSchema.default({}),
 });
 
+const SkillsConfigSchema = z.object({
+  permanent: z.array(z.string()).default([]),
+  ephemeral_ttl_minutes: z.number().int().min(1).default(60),
+  catalog_path: z.string().default(''),
+});
+export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
+
 const WebChannelSchema = z.object({
   enabled: z.boolean().default(true),
   port: z.number().int().default(3000),
@@ -86,6 +93,18 @@ const CredentialProxyConfigSchema = z.object({
   port: z.number().int().default(3001),
 });
 
+const SearchConfigSchema = z.object({
+  provider: z.enum(['none', 'duckduckgo', 'brave', 'tavily', 'serper', 'exa', 'searxng']).default('none'),
+  apiKey: z.string().default(''),
+  searxngBaseUrl: z.string().default('http://localhost:4000'),
+});
+
+const HeartbeatConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  interval: z.string().default('every 5m'),
+  contextId: z.string().default('main'),
+});
+
 export const ConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   channels: ChannelsConfigSchema.default({}),
@@ -96,9 +115,14 @@ export const ConfigSchema = z.object({
   routing: RoutingConfigSchema.default({}),
   session: SessionConfigSchema.default({}),
   credentialProxy: CredentialProxyConfigSchema.default({}),
+  search: SearchConfigSchema.default({}),
+  heartbeat: HeartbeatConfigSchema.default({}),
+  skills: SkillsConfigSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+export type SearchConfig = z.infer<typeof SearchConfigSchema>;
+export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
@@ -166,8 +190,10 @@ export function saveConfig(config: Config, configPath?: string): void {
   // Ensure directory exists
   mkdirSync(dirname(path), { recursive: true });
 
-  // Atomic write: write to temp file then rename
-  const tmpFile = join(tmpdir(), `reeboot-config-${Date.now()}.json`);
+  // Atomic write: write to a temp file in the same directory then rename.
+  // Using the same directory avoids EXDEV (cross-device rename) errors that
+  // occur in Docker when /tmp is on a different filesystem than the config dir.
+  const tmpFile = join(dirname(path), `.reeboot-config-${Date.now()}.json.tmp`);
   writeFileSync(tmpFile, JSON.stringify(config, null, 2), 'utf-8');
   renameSync(tmpFile, path);
 }

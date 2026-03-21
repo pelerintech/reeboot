@@ -100,3 +100,22 @@ describe('saveConfig()', () => {
     expect(loaded.agent.name).toBe('Saved');
   });
 });
+
+describe('heartbeat config', () => {
+  it('has default heartbeat block with enabled=false', async () => {
+    const { defaultConfig } = await import('@src/config.js');
+    expect(defaultConfig.heartbeat.enabled).toBe(false);
+    expect(defaultConfig.heartbeat.interval).toBe('every 5m');
+    expect(defaultConfig.heartbeat.contextId).toBe('main');
+  });
+
+  it('parses heartbeat block from config', async () => {
+    const { ConfigSchema } = await import('@src/config.js');
+    const cfg = ConfigSchema.parse({
+      heartbeat: { enabled: true, interval: 'every 1m', contextId: 'work' },
+    });
+    expect(cfg.heartbeat.enabled).toBe(true);
+    expect(cfg.heartbeat.interval).toBe('every 1m');
+    expect(cfg.heartbeat.contextId).toBe('work');
+  });
+});

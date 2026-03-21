@@ -3,16 +3,20 @@
  * Set by server.ts after the Scheduler is initialised.
  */
 
-import type { SchedulerToolsTarget } from './scheduler.js';
+import type { SchedulerToolsTarget, Scheduler } from './scheduler.js';
+export { startHeartbeat, stopHeartbeat } from './scheduler/heartbeat.js';
 
 // Stub scheduler that no-ops until a real one is registered
-const noopScheduler: SchedulerToolsTarget = {
+const noopScheduler: SchedulerToolsTarget & { start(): Promise<void>; stop(): void } = {
   registerJob: () => {},
   cancelJob: () => {},
+  start: async () => {},
+  stop: () => {},
 };
 
-export let globalScheduler: SchedulerToolsTarget = noopScheduler;
+export let globalScheduler: SchedulerToolsTarget & { start(): Promise<void>; stop(): void } =
+  noopScheduler;
 
-export function setGlobalScheduler(scheduler: SchedulerToolsTarget): void {
+export function setGlobalScheduler(scheduler: Scheduler): void {
   globalScheduler = scheduler;
 }

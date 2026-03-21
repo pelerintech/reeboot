@@ -1,0 +1,16 @@
+{
+  "providers": [
+    {
+      "id": "ollama",
+      "name": "Ollama (local)",
+      "baseUrl": "http://localhost:11434/v1",
+      "models": [
+        {
+          "id": "{{MODEL_ID}}",
+          "name": "{{MODEL_ID}}",
+          "contextWindow": 8192
+        }
+      ]
+    }
+  ]
+}

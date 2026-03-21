@@ -307,3 +307,67 @@ export class SignalAdapter implements ChannelAdapter {
 
 // Self-register at module import time
 registerChannel('signal', () => new SignalAdapter());
+
+// ─── linkSignalDevice (wizard) ────────────────────────────────────────────────
+
+/**
+ * Initiates a Signal device-linking flow for the setup wizard.
+ * Assumes Docker is already running and signal-cli-rest-api container is available.
+ * Calls onQr with the QR link URL, onSuccess on link, onTimeout after 3 minutes.
+ */
+export async function linkSignalDevice(opts: {
+  phoneNumber: string
+  apiPort?: number
+  onQr: (url: string) => void
+  onSuccess: () => void
+  onTimeout: () => void
+  timeoutMs?: number
+}): Promise<void> {
+  const { phoneNumber, apiPort = 8080, onQr, onSuccess, onTimeout, timeoutMs = 180_000 } = opts
+  const baseUrl = `http://127.0.0.1:${apiPort}`
+
+  let resolved = false
+
+  const timeoutHandle = setTimeout(() => {
+    if (!resolved) {
+      resolved = true
+      onTimeout()
+    }
+  }, timeoutMs)
+
+  // Get QR link URL from signal-cli-rest-api
+  try {
+    const res = await fetch(`${baseUrl}/v1/qrcodelink?device_name=reeboot`, {
+      method: 'GET',
+    })
+    if (res.ok) {
+      const url = `${baseUrl}/v1/qrcodelink?device_name=reeboot`
+      if (!resolved) onQr(url)
+    }
+  } catch {
+    // Ignore — will timeout
+  }
+
+  // Poll for successful link
+  const pollInterval = setInterval(async () => {
+    if (resolved) {
+      clearInterval(pollInterval)
+      return
+    }
+    try {
+      const encoded = encodeURIComponent(phoneNumber)
+      const res = await fetch(`${baseUrl}/v1/accounts`)
+      if (res.ok) {
+        const accounts = await res.json() as string[]
+        if (accounts.includes(phoneNumber)) {
+          resolved = true
+          clearTimeout(timeoutHandle)
+          clearInterval(pollInterval)
+          onSuccess()
+        }
+      }
+    } catch {
+      // Ignore poll errors
+    }
+  }, 2000)
+}

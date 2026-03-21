@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import type { Prompter } from '../tests/helpers/fake-prompter.js';
 
 const program = new Command();
 
@@ -10,6 +11,104 @@ program
   .name('reeboot')
   .description('Personal AI agent running locally')
   .version('0.0.1');
+
+// ─── handleDefaultAction ──────────────────────────────────────────────────────
+
+/**
+ * Exported for testing: determines whether to run the wizard or start the agent.
+ * Checks config path existence (using REEBOOT_CONFIG_PATH env var if set).
+ */
+export interface DefaultActionDeps {
+  runWizard?: (opts: { configPath: string }) => Promise<void>
+  startAgent?: (configPath: string) => Promise<void>
+}
+
+export async function handleDefaultAction(opts: {
+  configPath?: string
+  _deps?: DefaultActionDeps
+} = {}): Promise<void> {
+  const configPath = opts.configPath
+    ?? process.env.REEBOOT_CONFIG_PATH
+    ?? join(homedir(), '.reeboot', 'config.json');
+
+  const deps = opts._deps ?? {};
+
+  if (!existsSync(configPath)) {
+    if (deps.runWizard) {
+      await deps.runWizard({ configPath });
+    } else {
+      const { runSetupWizard } = await import('./wizard/index.js');
+      await runSetupWizard({ configPath });
+    }
+  } else {
+    if (deps.startAgent) {
+      await deps.startAgent(configPath);
+    } else {
+      const { loadConfig } = await import('./config.js');
+      const { startServer } = await import('./server.js');
+      const config = loadConfig(configPath);
+      await startServer({
+        port: config.channels.web.port,
+        host: process.env.REEBOOT_HOST ?? '127.0.0.1',
+        logLevel: config.logging.level,
+        token: config.server.token,
+        config,
+      });
+      console.log(`✓ WebChat ready at http://localhost:${config.channels.web.port}`);
+    }
+  }
+}
+
+// ─── runSetupCommand ──────────────────────────────────────────────────────────
+
+/**
+ * Exported for testing: `reeboot setup` handler.
+ * If config exists, prompts for overwrite confirmation before running wizard.
+ */
+export interface SetupCommandDeps {
+  runWizard?: (opts: { configPath: string; prompter?: Prompter }) => Promise<void>
+}
+
+export async function runSetupCommand(opts: {
+  configPath?: string;
+  prompter?: Prompter;
+  _deps?: SetupCommandDeps;
+} = {}): Promise<void> {
+  const configPath = opts.configPath
+    ?? process.env.REEBOOT_CONFIG_PATH
+    ?? join(homedir(), '.reeboot', 'config.json');
+
+  if (existsSync(configPath)) {
+    let confirmed: boolean;
+    if (opts.prompter) {
+      confirmed = await opts.prompter.confirm({
+        message: 'Config already exists. Overwrite?',
+        default: false,
+      });
+    } else {
+      const { default: inquirer } = await import('inquirer');
+      const { overwrite } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'overwrite',
+        message: 'Config already exists. Overwrite?',
+        default: false,
+      }]);
+      confirmed = overwrite;
+    }
+    if (!confirmed) {
+      console.log('Setup cancelled. Existing config preserved.');
+      return;
+    }
+  }
+
+  const deps = opts._deps ?? {};
+  if (deps.runWizard) {
+    await deps.runWizard({ configPath, prompter: opts.prompter });
+  } else {
+    const { runSetupWizard } = await import('./wizard/index.js');
+    await runSetupWizard({ configPath, prompter: opts.prompter });
+  }
+}
 
 // ─── start ───────────────────────────────────────────────────────────────────
 
@@ -51,6 +150,7 @@ program
       console.log(`Starting reeboot on port ${config.channels.web.port}...`);
       await startServer({
         port: config.channels.web.port,
+        host: process.env.REEBOOT_HOST ?? '127.0.0.1',
         logLevel: config.logging.level,
         token: config.server.token,
         config,
@@ -88,8 +188,15 @@ program
   .option('--channels <channels>', 'Channels comma-separated')
   .option('--name <name>', 'Agent name')
   .action(async (opts) => {
-    const { runWizard } = await import('./setup-wizard.js');
-    await runWizard({ interactive: opts.interactive ?? true, ...opts });
+    await runSetupCommand({ configPath: undefined });
+    // Note: interactive opts handled inside runSetupCommand/runSetupWizard
+  });
+
+// ─── default action (no subcommand) ──────────────────────────────────────────
+
+program
+  .action(async () => {
+    await handleDefaultAction();
   });
 
 // ─── status ──────────────────────────────────────────────────────────────────
@@ -404,8 +511,6 @@ channels
       const choice = (await ask('\nEnter (a) or (b): ')).trim().toLowerCase();
 
       if (choice === 'b') {
-        // Get the sgnl:// URI directly from signal-cli inside the container
-        // then render it as ASCII QR — no external tools needed
         console.log('\n📱 Generating QR code...\n');
 
         const linkProc = spawn('docker', [
@@ -588,7 +693,71 @@ sessions
     console.log('sessions list: not yet implemented');
   });
 
-// ─── Error on unknown commands ───────────────────────────────────────────────
+
+// ─── tasks ───────────────────────────────────────────────────────────────────
+
+const tasks = program
+  .command('tasks')
+  .description('Task management commands');
+
+tasks
+  .command('due')
+  .description('List overdue scheduled tasks')
+  .action(async () => {
+    const { join } = await import('path');
+    const { homedir } = await import('os');
+    const Database = (await import('better-sqlite3')).default;
+    const { runMigration } = await import('./db/schema.js');
+    const { getTasksDue, formatTasksDue } = await import('./scheduler.js');
+
+    const dbPath = join(homedir(), '.reeboot', 'reeboot.db');
+    let db: any;
+    try {
+      db = new Database(dbPath, { readonly: true });
+    } catch {
+      console.error('No reeboot database found. Run "reeboot start" first.');
+      process.exit(1);
+    }
+
+    const due = getTasksDue(db);
+    console.log(formatTasksDue(due as any));
+    db.close();
+  });
+
+
+// ─── skills ──────────────────────────────────────────────────────────────────
+
+const skillsCmd = program
+  .command('skills')
+  .description('Skill catalog commands');
+
+skillsCmd
+  .command('list')
+  .description('List all bundled skills')
+  .action(async () => {
+    const { fileURLToPath } = await import('url');
+    const { dirname, join } = await import('path');
+    const { printSkillsList } = await import('./skills-cli.js');
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const skillsDir = join(__dirname, '..', 'skills');
+    printSkillsList(skillsDir);
+    process.exit(0);
+  });
+
+skillsCmd
+  .command('update')
+  .description('Update extended skill catalog')
+  .action(async () => {
+    const { fileURLToPath } = await import('url');
+    const { dirname, join } = await import('path');
+    const { getSkillsUpdateMessage } = await import('./skills-cli.js');
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const skillsDir = join(__dirname, '..', 'skills');
+    console.log(getSkillsUpdateMessage(skillsDir));
+    process.exit(0);
+  });
 
 program.on('command:*', () => {
   console.error(`Unknown command: ${program.args.join(' ')}`);

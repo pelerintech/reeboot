@@ -56,7 +56,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     // The version bundled in Baileys RC is often stale and gets rejected (405).
     let version: [number, number, number];
     try {
-      const result = await fetchLatestWaWebVersion();
+      const result = await fetchLatestWaWebVersion({});
       version = result.version;
       console.log(`[WhatsApp] Using WA Web version: ${version.join('.')}`);
     } catch (err) {
@@ -175,3 +175,75 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
 // Self-register at module import time
 registerChannel('whatsapp', () => new WhatsAppAdapter());
+
+// ─── linkDevice (wizard) ──────────────────────────────────────────────────────
+
+/**
+ * Initiates a device-linking flow for the setup wizard.
+ * Calls onQr with the QR string, onSuccess on connection, onTimeout if not
+ * connected within the 2-minute timeout.
+ *
+ * Accepts a temp auth directory to keep wizard state separate from production.
+ */
+export async function linkWhatsAppDevice(opts: {
+  authDir: string
+  onQr: (qr: string) => void
+  onSuccess: () => void
+  onTimeout: () => void
+  timeoutMs?: number
+}): Promise<void> {
+  const { authDir, onQr, onSuccess, onTimeout, timeoutMs = 120_000 } = opts
+
+  const {
+    makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    Browsers,
+    fetchLatestWaWebVersion,
+  } = await import('@whiskeysockets/baileys')
+
+  const { mkdirSync } = await import('fs')
+  mkdirSync(authDir, { recursive: true })
+
+  const { state, saveCreds } = await useMultiFileAuthState(authDir)
+
+  let version: [number, number, number]
+  try {
+    const result = await fetchLatestWaWebVersion({})
+    version = result.version
+  } catch {
+    version = [2, 3000, 1027934701]
+  }
+
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    browser: Browsers.ubuntu('Chrome'),
+  })
+
+  let resolved = false
+
+  const timeoutHandle = setTimeout(() => {
+    if (!resolved) {
+      resolved = true
+      try { sock.end() } catch { /* ignore */ }
+      onTimeout()
+    }
+  }, timeoutMs)
+
+  sock.ev.on('creds.update', saveCreds)
+
+  sock.ev.on('connection.update', (update: any) => {
+    const { connection, qr } = update
+
+    if (qr && !resolved) {
+      onQr(qr)
+    }
+
+    if (connection === 'open' && !resolved) {
+      resolved = true
+      clearTimeout(timeoutHandle)
+      onSuccess()
+    }
+  })
+}

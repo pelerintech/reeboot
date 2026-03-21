@@ -1,27 +1,65 @@
 ---
 name: send-message
-description: Send a message to a contact via WhatsApp or Signal. Use when the user asks you to send a message to someone via a messaging channel.
+description: Send a message back to the originating channel or to a specific contact via WhatsApp or Signal. Use when the user asks you to send, forward, or relay a message to someone via a messaging channel.
 ---
 
-# Send Message Skill
+# Send Message
 
-Use this skill when the user wants to send a message to a contact via a messaging channel (WhatsApp, Signal).
+Teaches the agent to send a message back to the originating channel or to a specific peer via reeboot's channel routing system.
 
-## Instructions
+## Setup
 
-1. Identify the target channel (WhatsApp or Signal) and recipient
-2. Confirm the message content with the user if not explicitly stated
-3. Use the appropriate channel tool to send the message
-4. Report success or failure back to the user
+No external dependencies. The send-message capability is built into reeboot's channel system.
 
-## When to Use
+Supported channels (must be configured in `~/.reeboot/config.json`):
+- **WhatsApp** — requires WhatsApp session to be active (`reeboot channels login whatsapp`)
+- **Signal** — requires Signal container running (`reeboot channels login signal`)
 
-- "Send a WhatsApp message to Alice saying..."
-- "Text Bob on Signal that..."
-- "Forward this to my team on WhatsApp"
+Verify channel status:
+```
+reeboot channels list
+```
+
+## Usage
+
+### Send a reply in the same turn
+
+Simply include your reply text as the response — reeboot routes it back to the originating channel automatically.
+
+### Send to a specific contact
+
+Use the `send_message` tool (registered by the channel routing system):
+
+```
+send_message({
+  channel: "whatsapp",       // or "signal"
+  peerId: "+1234567890",     // phone number or WhatsApp JID
+  content: "Hello from reeboot!"
+})
+```
+
+### When to use vs. just responding
+
+- **Just respond** — if you want to reply to the person who sent you the message (same turn, same channel). This is the default.
+- **Use send_message tool** — if you need to send to a *different* contact or channel, or send *proactively* (e.g., from a scheduled task).
+
+### Example flows
+
+```
+User (WhatsApp): "Text my wife that I'll be home late"
+→ Identify contact from user's address book or ask for phone number
+→ Confirm: "Send 'I'll be home late' to +1XXXXXXXXXX on WhatsApp?"
+→ send_message({ channel: "whatsapp", peerId: "+1XXXXXXXXXX", content: "I'll be home late" })
+→ Report: "Message sent."
+```
+
+```
+Scheduled task: daily standup reminder
+→ send_message({ channel: "whatsapp", peerId: "team@g.us", content: "Daily standup in 15 minutes!" })
+```
 
 ## Important
 
-- Always confirm the recipient and message content before sending
-- Do not send messages without explicit user instruction
+- Always confirm recipient and content before sending
+- Never send without explicit user instruction (or a pre-approved schedule)
 - Report delivery status or errors clearly

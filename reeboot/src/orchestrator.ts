@@ -350,6 +350,37 @@ export class Orchestrator {
     this._reply(msg, 'Session compacted.');
   }
 
+  // ── Heartbeat dispatch ───────────────────────────────────────────────────
+
+  /** Dispatch a heartbeat tick to a context, returning the agent's response. */
+  async handleHeartbeatTick(params: { contextId: string; prompt: string }): Promise<string> {
+    const runner = this._runners.get(params.contextId);
+    if (!runner) {
+      console.warn(`[Heartbeat] No runner for context "${params.contextId}"`);
+      return 'IDLE';
+    }
+    let response = '';
+    try {
+      await runner.prompt(params.prompt, (event) => {
+        if (event.type === 'text_delta') response += event.delta;
+      });
+    } catch (err) {
+      console.warn(`[Heartbeat] Runner error: ${err}`);
+      return 'IDLE';
+    }
+    return response;
+  }
+
+  /** Send a text message to the first available adapter for a context. */
+  sendToDefaultChannel(contextId: string, text: string): void {
+    // Try each adapter in registration order until one succeeds
+    for (const adapter of this._adapters.values()) {
+      // Send to contextId as peerId — adapters handle routing
+      adapter.send(contextId, { type: 'text', text }).catch(() => {/* ignore */});
+      return; // send to first available adapter only
+    }
+  }
+
   // ── Inactivity timer ──────────────────────────────────────────────────────
 
   private _resetInactivityTimer(contextId: string, state: ContextState): void {

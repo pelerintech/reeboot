@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, copyFileSync, writeFileSync } from 'fs';
+import { mkdirSync, existsSync, copyFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -21,31 +21,31 @@ export interface WizardOptions {
 
 // ─── runWizard ───────────────────────────────────────────────────────────────
 
+/**
+ * Legacy wizard entrypoint — kept for backward compatibility.
+ * In interactive mode, delegates to the new modular wizard (src/wizard/index.ts).
+ * In non-interactive mode, builds config directly from provided opts.
+ */
 export async function runWizard(opts: WizardOptions = {}): Promise<void> {
   const configDir = opts.configDir ?? join(homedir(), '.reeboot');
   const configPath = join(configDir, 'config.json');
   const interactive = opts.interactive !== false;
 
-  let answers: {
-    provider: string;
-    apiKey: string;
-    model: string;
-    channels: string[];
-    name: string;
-  };
-
   if (interactive) {
-    answers = await runInteractiveWizard(configPath, opts);
-  } else {
-    // Non-interactive: use provided flags
-    answers = {
-      provider: opts.provider ?? '',
-      apiKey: opts.apiKey ?? '',
-      model: opts.model ?? '',
-      channels: opts.channels ? opts.channels.split(',').map(s => s.trim()) : ['web'],
-      name: opts.name ?? 'Reeboot',
-    };
+    // Delegate to new wizard
+    const { runSetupWizard } = await import('./wizard/index.js');
+    await runSetupWizard({ configPath, configDir });
+    return;
   }
+
+  // Non-interactive: build config from provided flags directly
+  const answers = {
+    provider: opts.provider ?? '',
+    apiKey: opts.apiKey ?? '',
+    model: opts.model ?? '',
+    channels: opts.channels ? opts.channels.split(',').map(s => s.trim()) : ['web'],
+    name: opts.name ?? 'Reeboot',
+  };
 
   // Build config from answers
   const config: Config = {
@@ -58,6 +58,7 @@ export async function runWizard(opts: WizardOptions = {}): Promise<void> {
         id: answers.model,
         apiKey: answers.apiKey,
       },
+      turnTimeout: defaultConfig.agent.turnTimeout,
     },
     channels: {
       web: {
@@ -69,11 +70,20 @@ export async function runWizard(opts: WizardOptions = {}): Promise<void> {
       },
       signal: {
         enabled: answers.channels.includes('signal'),
+        phoneNumber: defaultConfig.channels.signal.phoneNumber,
+        apiPort: defaultConfig.channels.signal.apiPort,
+        pollInterval: defaultConfig.channels.signal.pollInterval,
       },
     },
     sandbox: defaultConfig.sandbox,
     logging: defaultConfig.logging,
     server: defaultConfig.server,
+    extensions: defaultConfig.extensions,
+    routing: defaultConfig.routing,
+    session: defaultConfig.session,
+    credentialProxy: defaultConfig.credentialProxy,
+    search: defaultConfig.search,
+    heartbeat: defaultConfig.heartbeat,
   };
 
   // Write config
@@ -88,72 +98,6 @@ export async function runWizard(opts: WizardOptions = {}): Promise<void> {
   // Scaffold template files
   scaffoldTemplates(configDir);
   console.log(`✓ Templates scaffolded`);
-}
-
-// ─── Interactive wizard ───────────────────────────────────────────────────────
-
-async function runInteractiveWizard(
-  configPath: string,
-  _opts: WizardOptions
-): Promise<{ provider: string; apiKey: string; model: string; channels: string[]; name: string }> {
-  const { default: inquirer } = await import('inquirer');
-
-  console.log('\n🚀 Welcome to Reeboot Setup Wizard\n');
-
-  // Check if config exists and ask for confirmation
-  if (existsSync(configPath)) {
-    const { overwrite } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'overwrite',
-        message: 'A config already exists. Overwrite it?',
-        default: false,
-      },
-    ]);
-    if (!overwrite) {
-      console.log('Setup cancelled. Existing config preserved.');
-      process.exit(0);
-    }
-  }
-
-  const answers = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'provider',
-      message: 'Select your LLM provider:',
-      choices: ['anthropic', 'openai', 'ollama', 'other'],
-    },
-    {
-      type: 'password',
-      name: 'apiKey',
-      message: 'Enter your API key:',
-      mask: '*',
-    },
-    {
-      type: 'input',
-      name: 'model',
-      message: 'Enter the model ID:',
-      default: 'claude-sonnet-4-20250514',
-    },
-    {
-      type: 'checkbox',
-      name: 'channels',
-      message: 'Select channels to enable:',
-      choices: [
-        { name: 'WebChat (built-in web UI)', value: 'web', checked: true },
-        { name: 'WhatsApp', value: 'whatsapp' },
-        { name: 'Signal', value: 'signal' },
-      ],
-    },
-    {
-      type: 'input',
-      name: 'name',
-      message: 'Agent name:',
-      default: 'Reeboot',
-    },
-  ]);
-
-  return answers;
 }
 
 // ─── Directory scaffolding ────────────────────────────────────────────────────

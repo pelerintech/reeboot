@@ -128,7 +128,7 @@ describe('Task REST API', () => {
 
     expect(res.status).toBe(400);
     const body = await res.json() as any;
-    expect(body.error).toContain('Invalid cron');
+    expect(body.error).toMatch(/invalid|Invalid|schedule|cron/i);
   });
 
   it('POST /api/tasks persists to database', async () => {

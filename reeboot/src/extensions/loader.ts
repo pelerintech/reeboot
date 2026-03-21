@@ -43,6 +43,8 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   const compactionEnabled    = core.custom_compaction  ?? true;
   const schedulerEnabled     = core.scheduler_tool     ?? true;
   const tokenMeterEnabled    = core.token_meter        ?? true;
+  const webSearchEnabled     = (core as any).web_search ?? true;
+  const skillManagerEnabled  = (core as any).skill_manager ?? true;
 
   const factories: ExtensionFactory[] = [];
 
@@ -110,6 +112,20 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
     factories.push(async (pi) => {
       const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'token-meter.ts')).catch(() => null);
       if (mod?.default) mod.default(pi);
+    });
+  }
+
+  if (webSearchEnabled) {
+    factories.push(async (pi) => {
+      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'web-search.ts')).catch(() => null);
+      if (mod?.default) await (mod.default as any)(pi);
+    });
+  }
+
+  if (skillManagerEnabled) {
+    factories.push(async (pi) => {
+      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'skill-manager.ts')).catch(() => null);
+      if (mod?.default) await (mod.default as any)(pi, config);
     });
   }
 
