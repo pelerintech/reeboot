@@ -226,7 +226,7 @@ export async function linkWhatsAppDevice(opts: {
   const timeoutHandle = setTimeout(() => {
     if (!resolved) {
       resolved = true
-      try { sock.end() } catch { /* ignore */ }
+      try { sock.end(undefined) } catch { /* ignore */ }
       onTimeout()
     }
   }, timeoutMs)

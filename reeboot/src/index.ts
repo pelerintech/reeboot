@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import type { Prompter } from '../tests/helpers/fake-prompter.js';
+import type { Prompter } from './wizard/prompter.js';
 
 const program = new Command();
 
