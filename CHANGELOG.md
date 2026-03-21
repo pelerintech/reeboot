@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.3] - 2026-03-21
+
+### Fixed
+
+- **`reeboot --version` reported `0.0.1`** — CLI was hardcoding the version string; now reads dynamically from `package.json`
+- **WhatsApp wizard: baileys logs flood terminal and wizard never advances** — the linking socket was left open after `onSuccess`, causing baileys to keep printing history-sync and session-write logs to stdout. The socket is now closed (500ms after `connection: 'open'`) before `onSuccess` is called, and baileys logging is silenced via pino `level: 'silent'` during the wizard flow.
+- **WhatsApp linking: `ENOENT` on session files after successful QR scan** — the wizard was writing auth to a temp directory then renaming it to the permanent location in `onSuccess`. Baileys continues writing session files (Signal protocol sessions, pre-keys) well after `connection: 'open'` fires, causing `ENOENT` on those writes. Fixed by writing directly to the permanent auth directory from the start — no temp dir, no rename.
+- **Scheduler crash on start: `require is not defined`** — `src/db/schema.ts` was using `require('cron-parser')` inside an ESM module. Converted to a top-level ESM import.
+- **`cron-parser` named export error** — `cron-parser` v4 is a CJS module; its `parseExpression` function is only accessible via the default export. Fixed import from `import { parseExpression }` to `import cronParser from 'cron-parser'`.
+
+### Added
+
+- **`npm run test:run`** — single-pass vitest run (no watch); useful in CI and as a component of the quality check
+- **`npm run check`** — full quality gate: `build` then `test:run`. Run this before publishing.
+- **Post-build smoke tests** (`tests/smoke.test.ts`) — 10 tests that import compiled `dist/` modules directly and verify export shapes. Catches ESM/CJS import errors, `require()`-in-ESM, and missing named exports that TypeScript and unit tests both miss (because unit tests mock their dependencies). Covers: `db/schema.js`, `scheduler.js`, `channels/whatsapp.js`, `channels/signal.js`, `server.js`, `channels/interface.js`.
+
+---
+
 ## [1.3.2] - 2026-03-21
 
 ### Fixed

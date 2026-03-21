@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { Prompter } from './wizard/prompter.js';
@@ -10,7 +10,7 @@ const program = new Command();
 program
   .name('reeboot')
   .description('Personal AI agent running locally')
-  .version('0.0.1');
+  .version(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
 
 // ─── handleDefaultAction ──────────────────────────────────────────────────────
 

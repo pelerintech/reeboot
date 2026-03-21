@@ -118,7 +118,7 @@ describe('linkWhatsAppDevice', () => {
     // Emit open on second socket
     emitUpdate(createdSockets[1], { connection: 'open' });
 
-    await flushAsync(50);
+    await flushAsync(600);
 
     expect(onSuccess).toHaveBeenCalledTimes(1);
     expect(onTimeout).not.toHaveBeenCalled();
@@ -143,7 +143,7 @@ describe('linkWhatsAppDevice', () => {
 
     emitUpdate(createdSockets[0], { connection: 'open' });
 
-    await flushAsync(50);
+    await flushAsync(600);
 
     expect(onSuccess).toHaveBeenCalledTimes(1);
     expect(onTimeout).not.toHaveBeenCalled();
@@ -223,7 +223,7 @@ describe('linkWhatsAppDevice', () => {
     emitUpdate(createdSockets[0], { connection: 'open' });
     emitUpdate(createdSockets[0], { connection: 'open' });
 
-    await flushAsync(50);
+    await flushAsync(600);
 
     expect(onSuccess).toHaveBeenCalledTimes(1);
 

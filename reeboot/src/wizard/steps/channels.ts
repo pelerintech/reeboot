@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, existsSync, readdirSync, renameSync } from 'fs'
+import { mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import type { Prompter } from '../prompter.js'
@@ -83,11 +83,11 @@ async function runWhatsAppSubflow(opts: {
   console.log('\n  📱 WhatsApp Setup')
   console.log('  ─────────────────────────────────────────────────────────────')
 
-  // Clean up any orphaned temp auth dirs from previous wizard runs
-  cleanOrphanedWizardAuthDirs(configDir)
-
-  const tempAuthDir = join(configDir, `.wiz-wa-auth-${Date.now()}`)
-  mkdirSync(tempAuthDir, { recursive: true })
+  // Write auth directly to the permanent location — no temp dir, no rename race.
+  // Baileys writes session files continuously after connection open; moving the
+  // directory mid-write causes ENOENT on subsequent writes.
+  const authDir = join(configDir, 'channels', 'whatsapp', 'auth')
+  mkdirSync(authDir, { recursive: true })
 
   let success = false
 
@@ -96,7 +96,7 @@ async function runWhatsAppSubflow(opts: {
 
     await new Promise<void>((resolve) => {
       linkFn({
-        authDir: tempAuthDir,
+        authDir,
         onQr: (qr: string) => {
           console.log('\n  Scan this QR code with WhatsApp:')
           console.log('  (Settings → Linked Devices → Link a Device)\n')
@@ -105,15 +105,6 @@ async function runWhatsAppSubflow(opts: {
         },
         onSuccess: () => {
           success = true
-          // Move temp auth dir to permanent location
-          const permDir = join(configDir, 'channels', 'whatsapp', 'auth')
-          mkdirSync(join(configDir, 'channels', 'whatsapp'), { recursive: true })
-          try {
-            if (existsSync(tempAuthDir)) {
-              rmSync(permDir, { recursive: true, force: true })
-              renameSync(tempAuthDir, permDir)
-            }
-          } catch { /* ignore move errors */ }
           console.log('  ✓ WhatsApp linked!')
           resolve()
         },
@@ -121,7 +112,6 @@ async function runWhatsAppSubflow(opts: {
           success = false
           console.log('  ✗ WhatsApp QR timed out.')
           console.log('  → Run `reeboot channel login whatsapp` later to link.\n')
-          try { rmSync(tempAuthDir, { recursive: true, force: true }) } catch { /* ignore */ }
           resolve()
         },
       })
@@ -254,17 +244,4 @@ async function runSignalSubflow(opts: {
   return { enabled: success, phone }
 }
 
-// ─── cleanOrphanedWizardAuthDirs ──────────────────────────────────────────────
 
-function cleanOrphanedWizardAuthDirs(configDir: string): void {
-  try {
-    const entries = readdirSync(configDir)
-    for (const entry of entries) {
-      if (entry.startsWith('.wiz-wa-auth-')) {
-        try {
-          rmSync(join(configDir, entry), { recursive: true, force: true })
-        } catch { /* ignore */ }
-      }
-    }
-  } catch { /* configDir may not exist yet */ }
-}

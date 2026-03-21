@@ -226,10 +226,12 @@ export async function linkWhatsAppDevice(opts: {
   }, timeoutMs)
 
   async function connect(): Promise<void> {
+    const pino = (await import('pino')).default
     const sock = makeWASocket({
       version,
       auth: state,
       browser: Browsers.ubuntu('Chrome'),
+      logger: pino({ level: 'silent' }),
     })
 
     sock.ev.on('creds.update', saveCreds)
@@ -244,7 +246,11 @@ export async function linkWhatsAppDevice(opts: {
       if (connection === 'open' && !resolved) {
         resolved = true
         clearTimeout(timeoutHandle)
-        onSuccess()
+        // Give baileys a moment to finish writing creds before we signal success
+        setTimeout(() => {
+          try { sock.end(undefined) } catch { /* ignore */ }
+          onSuccess()
+        }, 500)
         return
       }
 

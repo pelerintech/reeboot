@@ -1,5 +1,6 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
+import cronParser from 'cron-parser';
 
 // ─── contexts ────────────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ export function runMigration(db: import('better-sqlite3').Database): void {
  * compute next_run from the schedule column using cron-parser.
  */
 function _computeMissingNextRuns(db: import('better-sqlite3').Database): void {
-  const { parseExpression } = require('cron-parser') as typeof import('cron-parser');
+
   const rows = db
     .prepare("SELECT id, schedule, schedule_value FROM tasks WHERE schedule_type = 'cron' AND next_run IS NULL")
     .all() as Array<{ id: string; schedule: string; schedule_value: string }>;
@@ -135,7 +136,7 @@ function _computeMissingNextRuns(db: import('better-sqlite3').Database): void {
   for (const row of rows) {
     const expr = row.schedule_value || row.schedule;
     try {
-      const next = parseExpression(expr).next().toDate().toISOString();
+      const next = cronParser.parseExpression(expr).next().toDate().toISOString();
       update.run(next, row.id);
     } catch {
       // If cron expression is invalid, set next_run to now so it runs on next poll
