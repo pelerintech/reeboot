@@ -5,6 +5,7 @@ import { defaultConfig } from '../../config.js'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface LaunchDraft {
+  authMode?: 'pi' | 'own'
   provider: string
   modelId: string
   apiKey: string
@@ -50,9 +51,10 @@ export async function runLaunchStep(opts: {
       ...defaultConfig.agent,
       name: draft.agentName,
       model: {
-        provider: draft.provider,
-        id: draft.modelId,
-        apiKey: draft.apiKey ?? '',
+        authMode: draft.authMode ?? 'own',
+        provider: draft.authMode === 'pi' ? '' : draft.provider,
+        id: draft.authMode === 'pi' ? '' : draft.modelId,
+        apiKey: draft.authMode === 'pi' ? '' : (draft.apiKey ?? ''),
       },
     },
     channels: {
@@ -68,7 +70,7 @@ export async function runLaunchStep(opts: {
     search: {
       provider: draft.searchProvider as any,
       apiKey: draft.searchApiKey ?? '',
-      searxngBaseUrl: draft.searxngBaseUrl ?? 'http://localhost:4000',
+      searxngBaseUrl: draft.searxngBaseUrl ?? 'http://localhost:8888',
     },
     heartbeat: defaultConfig.heartbeat,
     sandbox: defaultConfig.sandbox,

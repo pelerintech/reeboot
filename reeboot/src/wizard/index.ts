@@ -58,6 +58,7 @@ export async function runSetupWizard(opts: WizardOptions = {}): Promise<void> {
     prompter,
     configPath,
     draft: {
+      authMode: providerResult.authMode ?? 'own',
       provider: providerResult.provider,
       modelId: providerResult.modelId,
       apiKey: providerResult.apiKey,

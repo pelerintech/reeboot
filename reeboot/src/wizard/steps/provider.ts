@@ -8,6 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ProviderStepResult {
+  authMode: 'pi' | 'own'
   provider: string
   modelId: string
   apiKey: string
@@ -97,6 +98,27 @@ export async function runProviderStep(opts: {
   const { prompter, configDir } = opts
 
   console.log('\n── Step 1: AI Provider ──────────────────────────────────────────\n')
+
+  // Check if pi is installed and authenticated
+  const { detectPiAuth } = await import('../detect-pi-auth.js')
+  const piAuth = await detectPiAuth()
+
+  if (piAuth.available) {
+    console.log(`  Pi is installed and authenticated (${piAuth.provider} / ${piAuth.model}).\n`)
+    const choice = await prompter.select({
+      message: 'How would you like to configure the AI provider?',
+      choices: [
+        { name: "Use existing pi's provider, model and auth", value: 'pi' },
+        { name: 'Set up separate credentials for reeboot', value: 'own' },
+      ],
+      default: 'pi',
+    })
+
+    if (choice === 'pi') {
+      return { authMode: 'pi', provider: '', modelId: '', apiKey: '', ollamaBaseUrl: '' }
+    }
+  }
+
   console.log('  Note: Custom providers can be added via config.json after setup.\n')
 
   // Select provider
@@ -143,7 +165,7 @@ export async function runProviderStep(opts: {
     })
   }
 
-  return { provider, modelId, apiKey, ollamaBaseUrl }
+  return { authMode: 'own', provider, modelId, apiKey, ollamaBaseUrl }
 }
 
 // ─── writeOllamaModelsJson ────────────────────────────────────────────────────

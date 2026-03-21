@@ -224,6 +224,10 @@ export async function initContexts(
   db: Database.Database,
   reebotDir: string = join(homedir(), '.reeboot')
 ): Promise<void> {
+  // Ensure ~/.reeboot/agent/AGENTS.md exists (reeboot persona for pi agentDir)
+  const { initAgentDir } = await import('./utils/agent-dir.js');
+  await initAgentDir(reebotDir);
+
   await initGlobalContext(reebotDir);
 
   // Ensure "main" context exists in DB

@@ -9,9 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.4] - 2026-03-21
 
+### Added
+
+- **`authMode` config field** — `agent.model.authMode: "pi" | "own"` (default `"own"`). Controls whether the agent delegates auth/model to an existing pi installation or uses its own injected credentials.
+- **Wizard pi auth detection** — setup wizard now detects if pi is installed and authenticated (`~/.pi/agent/auth.json`). If found, offers "Use existing pi's provider, model and auth" as the first option — zero extra setup for existing pi users.
+- **Runner isolation** — `PiAgentRunner` now builds `settingsManager`, `authStorage`, and `modelRegistry` from `authMode`. `authMode="own"`: uses `SettingsManager.inMemory` + API key injected as runtime override (config → env var fallback). `authMode="pi"`: delegates to pi's own files. `agentDir` (persona, extensions) is always `~/.reeboot/agent/` regardless of authMode.
+- **`~/.reeboot/agent/AGENTS.md`** — reeboot now scaffolds its own persona file at the correct pi `agentDir` path on first run. Previously `AGENTS.md` was written to `contexts/main/AGENTS.md` which pi never read as the global context, causing the agent to respond with the user's personal pi coding persona.
+- **Docker headless env vars** — `container/entrypoint.sh` now translates `REEBOOT_PROVIDER`, `REEBOOT_API_KEY`, `REEBOOT_MODEL`, `REEBOOT_NAME`, `REEBOOT_AUTH_MODE` into `--no-interactive` flags on first boot. `REEBOOT_AGENTS_MD` writes directly to `~/.reeboot/agent/AGENTS.md` before start (persona injection without interactive setup). Existing `config.json` (volume-mounted) takes precedence — env vars are ignored when config already exists.
+- **`npm run test:run`** and **`npm run check`** scripts — `test:run` for single-pass vitest, `check` for build + test (quality gate before publish).
+
 ### Fixed
 
 - **Web search tool never registered** — `extensions/web-search.ts` called `pi.getConfig()` which does not exist on pi's `ExtensionAPI` (returns `undefined`). This caused `searchConfig.provider` to default to `"none"`, exiting the extension before registering the `web_search` tool. The model then responded "I can't browse the internet" even with a provider configured. Fixed by passing reeboot's config as a second argument to the extension (same pattern as `skill-manager`).
+- **Bundled extensions failed to load in production Node** — extensions were imported as `.ts` source files (`import('extensions/web-search.ts')`). This worked in development (jiti transpiles on the fly) but failed in the installed package with `Stripping types is currently unsupported for files under node_modules`. All bundled extensions moved to `src/extensions/` and compiled to `dist/extensions/` by the main tsc. Loader now imports compiled `.js` with a `.ts` fallback for vitest.
+- **Pi's personal extensions bleeding into reeboot sessions** — when `authMode="pi"`, passing `agentDir: ~/.pi/agent/` to `createAgentSession` caused pi to load the user's personal extensions (`pi-searxng`, `pi-stats`, `context.ts`, etc.) into reeboot's session. Fixed by passing explicit `settingsManager` and `authStorage` from pi's files instead of `agentDir`, so pi's personal extension directory is never touched.
+- **Reeboot persona not loaded — agent responded as "Claude Code"** — `~/.reeboot/agent/AGENTS.md` was never created (the directory didn't exist), so pi fell back to its own default system prompt. Fixed by calling `initContexts()` at server startup, which scaffolds `~/.reeboot/agent/AGENTS.md` from the reeboot persona template.
+- **`loader.reload()` not called before session creation** — when reeboot passes a pre-built `resourceLoader` to `createAgentSession`, pi skips its internal `resourceLoader.reload()`. Added an explicit reload before session creation so AGENTS.md and extensions are loaded into the session.
 - **SearXNG not detected on non-default port** — the wizard's SearXNG subflow only started a new container, never probing for an already-running instance. Now probes ports `8080`, `8888`, `4000` in order before prompting. If a running SearXNG is found, the URL input is pre-filled; the user can confirm or edit (e.g. `http://localhost:7777`). The user then chooses "Use this URL directly" or "Start new reeboot-searxng container".
 - **`config.ts` SearXNG default URL** — `searxngBaseUrl` defaulted to `http://localhost:4000` but reeboot's own container starts on `8888`. Fixed default to `http://localhost:8888`.
 

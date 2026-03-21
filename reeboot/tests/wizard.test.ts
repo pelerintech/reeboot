@@ -4,11 +4,17 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { FakePrompter } from './helpers/fake-prompter.js'
 
+
+
 let tmpDir: string
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'reeboot-wizard-test-'))
   vi.resetModules()
+  // Prevent detectPiAuth from reading real ~/.pi/agent/ — tests queue their own answers
+  vi.doMock('@src/wizard/detect-pi-auth.js', () => ({
+    detectPiAuth: vi.fn().mockResolvedValue({ available: false }),
+  }))
 })
 
 afterEach(() => {
@@ -603,5 +609,112 @@ describe('wizard orchestration', () => {
     const { runSetupWizard } = await import('@src/wizard/index.js')
     await runSetupWizard({ configPath })
     expect(existsSync(configPath)).toBe(true)
+  })
+})
+
+describe('wizard authMode threading', () => {
+  it('authMode="pi" from provider step flows into config.json via launch step', async () => {
+    const configPath = join(tmpDir, 'config.json')
+
+    vi.doMock('@src/wizard/steps/provider.js', () => ({
+      runProviderStep: async () => ({
+        authMode: 'pi', provider: '', modelId: '', apiKey: '', ollamaBaseUrl: '',
+      }),
+    }))
+    vi.doMock('@src/wizard/steps/name.js', () => ({ runNameStep: async () => 'Reeboot' }))
+    vi.doMock('@src/wizard/steps/channels.js', () => ({
+      runChannelsStep: async () => ({ whatsapp: false, signal: false }),
+    }))
+    vi.doMock('@src/wizard/steps/web-search.js', () => ({
+      runWebSearchStep: async () => ({ provider: 'duckduckgo', apiKey: '', searxngBaseUrl: '' }),
+    }))
+    // Use real launch step but capture what it writes
+    vi.doMock('@src/wizard/steps/launch.js', () => ({
+      runLaunchStep: async ({ draft, configPath: cp }: any) => {
+        const { saveConfig } = await import('@src/config.js')
+        const { defaultConfig } = await import('@src/config.js')
+        saveConfig({
+          ...defaultConfig,
+          agent: { ...defaultConfig.agent, model: { authMode: draft.authMode ?? 'own', provider: draft.provider, id: draft.modelId, apiKey: draft.apiKey ?? '' } },
+        }, cp)
+      },
+    }))
+
+    const { runSetupWizard } = await import('@src/wizard/index.js')
+    await runSetupWizard({ configPath })
+
+    const { loadConfig } = await import('@src/config.js')
+    const cfg = loadConfig(configPath)
+    expect(cfg.agent.model.authMode).toBe('pi')
+    expect(cfg.agent.model.provider).toBe('')
+    expect(cfg.agent.model.apiKey).toBe('')
+  })
+
+  it('authMode="own" from provider step flows into config.json via launch step', async () => {
+    const configPath = join(tmpDir, 'config.json')
+
+    vi.doMock('@src/wizard/steps/provider.js', () => ({
+      runProviderStep: async () => ({
+        authMode: 'own', provider: 'anthropic', modelId: 'claude-sonnet-4-5', apiKey: 'sk-test', ollamaBaseUrl: '',
+      }),
+    }))
+    vi.doMock('@src/wizard/steps/name.js', () => ({ runNameStep: async () => 'Reeboot' }))
+    vi.doMock('@src/wizard/steps/channels.js', () => ({
+      runChannelsStep: async () => ({ whatsapp: false, signal: false }),
+    }))
+    vi.doMock('@src/wizard/steps/web-search.js', () => ({
+      runWebSearchStep: async () => ({ provider: 'duckduckgo', apiKey: '', searxngBaseUrl: '' }),
+    }))
+    vi.doMock('@src/wizard/steps/launch.js', () => ({
+      runLaunchStep: async ({ draft, configPath: cp }: any) => {
+        const { saveConfig } = await import('@src/config.js')
+        const { defaultConfig } = await import('@src/config.js')
+        saveConfig({
+          ...defaultConfig,
+          agent: { ...defaultConfig.agent, model: { authMode: draft.authMode ?? 'own', provider: draft.provider, id: draft.modelId, apiKey: draft.apiKey ?? '' } },
+        }, cp)
+      },
+    }))
+
+    const { runSetupWizard } = await import('@src/wizard/index.js')
+    await runSetupWizard({ configPath })
+
+    const { loadConfig } = await import('@src/config.js')
+    const cfg = loadConfig(configPath)
+    expect(cfg.agent.model.authMode).toBe('own')
+    expect(cfg.agent.model.provider).toBe('anthropic')
+  })
+})
+
+describe('non-interactive wizard authMode', () => {
+  it('writes authMode="own" to config when not specified', async () => {
+    const configPath = join(tmpDir, 'config.json')
+    const { runWizard } = await import('@src/setup-wizard.js')
+    await runWizard({
+      interactive: false,
+      provider: 'anthropic',
+      apiKey: 'sk-test',
+      model: 'claude-sonnet-4-5',
+      configDir: tmpDir,
+    })
+    const { loadConfig } = await import('@src/config.js')
+    const cfg = loadConfig(configPath)
+    expect(cfg.agent.model.authMode).toBe('own')
+    expect(cfg.agent.model.provider).toBe('anthropic')
+  })
+
+  it('writes authMode="pi" when specified', async () => {
+    const configPath = join(tmpDir, 'config.json')
+    const { runWizard } = await import('@src/setup-wizard.js')
+    await runWizard({
+      interactive: false,
+      authMode: 'pi',
+      configDir: tmpDir,
+    } as any)
+    const { loadConfig } = await import('@src/config.js')
+    const cfg = loadConfig(configPath)
+    expect(cfg.agent.model.authMode).toBe('pi')
+    expect(cfg.agent.model.provider).toBe('')
+    expect(cfg.agent.model.apiKey).toBe('')
   })
 })

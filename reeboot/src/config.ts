@@ -6,6 +6,7 @@ import { z } from 'zod';
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
 const ModelConfigSchema = z.object({
+  authMode: z.enum(['pi', 'own']).default('own'),
   provider: z.string().default(''),
   id: z.string().default(''),
   apiKey: z.string().default(''),

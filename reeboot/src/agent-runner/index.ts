@@ -1,9 +1,7 @@
 import type { Config } from '../config.js';
 import type { AgentRunner, ContextConfig } from './interface.js';
 import { PiAgentRunner } from './pi-runner.js';
-import { DefaultResourceLoader } from '@mariozechner/pi-coding-agent';
-import { homedir } from 'os';
-import { join } from 'path';
+import { createLoader } from '../extensions/loader.js';
 
 export type { AgentRunner, AgentRunnerFactory, ContextConfig, RunnerEvent } from './interface.js';
 
@@ -15,12 +13,8 @@ export function createRunner(context: ContextConfig, config: Config): AgentRunne
   const runnerType = (config.agent as any).runner ?? 'pi';
 
   if (runnerType === 'pi') {
-    const agentDir = join(homedir(), '.reeboot');
-    const loader = new DefaultResourceLoader({
-      cwd: context.workspacePath,
-      agentDir,
-    });
-    return new PiAgentRunner(context, loader);
+    const loader = createLoader(context, config);
+    return new PiAgentRunner(context, loader, config);
   }
 
   throw new Error(`Unknown agent runner: ${runnerType}`);

@@ -101,6 +101,41 @@ describe('saveConfig()', () => {
   });
 });
 
+describe('authMode in config', () => {
+  it('authMode defaults to "own" when not present', async () => {
+    const { defaultConfig } = await import('@src/config.js');
+    expect(defaultConfig.agent.model.authMode).toBe('own');
+  });
+
+  it('authMode="pi" is parsed correctly', async () => {
+    const { ConfigSchema } = await import('@src/config.js');
+    const cfg = ConfigSchema.parse({ agent: { model: { authMode: 'pi' } } });
+    expect(cfg.agent.model.authMode).toBe('pi');
+  });
+
+  it('authMode="own" preserves provider/model/apiKey', async () => {
+    const { ConfigSchema } = await import('@src/config.js');
+    const cfg = ConfigSchema.parse({
+      agent: { model: { authMode: 'own', provider: 'anthropic', id: 'claude-sonnet-4-5', apiKey: 'sk-test' } },
+    });
+    expect(cfg.agent.model.authMode).toBe('own');
+    expect(cfg.agent.model.provider).toBe('anthropic');
+    expect(cfg.agent.model.id).toBe('claude-sonnet-4-5');
+    expect(cfg.agent.model.apiKey).toBe('sk-test');
+  });
+
+  it('config without authMode field defaults to "own" (legacy install)', async () => {
+    const { loadConfig } = await import('@src/config.js');
+    const configPath = join(tmpDir, 'config.json');
+    // Write config without authMode — simulates legacy install
+    writeFileSync(configPath, JSON.stringify({
+      agent: { model: { provider: 'anthropic', id: 'claude-sonnet-4-5', apiKey: 'sk-legacy' } }
+    }));
+    const cfg = loadConfig(configPath);
+    expect(cfg.agent.model.authMode).toBe('own');
+  });
+});
+
 describe('search config defaults', () => {
   it('searxngBaseUrl defaults to http://localhost:8888', async () => {
     const { defaultConfig } = await import('@src/config.js');

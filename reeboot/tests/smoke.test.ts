@@ -90,4 +90,32 @@ describe('dist/ smoke — exported shapes', () => {
     const mod = await import(resolve(distDir, 'db/schema.js'));
     expect(typeof mod.runMigration).toBe('function');
   });
+
+  it('dist/extensions/loader.js createLoader agentDir ends with .reeboot/agent', async () => {
+    requiresDist();
+    const mod = await import(resolve(distDir, 'extensions/loader.js'));
+    const loader = mod.createLoader(
+      { id: 'main', workspacePath: '/tmp' },
+      { extensions: { core: {} } } as any
+    );
+    expect((loader as any).agentDir).toMatch(/\.reeboot[/\\]agent$/);
+  });
+
+  it('dist/wizard/detect-pi-auth.js exports detectPiAuth', async () => {
+    requiresDist();
+    const mod = await import(resolve(distDir, 'wizard/detect-pi-auth.js'));
+    expect(typeof mod.detectPiAuth).toBe('function');
+  });
+
+  it('dist/wizard/probe-searxng.js exports probeSearXNG', async () => {
+    requiresDist();
+    const mod = await import(resolve(distDir, 'wizard/probe-searxng.js'));
+    expect(typeof mod.probeSearXNG).toBe('function');
+  });
+
+  it('dist/utils/agent-dir.js exports initAgentDir', async () => {
+    requiresDist();
+    const mod = await import(resolve(distDir, 'utils/agent-dir.js'));
+    expect(typeof mod.initAgentDir).toBe('function');
+  });
 });

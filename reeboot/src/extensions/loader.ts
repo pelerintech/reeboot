@@ -21,10 +21,13 @@ import type { ContextConfig } from '../agent-runner/interface.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Resolve the extensions/ and skills/ directories at the reeboot package root
-// Compiled output is at dist/ so we go up two levels: dist/extensions/ → dist/ → reeboot/ then across to extensions/
+// Resolve the extensions/ and skills/ directories at the reeboot package root.
+// __dirname is dist/extensions/ (compiled output location).
+// All bundled extensions are compiled to dist/extensions/*.js via the main tsc.
+// In vitest (source mode), __dirname = src/extensions/ so .js files don't exist —
+// importExt() falls back to .ts for that case.
 const PACKAGE_ROOT = resolve(__dirname, '../../');
-const BUNDLED_EXTENSIONS_DIR = join(PACKAGE_ROOT, 'extensions');
+const BUNDLED_EXTENSIONS_DIR = join(__dirname);
 const BUNDLED_SKILLS_DIR = join(PACKAGE_ROOT, 'skills');
 
 // ─── getBundledFactories ─────────────────────────────────────────────────────
@@ -54,7 +57,7 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   if (sandboxEnabled) {
     factories.push((pi) => {
       // Lazy-load so missing deps don't break startup in CI / test
-      const sandboxPath = join(BUNDLED_EXTENSIONS_DIR, 'sandbox', 'index.ts');
+      const sandboxPath = join(PACKAGE_ROOT, 'extensions', 'sandbox', 'index.ts');
       try {
         // Extensions are loaded by DefaultResourceLoader as file paths; we register
         // a no-op factory here and let the loader discover the file-based extension.
@@ -66,65 +69,72 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   // Simple file-based extensions registered as inline factories for reliability.
   // We use dynamic import factories so TypeScript strict mode is satisfied.
 
+  // Helper: try compiled .js first (production dist/extensions/),
+  // fall back to .ts (vitest runs from src/extensions/ without compilation)
+  const importExt = (name: string) =>
+    import(join(BUNDLED_EXTENSIONS_DIR, `${name}.js`))
+      .catch(() => import(join(BUNDLED_EXTENSIONS_DIR, `${name}.ts`)))
+      .catch(() => null);
+
   if (confirmEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'confirm-destructive.ts')).catch(() => null);
+      const mod = await importExt('confirm-destructive');
       if (mod?.default) mod.default(pi);
     });
   }
 
   if (protectedEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'protected-paths.ts')).catch(() => null);
+      const mod = await importExt('protected-paths');
       if (mod?.default) mod.default(pi);
     });
   }
 
   if (sessionNameEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'session-name.ts')).catch(() => null);
+      const mod = await importExt('session-name');
       if (mod?.default) mod.default(pi);
     });
   }
 
   if (compactionEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'custom-compaction.ts')).catch(() => null);
+      const mod = await importExt('custom-compaction');
       if (mod?.default) mod.default(pi);
     });
   }
 
   if (gitCheckpointEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'git-checkpoint.ts')).catch(() => null);
+      const mod = await importExt('git-checkpoint');
       if (mod?.default) mod.default(pi);
     });
   }
 
   if (schedulerEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'scheduler-tool.ts')).catch(() => null);
+      const mod = await importExt('scheduler-tool');
       if (mod?.default) mod.default(pi);
     });
   }
 
   if (tokenMeterEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'token-meter.ts')).catch(() => null);
+      const mod = await importExt('token-meter');
       if (mod?.default) mod.default(pi);
     });
   }
 
   if (webSearchEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'web-search.ts')).catch(() => null);
+      const mod = await importExt('web-search');
       if (mod?.default) await (mod.default as any)(pi, config);
     });
   }
 
   if (skillManagerEnabled) {
     factories.push(async (pi) => {
-      const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'skill-manager.ts')).catch(() => null);
+      const mod = await importExt('skill-manager');
       if (mod?.default) await (mod.default as any)(pi, config);
     });
   }
@@ -135,14 +145,14 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
 // ─── createLoader ─────────────────────────────────────────────────────────────
 
 export function createLoader(context: ContextConfig, config: Config): ResourceLoader {
-  const agentDir = join(homedir(), '.reeboot');
+  const agentDir = join(homedir(), '.reeboot', 'agent');
   const extensionFactories = getBundledFactories(config);
 
   // For sandbox, use additionalExtensionPaths so DefaultResourceLoader handles it
   const additionalExtensionPaths: string[] = [];
   const core = config?.extensions?.core ?? {};
   if (core.sandbox ?? true) {
-    additionalExtensionPaths.push(join(BUNDLED_EXTENSIONS_DIR, 'sandbox', 'index.ts'));
+    additionalExtensionPaths.push(join(PACKAGE_ROOT, 'extensions', 'sandbox', 'index.ts'));
   }
 
   return new DefaultResourceLoader({

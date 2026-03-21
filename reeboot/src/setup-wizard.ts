@@ -10,6 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface WizardOptions {
   interactive?: boolean;
+  authMode?: 'pi' | 'own';
   provider?: string;
   apiKey?: string;
   model?: string;
@@ -54,9 +55,10 @@ export async function runWizard(opts: WizardOptions = {}): Promise<void> {
       name: answers.name,
       runner: defaultConfig.agent.runner,
       model: {
-        provider: answers.provider,
-        id: answers.model,
-        apiKey: answers.apiKey,
+        authMode: (opts.authMode ?? 'own') as 'pi' | 'own',
+        provider: opts.authMode === 'pi' ? '' : answers.provider,
+        id: opts.authMode === 'pi' ? '' : answers.model,
+        apiKey: opts.authMode === 'pi' ? '' : answers.apiKey,
       },
       turnTimeout: defaultConfig.agent.turnTimeout,
     },

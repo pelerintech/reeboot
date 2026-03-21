@@ -25,21 +25,45 @@
  */
 
 import { nanoid } from 'nanoid';
+import { join } from 'path';
+import { homedir } from 'os';
 import type { AgentRunner, ContextConfig, RunnerEvent } from './interface.js';
 import type { ResourceLoader } from '@mariozechner/pi-coding-agent';
+import type { Config } from '../config.js';
+
+// ─── env var resolution for known providers ───────────────────────────────────
+
+const PROVIDER_ENV_VARS: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  google: 'GEMINI_API_KEY',
+  groq: 'GROQ_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+  xai: 'XAI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  minimax: 'MINIMAX_API_KEY',
+  cerebras: 'CEREBRAS_API_KEY',
+};
+
+function resolveProviderEnvKey(provider: string): string {
+  const envVar = PROVIDER_ENV_VARS[provider.toLowerCase()];
+  return envVar ? (process.env[envVar] ?? '') : '';
+}
 
 export class PiAgentRunner implements AgentRunner {
   private readonly context: ContextConfig;
   private readonly loader: ResourceLoader;
+  private readonly config: Config | null;
   private abortController: AbortController | null = null;
   private disposed = false;
 
   // Lazily created on first prompt
   private _session: import('@mariozechner/pi-coding-agent').AgentSession | null = null;
 
-  constructor(context: ContextConfig, loader: ResourceLoader) {
+  constructor(context: ContextConfig, loader: ResourceLoader, config?: Config) {
     this.context = context;
     this.loader = loader;
+    this.config = config ?? null;
   }
 
   // ── prompt ─────────────────────────────────────────────────────────────────
@@ -163,13 +187,79 @@ export class PiAgentRunner implements AgentRunner {
   private async _getOrCreateSession(): Promise<import('@mariozechner/pi-coding-agent').AgentSession> {
     if (this._session) return this._session;
 
-    const { createAgentSession, SessionManager } = await import('@mariozechner/pi-coding-agent');
+    // Reload the resource loader so it picks up AGENTS.md and extensions.
+    // createAgentSession only reloads if it creates the loader itself — when
+    // we pass a pre-built loader it skips reload, so we must do it explicitly.
+    try { await this.loader.reload(); } catch { /* ignore in test/CI environments */ }
 
-    const { session } = await createAgentSession({
-      cwd: this.context.workspacePath,
-      resourceLoader: this.loader,
-      sessionManager: SessionManager.inMemory(),
-    });
+    const {
+      createAgentSession,
+      SessionManager,
+      AuthStorage,
+      ModelRegistry,
+      SettingsManager,
+    } = await import('@mariozechner/pi-coding-agent');
+    void AuthStorage; // used only in authMode="own"
+
+    const authMode = (this.config?.agent?.model as any)?.authMode ?? 'own';
+    const piAgentDir = join(homedir(), '.pi', 'agent');
+
+    let sessionOpts: any;
+
+    if (authMode === 'pi') {
+      // For authMode="pi": read provider/model/auth from pi's files, but do NOT
+      // pass agentDir to createAgentSession — that would load pi's personal
+      // extensions (pi-searxng, pi-stats, etc) into reeboot's session.
+      // Instead, explicitly source settings+auth from pi's files and inject them.
+      const settingsManager = SettingsManager.create(this.context.workspacePath, piAgentDir);
+      const authStorage = AuthStorage.create(join(piAgentDir, 'auth.json'));
+      const modelRegistry = new ModelRegistry(authStorage, join(piAgentDir, 'models.json'));
+
+      sessionOpts = {
+        cwd: this.context.workspacePath,
+        resourceLoader: this.loader,
+        sessionManager: SessionManager.inMemory(),
+        settingsManager,
+        authStorage,
+        modelRegistry,
+      };
+    } else {
+      // authMode="own": inject provider/model/key from reeboot's config
+      const model = this.config?.agent?.model as any;
+      const provider: string = model?.provider ?? '';
+      const modelId: string = model?.id ?? '';
+      const configApiKey: string = model?.apiKey ?? '';
+
+      // Key resolution: config.json → env var fallback
+      let resolvedKey = configApiKey;
+      if (!resolvedKey && provider) {
+        resolvedKey = resolveProviderEnvKey(provider);
+      }
+
+      const settingsManager = SettingsManager.inMemory({
+        defaultProvider: provider,
+        defaultModel: modelId,
+      });
+
+      const authStorage = AuthStorage.inMemory();
+      if (resolvedKey && provider) {
+        authStorage.setRuntimeApiKey(provider, resolvedKey);
+      }
+
+      const reebotAgentDir = join(homedir(), '.reeboot', 'agent');
+      const modelRegistry = new ModelRegistry(authStorage, join(reebotAgentDir, 'models.json'));
+
+      sessionOpts = {
+        cwd: this.context.workspacePath,
+        resourceLoader: this.loader,
+        sessionManager: SessionManager.inMemory(),
+        settingsManager,
+        authStorage,
+        modelRegistry,
+      };
+    }
+
+    const { session } = await createAgentSession(sessionOpts);
 
     this._session = session;
     return session;

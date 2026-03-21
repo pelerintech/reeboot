@@ -41,33 +41,40 @@ describe('createLoader (2.1)', () => {
     expect(withGit.length).toBe(withDefault.length + 1);
   });
 
+  it('agentDir is always ~/.reeboot/agent/ regardless of authMode', async () => {
+    const { createLoader } = await import('@src/extensions/loader.js');
+    const loaderPi = createLoader(
+      { id: 'main', workspacePath: '/tmp/ctx' },
+      { agent: { model: { authMode: 'pi' } } } as any
+    );
+    const loaderOwn = createLoader(
+      { id: 'main', workspacePath: '/tmp/ctx' },
+      { agent: { model: { authMode: 'own' } } } as any
+    );
+    expect((loaderPi as any).agentDir).toMatch(/\.reeboot[/\\]agent$/);
+    expect((loaderOwn as any).agentDir).toMatch(/\.reeboot[/\\]agent$/);
+  });
+
   it('web-search factory passes config as second argument to extension', async () => {
+    // The web-search factory does: await (mod.default)(pi, config)
+    // We verify this by importing the real web-search module and checking
+    // that with a duckduckgo config, web_search tool gets registered
+    const registeredTools: string[] = [];
+    const mockPi = {
+      registerTool: vi.fn((opts: { name: string }) => { registeredTools.push(opts.name); }),
+    };
+
     const { getBundledFactories } = await import('@src/extensions/loader.js');
     const config = { search: { provider: 'duckduckgo' } } as any;
     const factories = getBundledFactories(config);
 
-    // Find the web-search factory — it's the one that imports web-search.ts
-    // We mock the module and invoke each factory to find which one calls our mock
-    let capturedArgs: any[] = [];
-    const mockDefault = vi.fn(async (...args: any[]) => { capturedArgs = args; });
-
-    vi.doMock(join(process.cwd(), 'extensions/web-search.ts'), () => ({
-      default: mockDefault,
-    }));
-
-    const mockPi = { registerTool: vi.fn() };
-
-    // Invoke all factories — the web-search one should call mockDefault with (pi, config)
+    // Invoke all factories
     for (const factory of factories) {
       try { await (factory as any)(mockPi); } catch { /* ignore other factory errors */ }
     }
 
-    // mockDefault should have been called with pi + config
-    expect(mockDefault).toHaveBeenCalled();
-    const [piArg, configArg] = capturedArgs;
-    expect(piArg).toBe(mockPi);
-    expect(configArg).toBe(config);
-
-    vi.doUnmock(join(process.cwd(), 'extensions/web-search.ts'));
+    // web_search should be registered because provider is duckduckgo (not "none")
+    expect(registeredTools).toContain('web_search');
+    expect(registeredTools).toContain('fetch_url');
   });
 });

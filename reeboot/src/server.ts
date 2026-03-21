@@ -15,6 +15,7 @@ import {
   getActiveSessionPath,
   listSessions,
   initContextWorkspace,
+  initContexts,
   createContextsTable,
 } from './context.js';
 import { nanoid } from 'nanoid';
@@ -138,8 +139,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
     }
   }
 
-  // Ensure context workspace for "main"
-  await initContextWorkspace('main', reebotDir);
+  // Ensure context workspace and agent dir (AGENTS.md persona) exist
+  await initContexts(db, reebotDir);
 
   // ── Channel & Orchestrator init ───────────────────────────────────────────
 
