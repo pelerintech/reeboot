@@ -28,8 +28,8 @@ describe('Package Scaffold', () => {
 });
 
 describe('Package Publication Readiness', () => {
-  it('version is 1.0.0', () => {
-    expect(pkg().version).toBe('1.0.0');
+  it('version is a valid semver string', () => {
+    expect(pkg().version).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
   it('license is MIT', () => {

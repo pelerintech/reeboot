@@ -215,35 +215,55 @@ export async function linkWhatsAppDevice(opts: {
     version = [2, 3000, 1027934701]
   }
 
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    browser: Browsers.ubuntu('Chrome'),
-  })
-
+  // Shared across all reconnect attempts
   let resolved = false
 
   const timeoutHandle = setTimeout(() => {
     if (!resolved) {
       resolved = true
-      try { sock.end(undefined) } catch { /* ignore */ }
       onTimeout()
     }
   }, timeoutMs)
 
-  sock.ev.on('creds.update', saveCreds)
+  async function connect(): Promise<void> {
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      browser: Browsers.ubuntu('Chrome'),
+    })
 
-  sock.ev.on('connection.update', (update: any) => {
-    const { connection, qr } = update
+    sock.ev.on('creds.update', saveCreds)
 
-    if (qr && !resolved) {
-      onQr(qr)
-    }
+    sock.ev.on('connection.update', async (update: any) => {
+      const { connection, lastDisconnect, qr } = update
 
-    if (connection === 'open' && !resolved) {
-      resolved = true
-      clearTimeout(timeoutHandle)
-      onSuccess()
-    }
-  })
+      if (qr && !resolved) {
+        onQr(qr)
+      }
+
+      if (connection === 'open' && !resolved) {
+        resolved = true
+        clearTimeout(timeoutHandle)
+        onSuccess()
+        return
+      }
+
+      if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode
+        const loggedOut = statusCode === DisconnectReason.loggedOut
+
+        if (loggedOut) {
+          // Fatal — do not reconnect; timeout will eventually fire
+          return
+        }
+
+        // restartRequired (515) or any other non-fatal disconnect — reconnect
+        if (!resolved) {
+          await connect()
+        }
+      }
+    })
+  }
+
+  await connect()
 }

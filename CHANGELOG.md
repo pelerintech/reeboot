@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.2] - 2026-03-21
+
+### Fixed
+
+- **WhatsApp device linking hangs after QR scan** — `linkWhatsAppDevice` now reconnects automatically on stream error 515 (`restartRequired`), which WhatsApp sends as a normal part of the post-pairing handshake. Previously the function had no reconnect logic and would hit the 2-minute timeout instead of completing the link.
+
+---
+
 ## [1.3.1] - 2026-03-21
 
 ### Fixed
