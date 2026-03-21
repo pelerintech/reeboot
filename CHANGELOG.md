@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.4] - 2026-03-21
+
+### Fixed
+
+- **Web search tool never registered** — `extensions/web-search.ts` called `pi.getConfig()` which does not exist on pi's `ExtensionAPI` (returns `undefined`). This caused `searchConfig.provider` to default to `"none"`, exiting the extension before registering the `web_search` tool. The model then responded "I can't browse the internet" even with a provider configured. Fixed by passing reeboot's config as a second argument to the extension (same pattern as `skill-manager`).
+- **SearXNG not detected on non-default port** — the wizard's SearXNG subflow only started a new container, never probing for an already-running instance. Now probes ports `8080`, `8888`, `4000` in order before prompting. If a running SearXNG is found, the URL input is pre-filled; the user can confirm or edit (e.g. `http://localhost:7777`). The user then chooses "Use this URL directly" or "Start new reeboot-searxng container".
+- **`config.ts` SearXNG default URL** — `searxngBaseUrl` defaulted to `http://localhost:4000` but reeboot's own container starts on `8888`. Fixed default to `http://localhost:8888`.
+
+---
+
 ## [1.3.3] - 2026-03-21
 
 ### Fixed

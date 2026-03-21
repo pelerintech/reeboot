@@ -118,7 +118,7 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   if (webSearchEnabled) {
     factories.push(async (pi) => {
       const mod = await import(join(BUNDLED_EXTENSIONS_DIR, 'web-search.ts')).catch(() => null);
-      if (mod?.default) await (mod.default as any)(pi);
+      if (mod?.default) await (mod.default as any)(pi, config);
     });
   }
 

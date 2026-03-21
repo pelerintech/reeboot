@@ -101,6 +101,13 @@ describe('saveConfig()', () => {
   });
 });
 
+describe('search config defaults', () => {
+  it('searxngBaseUrl defaults to http://localhost:8888', async () => {
+    const { defaultConfig } = await import('@src/config.js');
+    expect(defaultConfig.search.searxngBaseUrl).toBe('http://localhost:8888');
+  });
+});
+
 describe('heartbeat config', () => {
   it('has default heartbeat block with enabled=false', async () => {
     const { defaultConfig } = await import('@src/config.js');

@@ -392,9 +392,8 @@ export async function searchBackend(
 
 // ─── Extension Default Export ─────────────────────────────────────────────────
 
-export default async function webSearchExtension(pi: ExtensionAPI): Promise<void> {
-  const config = (pi.getConfig() as any);
-  const searchConfig: SearchConfig = config?.search ?? {};
+export default async function webSearchExtension(pi: ExtensionAPI, reebotConfig?: any): Promise<void> {
+  const searchConfig: SearchConfig = reebotConfig?.search ?? {};
   const rawProvider: string = searchConfig.provider ?? 'none';
 
   // SearXNG startup health-check — fall back to DDG if unreachable

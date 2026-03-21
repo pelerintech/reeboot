@@ -495,54 +495,68 @@ describe('1.9 web_search tool registration and API key handling', () => {
 
   // ── tool registration tests ───────────────────────────────────────────────
 
+  // ── config as second argument (new pattern — pi.getConfig() doesn't exist) ──
+
+  it('web_search registered when provider is duckduckgo (config as 2nd arg)', async () => {
+    const registeredTools: string[] = [];
+    const mockPi = { registerTool: vi.fn((opts: { name: string }) => { registeredTools.push(opts.name); }) };
+    const mod = await import('../extensions/web-search.js');
+    await mod.default(mockPi as any, { search: { provider: 'duckduckgo' } });
+    expect(registeredTools).toContain('fetch_url');
+    expect(registeredTools).toContain('web_search');
+  });
+
+  it('web_search NOT registered when provider is none (config as 2nd arg)', async () => {
+    const registeredTools: string[] = [];
+    const mockPi = { registerTool: vi.fn((opts: { name: string }) => { registeredTools.push(opts.name); }) };
+    const mod = await import('../extensions/web-search.js');
+    await mod.default(mockPi as any, { search: { provider: 'none' } });
+    expect(registeredTools).toContain('fetch_url');
+    expect(registeredTools).not.toContain('web_search');
+  });
+
+  it('web_search NOT registered when no config passed (graceful fallback)', async () => {
+    const registeredTools: string[] = [];
+    const mockPi = { registerTool: vi.fn((opts: { name: string }) => { registeredTools.push(opts.name); }) };
+    const mod = await import('../extensions/web-search.js');
+    await expect(mod.default(mockPi as any)).resolves.not.toThrow();
+    expect(registeredTools).toContain('fetch_url');
+    expect(registeredTools).not.toContain('web_search');
+  });
+
+  it('web_search registered when provider is brave (config as 2nd arg)', async () => {
+    const registeredTools: string[] = [];
+    const mockPi = { registerTool: vi.fn((opts: { name: string }) => { registeredTools.push(opts.name); }) };
+    const mod = await import('../extensions/web-search.js');
+    await mod.default(mockPi as any, { search: { provider: 'brave', apiKey: 'test' } });
+    expect(registeredTools).toContain('web_search');
+  });
+
+  // ── legacy tests updated to use config as 2nd arg ─────────────────────────
+
   it('web_search registered when provider is duckduckgo', async () => {
     const registeredTools: string[] = [];
-    const mockPi = {
-      registerTool: vi.fn((opts: { name: string }) => {
-        registeredTools.push(opts.name);
-      }),
-      getConfig: vi.fn().mockReturnValue({
-        search: { provider: 'duckduckgo' },
-      }),
-    };
-
+    const mockPi = { registerTool: vi.fn((opts: { name: string }) => { registeredTools.push(opts.name); }) };
     const mod = await import('../extensions/web-search.js');
-    await mod.default(mockPi as any);
-
+    await mod.default(mockPi as any, { search: { provider: 'duckduckgo' } });
     expect(registeredTools).toContain('fetch_url');
     expect(registeredTools).toContain('web_search');
   });
 
   it('web_search NOT registered when provider is none', async () => {
     const registeredTools: string[] = [];
-    const mockPi = {
-      registerTool: vi.fn((opts: { name: string }) => {
-        registeredTools.push(opts.name);
-      }),
-      getConfig: vi.fn().mockReturnValue({
-        search: { provider: 'none' },
-      }),
-    };
-
+    const mockPi = { registerTool: vi.fn((opts: { name: string }) => { registeredTools.push(opts.name); }) };
     const mod = await import('../extensions/web-search.js');
-    await mod.default(mockPi as any);
-
+    await mod.default(mockPi as any, { search: { provider: 'none' } });
     expect(registeredTools).toContain('fetch_url');
     expect(registeredTools).not.toContain('web_search');
   });
 
   it('web_search NOT registered when search config absent', async () => {
     const registeredTools: string[] = [];
-    const mockPi = {
-      registerTool: vi.fn((opts: { name: string }) => {
-        registeredTools.push(opts.name);
-      }),
-      getConfig: vi.fn().mockReturnValue({}),
-    };
-
+    const mockPi = { registerTool: vi.fn((opts: { name: string }) => { registeredTools.push(opts.name); }) };
     const mod = await import('../extensions/web-search.js');
-    await mod.default(mockPi as any);
-
+    await mod.default(mockPi as any, {});
     expect(registeredTools).toContain('fetch_url');
     expect(registeredTools).not.toContain('web_search');
   });
@@ -552,23 +566,15 @@ describe('1.9 web_search tool registration and API key handling', () => {
     vi.stubGlobal('fetch', vi.fn());
 
     const registeredTools: Map<string, Function> = new Map();
-    const mockPi = {
-      registerTool: vi.fn((opts: { name: string; execute: Function }) => {
-        registeredTools.set(opts.name, opts.execute);
-      }),
-      getConfig: vi.fn().mockReturnValue({
-        search: { provider: 'brave' },
-      }),
-    };
+    const mockPi = { registerTool: vi.fn((opts: { name: string; execute: Function }) => { registeredTools.set(opts.name, opts.execute); }) };
 
     const mod = await import('../extensions/web-search.js');
-    await mod.default(mockPi as any);
+    await mod.default(mockPi as any, { search: { provider: 'brave' } });
 
     const webSearch = registeredTools.get('web_search');
     expect(webSearch).toBeDefined();
 
     const result = await webSearch!('call-id', { query: 'test', limit: 5 });
-    // Should return JSON stringified empty array or result with empty array
     const text = result?.content?.[0]?.text ?? result;
     const parsed = JSON.parse(typeof text === 'string' ? text : JSON.stringify(text));
     const arr = Array.isArray(parsed) ? parsed : (parsed.results ?? []);
@@ -579,24 +585,14 @@ describe('1.9 web_search tool registration and API key handling', () => {
   });
 
   it('web_search: limit respected (at most N results)', async () => {
-    const fixtureHtml = readFileSync(
-      join(__dirname, 'fixtures', 'ddg-response.html'),
-      'utf-8'
-    );
+    const fixtureHtml = readFileSync(join(__dirname, 'fixtures', 'ddg-response.html'), 'utf-8');
     vi.stubGlobal('fetch', makeFetchOk(fixtureHtml));
 
     const registeredTools: Map<string, Function> = new Map();
-    const mockPi = {
-      registerTool: vi.fn((opts: { name: string; execute: Function }) => {
-        registeredTools.set(opts.name, opts.execute);
-      }),
-      getConfig: vi.fn().mockReturnValue({
-        search: { provider: 'duckduckgo' },
-      }),
-    };
+    const mockPi = { registerTool: vi.fn((opts: { name: string; execute: Function }) => { registeredTools.set(opts.name, opts.execute); }) };
 
     const mod = await import('../extensions/web-search.js');
-    await mod.default(mockPi as any);
+    await mod.default(mockPi as any, { search: { provider: 'duckduckgo' } });
 
     const webSearch = registeredTools.get('web_search');
     const result = await webSearch!('call-id', { query: 'TypeScript', limit: 2 });
@@ -611,17 +607,10 @@ describe('1.9 web_search tool registration and API key handling', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const registeredTools: Map<string, Function> = new Map();
-    const mockPi = {
-      registerTool: vi.fn((opts: { name: string; execute: Function }) => {
-        registeredTools.set(opts.name, opts.execute);
-      }),
-      getConfig: vi.fn().mockReturnValue({
-        search: { provider: 'duckduckgo' },
-      }),
-    };
+    const mockPi = { registerTool: vi.fn((opts: { name: string; execute: Function }) => { registeredTools.set(opts.name, opts.execute); }) };
 
     const mod = await import('../extensions/web-search.js');
-    await mod.default(mockPi as any);
+    await mod.default(mockPi as any, { search: { provider: 'duckduckgo' } });
 
     const webSearch = registeredTools.get('web_search');
     let threw = false;

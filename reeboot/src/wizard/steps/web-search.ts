@@ -51,7 +51,7 @@ export async function runWebSearchStep(opts: {
   }
 
   if (provider === 'searxng') {
-    return await runSearXNGSubflow()
+    return await runSearXNGSubflow(prompter)
   }
 
   // API-key providers: Brave, Tavily, Serper, Exa
@@ -68,7 +68,10 @@ export async function runWebSearchStep(opts: {
 
 // ─── SearXNG sub-flow ─────────────────────────────────────────────────────────
 
-async function runSearXNGSubflow(): Promise<WebSearchStepResult> {
+const SEARXNG_PORT = 8888
+const SEARXNG_DEFAULT_URL = `http://localhost:${SEARXNG_PORT}`
+
+async function runSearXNGSubflow(prompter: Prompter): Promise<WebSearchStepResult> {
   const { checkDockerStatus } = await import('../../utils/docker.js')
   const dockerStatus = await checkDockerStatus()
 
@@ -85,12 +88,41 @@ async function runSearXNGSubflow(): Promise<WebSearchStepResult> {
     return { provider: 'duckduckgo', apiKey: '', searxngBaseUrl: '' }
   }
 
-  // Docker is running — start the SearXNG container
+  // Probe for an already-running SearXNG instance
+  const { probeSearXNG } = await import('../probe-searxng.js')
+  const detected = await probeSearXNG()
+
+  // Ask user to confirm or edit the URL
+  const urlMessage = detected
+    ? '  SearXNG URL (confirm or edit):'
+    : '  SearXNG URL:'
+  const defaultUrl = detected ?? SEARXNG_DEFAULT_URL
+
+  const searxngUrl = await prompter.input({
+    message: urlMessage,
+    default: defaultUrl,
+    validate: (val) => val.trim().length > 0 ? true : 'URL cannot be empty',
+  })
+
+  // Ask whether to use URL directly or start a new container
+  const action = await prompter.select({
+    message: '  What would you like to do?',
+    choices: [
+      { name: 'Use this URL directly', value: 'use-url' },
+      { name: `Start new reeboot-searxng container on port ${SEARXNG_PORT}`, value: 'start-new' },
+    ],
+    default: 'use-url',
+  })
+
+  if (action === 'use-url') {
+    console.log(`  ✓ Using SearXNG at ${searxngUrl}\n`)
+    return { provider: 'searxng', apiKey: '', searxngBaseUrl: searxngUrl }
+  }
+
+  // Start new container
   console.log('  Starting reeboot-searxng container...')
 
   const { spawnSync } = await import('child_process')
-
-  const SEARXNG_PORT = 8888
 
   // Remove any existing container
   spawnSync('docker', ['rm', '-f', 'reeboot-searxng'], { stdio: 'pipe' })
@@ -108,10 +140,6 @@ async function runSearXNGSubflow(): Promise<WebSearchStepResult> {
     return { provider: 'duckduckgo', apiKey: '', searxngBaseUrl: '' }
   }
 
-  console.log(`  ✓ SearXNG running at http://localhost:${SEARXNG_PORT}\n`)
-  return {
-    provider: 'searxng',
-    apiKey: '',
-    searxngBaseUrl: `http://localhost:${SEARXNG_PORT}`,
-  }
+  console.log(`  ✓ SearXNG running at ${SEARXNG_DEFAULT_URL}\n`)
+  return { provider: 'searxng', apiKey: '', searxngBaseUrl: SEARXNG_DEFAULT_URL }
 }

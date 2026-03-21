@@ -389,10 +389,14 @@ describe('wizard web search setup', () => {
 
   it('SearXNG with Docker running → container started → searxng provider', async () => {
     const { runWebSearchStep } = await import('@src/wizard/steps/web-search.js')
-    const prompter = new FakePrompter(['searxng'])
+    // answers: provider=searxng, url=http://localhost:8888, action=start-new
+    const prompter = new FakePrompter(['searxng', 'http://localhost:8888', 'start-new'])
 
     vi.doMock('@src/utils/docker.js', () => ({
       checkDockerStatus: async () => 'running',
+    }))
+    vi.doMock('@src/wizard/probe-searxng.js', () => ({
+      probeSearXNG: async () => null,
     }))
     vi.doMock('child_process', async () => {
       const actual = await vi.importActual<typeof import('child_process')>('child_process')
@@ -413,10 +417,14 @@ describe('wizard web search setup', () => {
 
   it('SearXNG container fails → falls back to DDG', async () => {
     const { runWebSearchStep } = await import('@src/wizard/steps/web-search.js')
-    const prompter = new FakePrompter(['searxng'])
+    // answers: provider=searxng, url=http://localhost:8888, action=start-new
+    const prompter = new FakePrompter(['searxng', 'http://localhost:8888', 'start-new'])
 
     vi.doMock('@src/utils/docker.js', () => ({
       checkDockerStatus: async () => 'running',
+    }))
+    vi.doMock('@src/wizard/probe-searxng.js', () => ({
+      probeSearXNG: async () => null,
     }))
     vi.doMock('child_process', async () => {
       const actual = await vi.importActual<typeof import('child_process')>('child_process')

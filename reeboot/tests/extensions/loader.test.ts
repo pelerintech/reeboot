@@ -40,4 +40,34 @@ describe('createLoader (2.1)', () => {
     } as any);
     expect(withGit.length).toBe(withDefault.length + 1);
   });
+
+  it('web-search factory passes config as second argument to extension', async () => {
+    const { getBundledFactories } = await import('@src/extensions/loader.js');
+    const config = { search: { provider: 'duckduckgo' } } as any;
+    const factories = getBundledFactories(config);
+
+    // Find the web-search factory — it's the one that imports web-search.ts
+    // We mock the module and invoke each factory to find which one calls our mock
+    let capturedArgs: any[] = [];
+    const mockDefault = vi.fn(async (...args: any[]) => { capturedArgs = args; });
+
+    vi.doMock(join(process.cwd(), 'extensions/web-search.ts'), () => ({
+      default: mockDefault,
+    }));
+
+    const mockPi = { registerTool: vi.fn() };
+
+    // Invoke all factories — the web-search one should call mockDefault with (pi, config)
+    for (const factory of factories) {
+      try { await (factory as any)(mockPi); } catch { /* ignore other factory errors */ }
+    }
+
+    // mockDefault should have been called with pi + config
+    expect(mockDefault).toHaveBeenCalled();
+    const [piArg, configArg] = capturedArgs;
+    expect(piArg).toBe(mockPi);
+    expect(configArg).toBe(config);
+
+    vi.doUnmock(join(process.cwd(), 'extensions/web-search.ts'));
+  });
 });

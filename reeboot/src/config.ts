@@ -96,7 +96,7 @@ const CredentialProxyConfigSchema = z.object({
 const SearchConfigSchema = z.object({
   provider: z.enum(['none', 'duckduckgo', 'brave', 'tavily', 'serper', 'exa', 'searxng']).default('none'),
   apiKey: z.string().default(''),
-  searxngBaseUrl: z.string().default('http://localhost:4000'),
+  searxngBaseUrl: z.string().default('http://localhost:8888'),
 });
 
 const HeartbeatConfigSchema = z.object({
