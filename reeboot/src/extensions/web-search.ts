@@ -410,6 +410,7 @@ export default async function webSearchExtension(pi: ExtensionAPI, reebotConfig?
     label: 'Fetch URL',
     description:
       'Fetch any URL and return the clean readable text content. Uses Readability to extract article text; falls back to HTML-stripped text for non-article pages.',
+    promptSnippet: 'Fetch a URL and return its readable text content',
     parameters: Type.Object({
       url: Type.String({ description: 'The URL to fetch' }),
     }),
@@ -437,6 +438,7 @@ export default async function webSearchExtension(pi: ExtensionAPI, reebotConfig?
     label: 'Web Search',
     description:
       'Search the web and return a list of results with title, URL, and snippet. Uses the configured search backend.',
+    promptSnippet: 'Search the web and return results with title, URL, and snippet',
     parameters: Type.Object({
       query: Type.String({ description: 'The search query' }),
       limit: Type.Optional(

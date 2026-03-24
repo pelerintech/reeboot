@@ -178,6 +178,7 @@ export default function (pi: ExtensionAPI) {
     label: 'Timer',
     description:
       'Set a one-shot non-blocking timer. Returns immediately. After the specified delay, fires a new agent turn with the given message. Use instead of sleep.',
+    promptSnippet: 'Set a one-shot non-blocking delay that fires a new agent turn',
     parameters: Type.Object({
       seconds: Type.Number({ description: 'Delay in seconds (1–3600)' }),
       message: Type.String({ description: 'Message to include when the timer fires' }),
@@ -213,6 +214,7 @@ export default function (pi: ExtensionAPI) {
     label: 'Heartbeat',
     description:
       'Manage a periodic non-blocking heartbeat. Actions: start (requires interval_seconds 10–3600 and message), stop, status. Only one heartbeat active at a time.',
+    promptSnippet: 'Manage a recurring periodic turn trigger',
     parameters: Type.Object({
       action: Type.Union([Type.Literal('start'), Type.Literal('stop'), Type.Literal('status')], {
         description: 'Action to perform',
@@ -272,6 +274,7 @@ export default function (pi: ExtensionAPI) {
     label: 'Schedule Task',
     description:
       'Schedule a task. Provide a human-friendly schedule string (e.g. "every 30m", "daily", "0 9 * * *", "2026-04-01T09:00:00Z"), a prompt, and optionally contextId and context_mode.',
+    promptSnippet: 'Schedule a task by cron, interval, or datetime',
     parameters: Type.Object({
       schedule: Type.String({
         description:
@@ -298,6 +301,7 @@ export default function (pi: ExtensionAPI) {
     label: 'List Tasks',
     description:
       'List all scheduled tasks with rich status: id, schedule, prompt, status, next run time (relative), last result, context mode.',
+    promptSnippet: 'List all scheduled tasks with status and next run time',
     parameters: Type.Object({}),
     execute: async () => {
       const tools = getTools();
@@ -311,6 +315,7 @@ export default function (pi: ExtensionAPI) {
     name: 'cancel_task',
     label: 'Cancel Task',
     description: 'Cancel and delete a scheduled task by its ID.',
+    promptSnippet: 'Cancel and delete a scheduled task by ID',
     parameters: Type.Object({
       task_id: Type.String({ description: 'Task ID to cancel (from list_tasks)' }),
     }),
@@ -326,6 +331,7 @@ export default function (pi: ExtensionAPI) {
     name: 'pause_task',
     label: 'Pause Task',
     description: 'Pause a scheduled task. The task will not run until resumed.',
+    promptSnippet: 'Pause a scheduled task without deleting it',
     parameters: Type.Object({
       task_id: Type.String({ description: 'Task ID to pause (from list_tasks)' }),
     }),
@@ -341,6 +347,7 @@ export default function (pi: ExtensionAPI) {
     name: 'resume_task',
     label: 'Resume Task',
     description: 'Resume a paused task. next_run is recomputed from now.',
+    promptSnippet: 'Resume a paused task, recomputing its next run',
     parameters: Type.Object({
       task_id: Type.String({ description: 'Task ID to resume (from list_tasks)' }),
     }),
@@ -357,6 +364,7 @@ export default function (pi: ExtensionAPI) {
     label: 'Update Task',
     description:
       "Update a task's prompt, schedule, or context_mode. If schedule changes, next_run is recomputed.",
+    promptSnippet: "Update a task's prompt, schedule, or context mode",
     parameters: Type.Object({
       task_id: Type.String({ description: 'Task ID to update (from list_tasks)' }),
       schedule: Type.Optional(Type.String({ description: 'New schedule string' })),
