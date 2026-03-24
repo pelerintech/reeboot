@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.5] - 2026-03-24
+
+### Changed
+
+- **Pi upgraded to 0.62.0** — bumped `@mariozechner/pi-coding-agent` from `latest` (resolved to 0.60.0) to an exact pin of `0.62.0`. Picks up two minor releases of bug fixes, the `sourceInfo` unification, and built-in tools as extensible `ToolDefinition`s. No reeboot code changes were required — none of the breaking changes in 0.61–0.62 touch the API surface reeboot uses.
+- **Dependency pinned to exact version** — changed from `"latest"` to `"0.62.0"` so Docker builds and `npm install` are fully reproducible.
+
+### Fixed
+
+- **Custom tools invisible in system prompt** — `web_search`, `fetch_url`, and all 8 scheduler tools (`timer`, `heartbeat`, `schedule_task`, `list_tasks`, `cancel_task`, `pause_task`, `resume_task`, `update_task`) were missing `promptSnippet`. Pi omits custom tools from the "Available tools" section of the system prompt when `promptSnippet` is absent, leaving the model with no upfront awareness of these tools. Added a concise, action-oriented `promptSnippet` to all 10 tools so they appear explicitly in the system prompt from the first token of every session.
+
+---
+
 ## [1.3.4] - 2026-03-21
 
 ### Added
