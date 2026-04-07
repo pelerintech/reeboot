@@ -64,10 +64,12 @@ export class WhatsAppAdapter implements ChannelAdapter {
       version = [2, 3000, 1027934701];
     }
 
+    const pino = (await import('pino')).default;
     const sock = makeWASocket({
       version,
       auth: state,
       browser: Browsers.ubuntu('Chrome'),
+      logger: pino({ level: 'silent' }),
     });
 
     this._socket = sock;
@@ -117,7 +119,12 @@ export class WhatsAppAdapter implements ChannelAdapter {
         if (type !== 'notify') continue;
 
         // Skip messages sent by this device, except self-chat ("message yourself")
-        if (fromMe && peerId !== sock.user?.id?.replace(/:.*/, '') + '@s.whatsapp.net') continue;
+        // Self-chat may arrive as @s.whatsapp.net or @lid (WhatsApp Linked Identity Device)
+        const userId = sock.user?.id?.replace(/:.*/, '');
+        const isSelfChat =
+          peerId === userId + '@s.whatsapp.net' ||
+          peerId?.endsWith('@lid');
+        if (fromMe && !isSelfChat) continue;
 
         if (!peerId) continue;
         if (!text) continue;

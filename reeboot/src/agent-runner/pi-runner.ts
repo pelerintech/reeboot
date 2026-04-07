@@ -207,10 +207,6 @@ export class PiAgentRunner implements AgentRunner {
     let sessionOpts: any;
 
     if (authMode === 'pi') {
-      // For authMode="pi": read provider/model/auth from pi's files, but do NOT
-      // pass agentDir to createAgentSession — that would load pi's personal
-      // extensions (pi-searxng, pi-stats, etc) into reeboot's session.
-      // Instead, explicitly source settings+auth from pi's files and inject them.
       const settingsManager = SettingsManager.create(this.context.workspacePath, piAgentDir);
       const authStorage = AuthStorage.create(join(piAgentDir, 'auth.json'));
       const modelRegistry = ModelRegistry.create(authStorage, join(piAgentDir, 'models.json'));

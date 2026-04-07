@@ -108,7 +108,7 @@ export async function runProviderStep(opts: {
     const choice = await prompter.select({
       message: 'How would you like to configure the AI provider?',
       choices: [
-        { name: "Use existing pi's provider, model and auth", value: 'pi' },
+        { name: `Use pi's auth (${piAuth.provider} / ${piAuth.model})`, value: 'pi' },
         { name: 'Set up separate credentials for reeboot', value: 'own' },
       ],
       default: 'pi',
@@ -117,6 +117,10 @@ export async function runProviderStep(opts: {
     if (choice === 'pi') {
       return { authMode: 'pi', provider: '', modelId: '', apiKey: '', ollamaBaseUrl: '' }
     }
+
+    console.log('  Setting up separate credentials. You will need an API key.\n')
+  } else {
+    console.log('  No pi installation found. You will need an API key for one of the supported providers.\n')
   }
 
   console.log('  Note: Custom providers can be added via config.json after setup.\n')
@@ -157,12 +161,24 @@ export async function runProviderStep(opts: {
 
     // Prompt for API key
     const envVar = ENV_VARS[provider] ?? 'API_KEY'
-    console.log(`  ℹ  You can also set ${envVar} env var instead of storing the key.\n`)
+    const envKeySet = !!process.env[envVar]
 
-    apiKey = await prompter.password({
-      message: `Enter your ${provider} API key:`,
-      validate: (val) => val.trim().length > 0 ? true : 'API key cannot be empty',
-    })
+    if (envKeySet) {
+      console.log(`  ✓  ${envVar} is set in your environment — no need to enter a key.\n`)
+    } else {
+      console.log(`  ℹ  You can also set ${envVar} env var instead of storing the key.\n`)
+
+      // Loop until a non-empty key is provided
+      while (!apiKey.trim()) {
+        apiKey = await prompter.password({
+          message: `Enter your ${provider} API key (required):`,
+          validate: (val) => val.trim().length > 0 ? true : 'API key cannot be empty',
+        })
+        if (!apiKey.trim()) {
+          console.log('  ⚠  API key cannot be empty. Press Ctrl+C to cancel setup.')
+        }
+      }
+    }
   }
 
   return { authMode: 'own', provider, modelId, apiKey, ollamaBaseUrl }

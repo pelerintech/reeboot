@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Package install/uninstall now works** — `reeboot install` and `reeboot uninstall` now delegate to pi's `DefaultPackageManager`, tracking packages in `~/.reeboot/agent/settings.json`. Previously packages were recorded in `config.json` which pi never reads, so installed extensions were silently ignored by the loader. `reeboot reload` now picks up newly installed packages without restart.
+- **Wizard enforces API key or pi auth** — the setup wizard no longer allows proceeding without a valid credential. If pi is detected, the choice is explicit: use pi's auth or set up separate credentials (no silent bypass). If separate credentials are chosen, the API key prompt loops until a non-empty value is entered; if the provider's env var is already set, the prompt is skipped entirely. Previously a user could submit an empty key and end up with a broken `authMode=own` config.
+- **WhatsApp self-chat (`@lid`) now works** — WhatsApp's Linked Identity Device format uses `@lid` JIDs for self-chat instead of `@s.whatsapp.net`. The incoming message filter was only checking `@s.whatsapp.net`, so messages sent to yourself were silently dropped. Fixed to accept both formats.
+- **Baileys logs silenced** — `makeWASocket` in the normal connect path was missing `logger: pino({ level: 'silent' })`, causing Baileys to flood stdout with raw JSON during and after WhatsApp connection. Fixed to match the wizard linking path which already silenced it.
 - **Legacy package migration** — on startup, any packages in the old `config.json` `extensions.packages` array are automatically migrated to `~/.reeboot/agent/settings.json` and removed from `config.json`.
 
 ### Tests
