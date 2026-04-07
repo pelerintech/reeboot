@@ -1,23 +1,21 @@
 /**
  * Package system
  *
- * installPackage, uninstallPackage, listPackages.
- * Packages are installed to ~/.reeboot/packages/ via npm.
- * Identifiers are stored in config.extensions.packages[].
+ * installPackage, uninstallPackage, listPackages, migratePackages.
+ * Delegates to pi's DefaultPackageManager and SettingsManager so packages
+ * are tracked in ~/.reeboot/agent/settings.json and discovered by the loader.
  */
 
-import { spawnSync } from 'child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { DefaultPackageManager, SettingsManager, type PackageSource } from '@mariozechner/pi-coding-agent';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface PackageOptions {
-  /** Path to config.json (default: ~/.reeboot/config.json) */
-  configPath?: string;
-  /** Reeboot home dir (default: ~/.reeboot) */
-  reebotDir?: string;
+  /** Path to ~/.reeboot/agent/ (default: ~/.reeboot/agent) */
+  agentDir?: string;
 }
 
 export interface InstalledPackage {
@@ -27,51 +25,29 @@ export interface InstalledPackage {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getDefaultReebotDir(): string {
-  return join(homedir(), '.reeboot');
+function getDefaultAgentDir(): string {
+  return join(homedir(), '.reeboot', 'agent');
 }
 
-function getDefaultConfigPath(reebotDir: string): string {
-  return join(reebotDir, 'config.json');
+function sourceToString(source: PackageSource): string {
+  return typeof source === 'string' ? source : source.source;
 }
 
-function readConfig(configPath: string): any {
-  try {
-    return JSON.parse(readFileSync(configPath, 'utf-8'));
-  } catch {
-    return {};
-  }
-}
-
-function saveConfig(configPath: string, config: any): void {
-  writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-}
-
-/**
- * Convert a spec string (npm:name, git:..., /local/path) to the package name
- * and the npm install argument.
- */
-function parseSpec(spec: string): { name: string; npmArg: string } {
+function parseSpecName(spec: string): string {
   if (spec.startsWith('npm:')) {
-    const pkgWithVersion = spec.slice(4);
-    const name = pkgWithVersion.split('@')[0];
-    return { name, npmArg: pkgWithVersion };
+    return spec.slice(4).split('@')[0];
   }
   if (spec.startsWith('git:')) {
-    // git:github.com/user/repo → github:user/repo
     const path = spec.slice(4);
-    const parts = path.split('/');
-    if (parts[0].includes('github.com')) {
-      const npmArg = `github:${parts.slice(1).join('/')}`;
-      const name = parts[parts.length - 1].replace('.git', '');
-      return { name, npmArg };
-    }
-    // Generic git URL
-    return { name: spec, npmArg: spec.slice(4) };
+    return path.split('/').pop()?.replace('.git', '') ?? spec;
   }
-  // Local path
-  const name = spec.split('/').pop() ?? spec;
-  return { name, npmArg: spec };
+  return spec.split('/').pop() ?? spec;
+}
+
+function buildManager(agentDir: string) {
+  const settingsManager = SettingsManager.create(process.cwd(), agentDir);
+  const pm = new DefaultPackageManager({ agentDir, settingsManager, cwd: process.cwd() });
+  return { pm, settingsManager };
 }
 
 // ─── installPackage ───────────────────────────────────────────────────────────
@@ -80,36 +56,9 @@ export async function installPackage(
   spec: string,
   opts: PackageOptions = {}
 ): Promise<void> {
-  const reebotDir = opts.reebotDir ?? getDefaultReebotDir();
-  const configPath = opts.configPath ?? getDefaultConfigPath(reebotDir);
-  const packagesDir = join(reebotDir, 'packages');
-
-  mkdirSync(packagesDir, { recursive: true });
-
-  const { name, npmArg } = parseSpec(spec);
-
-  // Run npm install
-  const result = spawnSync(
-    'npm',
-    ['install', '--prefix', packagesDir, npmArg],
-    { stdio: 'inherit' }
-  );
-
-  if (result.status !== 0) {
-    throw new Error(`npm install failed for ${spec} (exit code ${result.status})`);
-  }
-
-  // Update config
-  const config = readConfig(configPath);
-  if (!config.extensions) config.extensions = {};
-  if (!Array.isArray(config.extensions.packages)) config.extensions.packages = [];
-
-  // Avoid duplicates
-  if (!config.extensions.packages.includes(spec)) {
-    config.extensions.packages.push(spec);
-  }
-
-  saveConfig(configPath, config);
+  const agentDir = opts.agentDir ?? getDefaultAgentDir();
+  const { pm } = buildManager(agentDir);
+  await pm.install(spec);
 }
 
 // ─── uninstallPackage ─────────────────────────────────────────────────────────
@@ -118,38 +67,9 @@ export async function uninstallPackage(
   name: string,
   opts: PackageOptions = {}
 ): Promise<void> {
-  const reebotDir = opts.reebotDir ?? getDefaultReebotDir();
-  const configPath = opts.configPath ?? getDefaultConfigPath(reebotDir);
-  const packagesDir = join(reebotDir, 'packages');
-
-  // Find the spec in config
-  const config = readConfig(configPath);
-  const packages: string[] = config.extensions?.packages ?? [];
-
-  // Find matching spec (could be npm:name, git:..., or just name)
-  const matchingSpec = packages.find((spec: string) => {
-    const { name: specName } = parseSpec(spec);
-    return specName === name || spec === name;
-  });
-
-  if (!matchingSpec) {
-    throw new Error(`Package not installed: ${name}`);
-  }
-
-  // Run npm uninstall
-  const result = spawnSync(
-    'npm',
-    ['uninstall', '--prefix', packagesDir, name],
-    { stdio: 'inherit' }
-  );
-
-  if (result.status !== 0) {
-    throw new Error(`npm uninstall failed for ${name} (exit code ${result.status})`);
-  }
-
-  // Update config
-  config.extensions.packages = packages.filter((spec: string) => spec !== matchingSpec);
-  saveConfig(configPath, config);
+  const agentDir = opts.agentDir ?? getDefaultAgentDir();
+  const { pm } = buildManager(agentDir);
+  await pm.remove(name);
 }
 
 // ─── listPackages ─────────────────────────────────────────────────────────────
@@ -157,14 +77,47 @@ export async function uninstallPackage(
 export async function listPackages(
   opts: PackageOptions = {}
 ): Promise<InstalledPackage[]> {
-  const reebotDir = opts.reebotDir ?? getDefaultReebotDir();
-  const configPath = opts.configPath ?? getDefaultConfigPath(reebotDir);
-
-  const config = readConfig(configPath);
-  const packages: string[] = config.extensions?.packages ?? [];
-
-  return packages.map((spec: string) => {
-    const { name } = parseSpec(spec);
-    return { spec, name };
+  const agentDir = opts.agentDir ?? getDefaultAgentDir();
+  const { settingsManager } = buildManager(agentDir);
+  const packages = settingsManager.getPackages() ?? [];
+  return packages.map((s) => {
+    const spec = sourceToString(s);
+    return { spec, name: parseSpecName(spec) };
   });
+}
+
+// ─── migratePackages ──────────────────────────────────────────────────────────
+
+/**
+ * One-time migration: move packages from legacy config.json (extensions.packages)
+ * into ~/.reeboot/agent/settings.json via SettingsManager.
+ * Called at server startup.
+ */
+export async function migratePackages(
+  configPath: string,
+  agentDir: string
+): Promise<void> {
+  let config: any;
+  try {
+    config = JSON.parse(readFileSync(configPath, 'utf-8'));
+  } catch {
+    return;
+  }
+
+  const legacyPackages: string[] = config.extensions?.packages;
+  if (!Array.isArray(legacyPackages) || legacyPackages.length === 0) return;
+
+  const settingsManager = SettingsManager.create(process.cwd(), agentDir);
+  const existing = settingsManager.getPackages() ?? [];
+  const existingStrings = existing.map(sourceToString);
+
+  const toAdd = legacyPackages.filter((spec: string) => !existingStrings.includes(spec));
+  if (toAdd.length > 0) {
+    await settingsManager.setPackages([...existing, ...toAdd]);
+  }
+
+  // Remove from config.json
+  delete config.extensions.packages;
+  if (Object.keys(config.extensions).length === 0) delete config.extensions;
+  writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }

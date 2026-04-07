@@ -19,6 +19,7 @@ import {
   createContextsTable,
 } from './context.js';
 import { nanoid } from 'nanoid';
+import { migratePackages } from './packages.js';
 import { homedir } from 'os';
 import type { ChannelAdapter } from './channels/interface.js';
 import type { Orchestrator } from './orchestrator.js';
@@ -141,6 +142,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
 
   // Ensure context workspace and agent dir (AGENTS.md persona) exist
   await initContexts(db, reebotDir);
+
+  // Migrate legacy config.json packages to ~/.reeboot/agent/settings.json
+  const configPath = join(reebotDir, 'config.json');
+  const agentDir = join(reebotDir, 'agent');
+  await migratePackages(configPath, agentDir);
 
   // ── Channel & Orchestrator init ───────────────────────────────────────────
 

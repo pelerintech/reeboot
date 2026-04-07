@@ -1,44 +1,55 @@
 /**
- * Package system tests (task 4.1) — TDD red
- *
- * Tests installPackage, uninstallPackage, listPackages functions.
- * Uses mocked child_process and fs operations.
+ * Package system tests — delegate to pi's DefaultPackageManager
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, rmSync } from 'fs';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-const mockSpawnSync = vi.fn();
-vi.mock('child_process', () => ({
-  spawnSync: mockSpawnSync,
-  execSync: vi.fn(),
+const mockInstall = vi.fn().mockResolvedValue(undefined);
+const mockRemove = vi.fn().mockResolvedValue(undefined);
+const mockListConfiguredPackages = vi.fn().mockReturnValue([]);
+
+const MockDefaultPackageManager = vi.fn().mockImplementation(() => ({
+  install: mockInstall,
+  remove: mockRemove,
+  listConfiguredPackages: mockListConfiguredPackages,
+}));
+
+const mockGetPackages = vi.fn().mockReturnValue([]);
+const mockSetPackages = vi.fn().mockResolvedValue(undefined);
+
+const MockSettingsManager = {
+  inMemory: vi.fn().mockImplementation(() => ({
+    getPackages: mockGetPackages,
+    setPackages: mockSetPackages,
+  })),
+  create: vi.fn().mockImplementation(() => ({
+    getPackages: mockGetPackages,
+    setPackages: mockSetPackages,
+  })),
+};
+
+vi.mock('@mariozechner/pi-coding-agent', () => ({
+  DefaultPackageManager: MockDefaultPackageManager,
+  SettingsManager: MockSettingsManager,
 }));
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('packages', () => {
+describe('packages — pi DefaultPackageManager delegation', () => {
   let tmpDir: string;
-  let configPath: string;
+  let agentDir: string;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-
     tmpDir = join(tmpdir(), `reeboot-pkg-test-${Date.now()}`);
-    mkdirSync(tmpDir, { recursive: true });
-    configPath = join(tmpDir, 'config.json');
-
-    // Write a minimal config
-    writeFileSync(configPath, JSON.stringify({
-      extensions: { packages: [] },
-    }));
-
-    // Default: npm succeeds
-    mockSpawnSync.mockReturnValue({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') });
+    agentDir = join(tmpDir, 'agent');
+    mkdirSync(agentDir, { recursive: true });
   });
 
   afterEach(() => {
@@ -47,98 +58,128 @@ describe('packages', () => {
 
   // ── installPackage ─────────────────────────────────────────────────────────
 
-  it('installPackage(npm:...) runs npm install to packages dir', async () => {
+  it('installPackage delegates to pm.install(spec)', async () => {
     const { installPackage } = await import('@src/packages.js');
-    await installPackage('npm:reeboot-github-tools', { configPath, reebotDir: tmpDir });
+    await installPackage('npm:test-ext', { agentDir });
 
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'npm',
-      expect.arrayContaining(['install', '--prefix', expect.stringContaining('packages'), 'reeboot-github-tools']),
-      expect.objectContaining({ stdio: 'inherit' })
-    );
+    expect(MockDefaultPackageManager).toHaveBeenCalled();
+    expect(mockInstall).toHaveBeenCalledWith('npm:test-ext');
   });
 
-  it('installPackage adds identifier to config.extensions.packages', async () => {
+  it('installPackage throws if pm.install rejects', async () => {
+    mockInstall.mockRejectedValueOnce(new Error('npm failed'));
     const { installPackage } = await import('@src/packages.js');
-    await installPackage('npm:reeboot-github-tools', { configPath, reebotDir: tmpDir });
-
-    const config = JSON.parse(require('fs').readFileSync(configPath, 'utf-8'));
-    expect(config.extensions.packages).toContain('npm:reeboot-github-tools');
-  });
-
-  it('installPackage returns error message when npm fails', async () => {
-    mockSpawnSync.mockReturnValue({ status: 1, stdout: Buffer.from(''), stderr: Buffer.from('Not found') });
-
-    const { installPackage } = await import('@src/packages.js');
-    await expect(
-      installPackage('npm:does-not-exist-xxxxxx', { configPath, reebotDir: tmpDir })
-    ).rejects.toThrow();
-  });
-
-  it('installPackage(git:...) passes git URL to npm install', async () => {
-    const { installPackage } = await import('@src/packages.js');
-    await installPackage('git:github.com/user/my-extension', { configPath, reebotDir: tmpDir });
-
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'npm',
-      expect.arrayContaining(['install', '--prefix', expect.any(String), 'github:user/my-extension']),
-      expect.anything()
-    );
+    await expect(installPackage('npm:bad-pkg', { agentDir })).rejects.toThrow('npm failed');
   });
 
   // ── uninstallPackage ───────────────────────────────────────────────────────
 
-  it('uninstallPackage removes config entry', async () => {
-    // Pre-install
-    writeFileSync(configPath, JSON.stringify({
-      extensions: { packages: ['npm:reeboot-github-tools'] },
-    }));
-
+  it('uninstallPackage delegates to pm.remove(name)', async () => {
     const { uninstallPackage } = await import('@src/packages.js');
-    await uninstallPackage('reeboot-github-tools', { configPath, reebotDir: tmpDir });
+    await uninstallPackage('test-ext', { agentDir });
 
-    const config = JSON.parse(require('fs').readFileSync(configPath, 'utf-8'));
-    expect(config.extensions.packages).not.toContain('npm:reeboot-github-tools');
+    expect(MockDefaultPackageManager).toHaveBeenCalled();
+    expect(mockRemove).toHaveBeenCalledWith('test-ext');
   });
 
-  it('uninstallPackage throws when package not in config', async () => {
+  it('uninstallPackage throws if pm.remove rejects', async () => {
+    mockRemove.mockRejectedValueOnce(new Error('not found'));
     const { uninstallPackage } = await import('@src/packages.js');
-    await expect(
-      uninstallPackage('package-not-installed', { configPath, reebotDir: tmpDir })
-    ).rejects.toThrow('Package not installed');
-  });
-
-  it('uninstallPackage runs npm uninstall', async () => {
-    writeFileSync(configPath, JSON.stringify({
-      extensions: { packages: ['npm:reeboot-github-tools'] },
-    }));
-
-    const { uninstallPackage } = await import('@src/packages.js');
-    await uninstallPackage('reeboot-github-tools', { configPath, reebotDir: tmpDir });
-
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'npm',
-      expect.arrayContaining(['uninstall', '--prefix', expect.any(String), 'reeboot-github-tools']),
-      expect.anything()
-    );
+    await expect(uninstallPackage('missing-pkg', { agentDir })).rejects.toThrow('not found');
   });
 
   // ── listPackages ───────────────────────────────────────────────────────────
 
-  it('listPackages returns empty array when no packages installed', async () => {
+  it('listPackages returns packages from settingsManager.getPackages()', async () => {
+    mockGetPackages.mockReturnValueOnce(['npm:ext-a', 'npm:ext-b']);
     const { listPackages } = await import('@src/packages.js');
-    const result = await listPackages({ configPath, reebotDir: tmpDir });
-    expect(result).toEqual([]);
+    const result = await listPackages({ agentDir });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ spec: 'npm:ext-a', name: 'ext-a' });
+    expect(result[1]).toEqual({ spec: 'npm:ext-b', name: 'ext-b' });
   });
 
-  it('listPackages returns installed packages from config', async () => {
+  it('listPackages returns empty array when no packages installed', async () => {
+    mockGetPackages.mockReturnValueOnce([]);
+    const { listPackages } = await import('@src/packages.js');
+    const result = await listPackages({ agentDir });
+    expect(result).toEqual([]);
+  });
+});
+
+// ─── migratePackages ──────────────────────────────────────────────────────────
+
+describe('migratePackages', () => {
+  let tmpDir: string;
+  let agentDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    tmpDir = join(tmpdir(), `reeboot-migrate-test-${Date.now()}`);
+    agentDir = join(tmpDir, 'agent');
+    configPath = join(tmpDir, 'config.json');
+    mkdirSync(agentDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('moves extensions.packages from config.json into settingsManager', async () => {
+    const { writeFileSync } = await import('fs');
     writeFileSync(configPath, JSON.stringify({
-      extensions: { packages: ['npm:reeboot-github-tools', 'npm:reeboot-browser'] },
+      extensions: { packages: ['npm:old-ext'] },
     }));
 
-    const { listPackages } = await import('@src/packages.js');
-    const result = await listPackages({ configPath, reebotDir: tmpDir });
-    expect(result).toHaveLength(2);
-    expect(result.map((p: any) => p.spec)).toContain('npm:reeboot-github-tools');
+    mockGetPackages.mockReturnValue([]);
+
+    const { migratePackages } = await import('@src/packages.js');
+    await migratePackages(configPath, agentDir);
+
+    expect(mockSetPackages).toHaveBeenCalledWith(expect.arrayContaining(['npm:old-ext']));
+  });
+
+  it('removes extensions.packages from config.json after migration', async () => {
+    const { writeFileSync, readFileSync } = await import('fs');
+    writeFileSync(configPath, JSON.stringify({
+      extensions: { packages: ['npm:old-ext'] },
+    }));
+
+    mockGetPackages.mockReturnValue([]);
+
+    const { migratePackages } = await import('@src/packages.js');
+    await migratePackages(configPath, agentDir);
+
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    expect(config.extensions?.packages).toBeUndefined();
+  });
+
+  it('does nothing when config.json has no extensions.packages', async () => {
+    const { writeFileSync } = await import('fs');
+    writeFileSync(configPath, JSON.stringify({ agent: { name: 'test' } }));
+
+    const { migratePackages } = await import('@src/packages.js');
+    await migratePackages(configPath, agentDir);
+
+    expect(mockSetPackages).not.toHaveBeenCalled();
+  });
+
+  it('skips specs already present in settings.json', async () => {
+    const { writeFileSync } = await import('fs');
+    writeFileSync(configPath, JSON.stringify({
+      extensions: { packages: ['npm:old-ext', 'npm:already-there'] },
+    }));
+
+    mockGetPackages.mockReturnValue(['npm:already-there']);
+
+    const { migratePackages } = await import('@src/packages.js');
+    await migratePackages(configPath, agentDir);
+
+    const callArg = mockSetPackages.mock.calls[0][0] as string[];
+    expect(callArg).toContain('npm:old-ext');
+    expect(callArg.filter((s: string) => s === 'npm:already-there')).toHaveLength(1);
   });
 });

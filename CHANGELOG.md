@@ -15,12 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **cron-parser upgraded to v5** — bumped from `^4.9.0` to `^5.5.0`. v5 is a full TypeScript ESM rewrite with a new import API. Dropped the `createRequire` CJS hack in `src/scheduler/parse.ts`; switched both `parse.ts` and `src/db/schema.ts` to `import { CronExpressionParser } from 'cron-parser'` with `CronExpressionParser.parse(expr)`. Also removed stale compiled `.js` files from `src/` that were shadowing TypeScript sources for the test runner.
 - **TypeScript upgraded to v6** — bumped devDependency from `^5.4.0` to `^6.0.2`. No source or tsconfig changes were required — TS 6 compiled the project cleanly without modification.
 
+### Fixed
+
+- **Package install/uninstall now works** — `reeboot install` and `reeboot uninstall` now delegate to pi's `DefaultPackageManager`, tracking packages in `~/.reeboot/agent/settings.json`. Previously packages were recorded in `config.json` which pi never reads, so installed extensions were silently ignored by the loader. `reeboot reload` now picks up newly installed packages without restart.
+- **Legacy package migration** — on startup, any packages in the old `config.json` `extensions.packages` array are automatically migrated to `~/.reeboot/agent/settings.json` and removed from `config.json`.
+
 ### Tests
 
 - Added `tests/agent-runner/pi-registry-factory.test.ts` — asserts `ModelRegistry.create` API shape
 - Added `tests/extensions/custom-compaction-api.test.ts` — asserts `getApiKeyAndHeaders` is called (not `getApiKey`)
 - Added `tests/scheduler/parse.test.ts` — unit tests for `detectScheduleType` and `computeNextRun`
 - Added `tests/db/schema-cron.test.ts` — integration test for `runMigration` populating `next_run` for legacy cron rows
+- Added `tests/packages.test.ts` — unit tests for `installPackage`, `uninstallPackage`, `listPackages`, and `migratePackages`
 
 ---
 
