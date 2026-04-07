@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.6] - 2026-04-07
+
+### Changed
+
+- **`@mariozechner/pi-coding-agent` upgraded to 0.65.2** — bumped pin from `0.62.0`. Picks up three releases (0.63–0.65): `ModelRegistry` constructor removed in favour of `ModelRegistry.create()`; `getApiKey()` replaced by `getApiKeyAndHeaders()` returning `{ ok, apiKey, headers }`. Updated `src/agent-runner/pi-runner.ts` (two `ModelRegistry.create` call sites) and `src/extensions/custom-compaction.ts` (`getApiKeyAndHeaders` with `auth.ok` guard and `headers` threaded into `complete()`).
+- **cron-parser upgraded to v5** — bumped from `^4.9.0` to `^5.5.0`. v5 is a full TypeScript ESM rewrite with a new import API. Dropped the `createRequire` CJS hack in `src/scheduler/parse.ts`; switched both `parse.ts` and `src/db/schema.ts` to `import { CronExpressionParser } from 'cron-parser'` with `CronExpressionParser.parse(expr)`. Also removed stale compiled `.js` files from `src/` that were shadowing TypeScript sources for the test runner.
+- **TypeScript upgraded to v6** — bumped devDependency from `^5.4.0` to `^6.0.2`. No source or tsconfig changes were required — TS 6 compiled the project cleanly without modification.
+
+### Tests
+
+- Added `tests/agent-runner/pi-registry-factory.test.ts` — asserts `ModelRegistry.create` API shape
+- Added `tests/extensions/custom-compaction-api.test.ts` — asserts `getApiKeyAndHeaders` is called (not `getApiKey`)
+- Added `tests/scheduler/parse.test.ts` — unit tests for `detectScheduleType` and `computeNextRun`
+- Added `tests/db/schema-cron.test.ts` — integration test for `runMigration` populating `next_run` for legacy cron rows
+
+---
+
 ## [1.3.5] - 2026-03-24
 
 ### Changed

@@ -6,9 +6,7 @@
  * (interval), and cron expressions (cron).
  */
 
-import { createRequire } from 'module';
-const _require = createRequire(import.meta.url);
-const { parseExpression } = _require('cron-parser');
+import { CronExpressionParser } from 'cron-parser';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,7 +112,7 @@ export function detectScheduleType(value: string): ScheduleDescriptor {
 
   // Try cron — throws if invalid
   try {
-    parseExpression(trimmed);
+    CronExpressionParser.parse(trimmed);
     return { type: 'cron' };
   } catch {
     throw new Error(`invalid schedule: "${trimmed}" is not a valid cron expression, ISO datetime, or interval`);
@@ -135,7 +133,7 @@ export function computeNextRun(task: TaskForNextRun): string | null {
   }
 
   if (task.schedule_type === 'cron') {
-    return parseExpression(task.schedule_value).next().toDate().toISOString();
+    return CronExpressionParser.parse(task.schedule_value).next().toDate().toISOString();
   }
 
   // interval — drift-free advancement

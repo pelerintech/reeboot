@@ -213,7 +213,7 @@ export class PiAgentRunner implements AgentRunner {
       // Instead, explicitly source settings+auth from pi's files and inject them.
       const settingsManager = SettingsManager.create(this.context.workspacePath, piAgentDir);
       const authStorage = AuthStorage.create(join(piAgentDir, 'auth.json'));
-      const modelRegistry = new ModelRegistry(authStorage, join(piAgentDir, 'models.json'));
+      const modelRegistry = ModelRegistry.create(authStorage, join(piAgentDir, 'models.json'));
 
       sessionOpts = {
         cwd: this.context.workspacePath,
@@ -247,7 +247,7 @@ export class PiAgentRunner implements AgentRunner {
       }
 
       const reebotAgentDir = join(homedir(), '.reeboot', 'agent');
-      const modelRegistry = new ModelRegistry(authStorage, join(reebotAgentDir, 'models.json'));
+      const modelRegistry = ModelRegistry.create(authStorage, join(reebotAgentDir, 'models.json'));
 
       sessionOpts = {
         cwd: this.context.workspacePath,

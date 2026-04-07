@@ -1,6 +1,6 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
-import cronParser from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 
 // ─── contexts ────────────────────────────────────────────────────────────────
 
@@ -136,7 +136,7 @@ function _computeMissingNextRuns(db: import('better-sqlite3').Database): void {
   for (const row of rows) {
     const expr = row.schedule_value || row.schedule;
     try {
-      const next = cronParser.parseExpression(expr).next().toDate().toISOString();
+      const next = CronExpressionParser.parse(expr).next().toDate().toISOString();
       update.run(next, row.id);
     } catch {
       // If cron expression is invalid, set next_run to now so it runs on next poll
