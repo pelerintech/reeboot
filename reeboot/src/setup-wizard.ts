@@ -64,13 +64,15 @@ export async function runWizard(opts: WizardOptions = {}): Promise<void> {
     },
     channels: {
       web: {
+        ...defaultConfig.channels.web,
         enabled: answers.channels.includes('web'),
-        port: defaultConfig.channels.web.port,
       },
       whatsapp: {
+        ...defaultConfig.channels.whatsapp,
         enabled: answers.channels.includes('whatsapp'),
       },
       signal: {
+        ...defaultConfig.channels.signal,
         enabled: answers.channels.includes('signal'),
         phoneNumber: defaultConfig.channels.signal.phoneNumber,
         apiPort: defaultConfig.channels.signal.apiPort,

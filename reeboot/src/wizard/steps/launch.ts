@@ -58,9 +58,10 @@ export async function runLaunchStep(opts: {
       },
     },
     channels: {
-      web: { enabled: true, port: defaultConfig.channels.web.port },
-      whatsapp: { enabled: draft.whatsapp },
+      web: { ...defaultConfig.channels.web, enabled: true, port: defaultConfig.channels.web.port },
+      whatsapp: { ...defaultConfig.channels.whatsapp, enabled: draft.whatsapp },
       signal: {
+        ...defaultConfig.channels.signal,
         enabled: draft.signal,
         phoneNumber: draft.signalPhone ?? '',
         apiPort: defaultConfig.channels.signal.apiPort,
