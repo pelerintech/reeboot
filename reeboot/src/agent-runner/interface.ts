@@ -11,12 +11,14 @@ export type RunnerEvent =
 
 // ─── AgentRunner ─────────────────────────────────────────────────────────────
 
+export type MessageTrust = 'owner' | 'end-user';
+
 export interface AgentRunner {
   /**
    * Send a user message to the agent. Calls onEvent for each RunnerEvent as
    * they arrive. Resolves when the turn completes (message_end received).
    */
-  prompt(content: string, onEvent: (event: RunnerEvent) => void): Promise<void>;
+  prompt(content: string, onEvent: (event: RunnerEvent) => void, options?: { trust?: MessageTrust }): Promise<void>;
 
   /**
    * Abort any in-flight prompt. No-op if no prompt is active.

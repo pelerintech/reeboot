@@ -6,6 +6,7 @@
  */
 
 import { EventEmitter } from 'events';
+import type { MessageTrust } from '../trust.js';
 
 // ─── ChannelStatus ────────────────────────────────────────────────────────────
 
@@ -35,6 +36,8 @@ export interface IncomingMessage {
   timestamp: number;
   /** Provider-specific original message object (Baileys message, WS message, etc.) */
   raw: unknown;
+  /** Resolved trust level for this message. Absent means 'owner' (no restriction). */
+  trust?: MessageTrust;
 }
 
 /**

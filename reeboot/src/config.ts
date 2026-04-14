@@ -28,7 +28,30 @@ const ExtensionsCoreConfigSchema = z.object({
   custom_compaction: z.boolean().default(true),
   scheduler_tool: z.boolean().default(true),
   token_meter: z.boolean().default(true),
+  mcp: z.boolean().default(true),
+  injection_guard: z.boolean().default(true),
 });
+
+const McpPermissionsSchema = z.object({
+  network:    z.boolean().default(false),
+  filesystem: z.boolean().default(false),
+});
+
+const McpServerSchema = z.object({
+  name:        z.string().min(1),
+  command:     z.string().min(1),
+  args:        z.array(z.string()).default([]),
+  env:         z.record(z.string()).default({}),
+  permissions: McpPermissionsSchema.default({}),
+});
+
+const McpConfigSchema = z.object({
+  servers: z.array(McpServerSchema).default([]),
+});
+
+export type McpPermissions = z.infer<typeof McpPermissionsSchema>;
+export type McpServerConfig = z.infer<typeof McpServerSchema>;
+export type McpConfig = z.infer<typeof McpConfigSchema>;
 
 const ExtensionsConfigSchema = z.object({
   core: ExtensionsCoreConfigSchema.default({}),
@@ -41,13 +64,20 @@ const SkillsConfigSchema = z.object({
 });
 export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
 
+const ChannelTrustFields = {
+  trust: z.enum(['owner', 'end-user']).default('owner'),
+  trusted_senders: z.array(z.string()).default([]),
+};
+
 const WebChannelSchema = z.object({
   enabled: z.boolean().default(true),
   port: z.number().int().default(3000),
+  ...ChannelTrustFields,
 });
 
 const WhatsAppChannelSchema = z.object({
   enabled: z.boolean().default(false),
+  ...ChannelTrustFields,
 });
 
 const SignalChannelSchema = z.object({
@@ -55,6 +85,7 @@ const SignalChannelSchema = z.object({
   phoneNumber: z.string().default(''),
   apiPort: z.number().int().default(8080),
   pollInterval: z.number().int().default(1000),
+  ...ChannelTrustFields,
 });
 
 const ChannelsConfigSchema = z.object({
@@ -106,6 +137,34 @@ const HeartbeatConfigSchema = z.object({
   contextId: z.string().default('main'),
 });
 
+const ViolationConfigSchema = z.object({
+  log: z.boolean().default(true),
+});
+
+const PermissionsConfigSchema = z.object({
+  violations: ViolationConfigSchema.default({}),
+});
+
+const InjectionGuardConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  external_source_tools: z.array(z.string()).default(['fetch_url', 'web_fetch']),
+});
+
+const SecurityConfigSchema = z.object({
+  injection_guard: InjectionGuardConfigSchema.default({}),
+});
+
+const ContextToolsSchema = z.object({
+  whitelist: z.array(z.string()).default([]),
+});
+
+const ContextConfigEntrySchema = z.object({
+  name: z.string(),
+  tools: ContextToolsSchema.default({}),
+});
+
+export type ContextConfig = z.infer<typeof ContextConfigEntrySchema>;
+
 export const ConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   channels: ChannelsConfigSchema.default({}),
@@ -119,6 +178,10 @@ export const ConfigSchema = z.object({
   search: SearchConfigSchema.default({}),
   heartbeat: HeartbeatConfigSchema.default({}),
   skills: SkillsConfigSchema.default({}),
+  mcp: McpConfigSchema.default({}),
+  permissions: PermissionsConfigSchema.default({}),
+  security: SecurityConfigSchema.default({}),
+  contexts: z.array(ContextConfigEntrySchema).default([]),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

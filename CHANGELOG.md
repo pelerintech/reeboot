@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Channel trust** — two-level trust model for multi-party deployments. Each channel declares a default trust level (`owner` or `end-user`) in config; individual senders can be elevated to `owner` trust via `trusted_senders`. Owner sessions are unrestricted; end-user sessions are limited to the tool whitelist declared in `contexts[].tools.whitelist` — unlisted tools are blocked, not just gated. Config example:
+  ```json
+  "channels": {
+    "whatsapp": { "trust": "end-user", "trusted_senders": ["+15551234567"] },
+    "web": { "trust": "end-user" }
+  },
+  "contexts": [
+    { "name": "support", "tools": { "whitelist": ["send_message", "check_calendar_availability"] } }
+  ]
+  ```
+  All existing deployments continue to work unchanged — channels default to `owner`, whitelist defaults to unrestricted.
+
+- **Injection defense** — two prompt-level layers that defend against direct and indirect prompt injection. End-user messages are wrapped with a trust boundary notice before reaching the model. Tool results from declared external-source tools (email readers, web fetch, RSS, etc.) are wrapped with a data-only boundary marker, instructing the model to treat the content as data and ignore any embedded instructions. User-installed skills are tagged with a lower-trust marker at load time. Both layers are controlled by `security.injection_guard` in config (enabled by default). The list of external-source tools is configurable per deployment.
+
+- **MCP permission tiers** — per-server capability declarations enforced at two layers: a JS `tool_call` hook (blocks calls to filesystem/network tools for servers that haven't declared the capability) and an OS-level sandbox profile selected at spawn time (sandbox-exec on macOS, bubblewrap on Linux). MCP servers default to no capabilities; network and filesystem access are opt-in per server. Violations are logged by default. Built-in extensions are unaffected. Config example:
+  ```json
+  "mcp": {
+    "servers": [
+      {
+        "name": "web-fetcher",
+        "command": "npx",
+        "args": ["-y", "@my/web-fetcher-mcp"],
+        "permissions": { "network": true, "filesystem": false }
+      }
+    ]
+  }
+  ```
+
+- **MCP client** — connect any stdio-based MCP server to the agent via `config.json → mcp.servers`. Tools from all configured servers are exposed through a single `mcp` proxy tool (~200 tokens), keeping context cost flat regardless of server count. Servers are spawned as child processes on first use (lazy) and killed on session end. Uses `@modelcontextprotocol/sdk`. Config example:
+  ```json
+  "mcp": {
+    "servers": [
+      {
+        "name": "filesystem",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      }
+    ]
+  }
+  ```
+  The agent discovers a server's tools with `mcp({ action: "list", server: "<name>" })` and calls them with `mcp({ action: "call", server: "<name>", tool: "<tool>", args: {...} })`. Disable per-server or entirely via `extensions.core.mcp: false`. stdio only in v1.
+
+---
+
 ## [1.3.6] - 2026-04-07
 
 ### Changed

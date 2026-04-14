@@ -48,6 +48,8 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   const tokenMeterEnabled    = core.token_meter        ?? true;
   const webSearchEnabled     = (core as any).web_search ?? true;
   const skillManagerEnabled  = (core as any).skill_manager ?? true;
+  const mcpEnabled           = (core as any).mcp ?? true;
+  const injectionGuardEnabled = (core as any).injection_guard ?? true;
 
   const factories: ExtensionFactory[] = [];
 
@@ -135,6 +137,20 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   if (skillManagerEnabled) {
     factories.push(async (pi) => {
       const mod = await importExt('skill-manager');
+      if (mod?.default) await (mod.default as any)(pi, config);
+    });
+  }
+
+  if (mcpEnabled) {
+    factories.push(async (pi) => {
+      const mod = await importExt('mcp-manager');
+      if (mod?.default) await (mod.default as any)(pi, config);
+    });
+  }
+
+  if (injectionGuardEnabled) {
+    factories.push(async (pi) => {
+      const mod = await importExt('injection-guard');
       if (mod?.default) await (mod.default as any)(pi, config);
     });
   }

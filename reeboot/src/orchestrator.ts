@@ -15,6 +15,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import type { MessageBus, IncomingMessage, ChannelAdapter } from './channels/interface.js';
 import type { AgentRunner } from './agent-runner/index.js';
+import { resolveMessageTrust } from './trust.js';
 
 // ─── Config types ─────────────────────────────────────────────────────────────
 
@@ -36,6 +37,8 @@ export interface OrchestratorConfig {
     turnTimeout?: number;
     rateLimitRetries?: number;
   };
+  /** Channel trust config — optional; absent means all channels default to 'owner' */
+  channels?: Record<string, { trust?: string; trusted_senders?: string[] }>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -142,6 +145,11 @@ export class Orchestrator {
   // ── Message handling ──────────────────────────────────────────────────────
 
   private _handleMessage(msg: IncomingMessage): void {
+    // Resolve trust if not already set
+    if (this._config.channels && msg.trust === undefined) {
+      msg = { ...msg, trust: resolveMessageTrust(msg.channelType, msg.peerId, this._config as any) };
+    }
+
     const contextId = this._resolveContext(msg);
     const state = this._getOrCreateContextState(contextId);
 
@@ -208,11 +216,14 @@ export class Orchestrator {
 
       // Build a promise that races the turn vs. timeout
       let aborted = false;
-      const turnPromise = runner.prompt(msg.content, (event) => {
+      const onEvent = (event: any) => {
         if (event.type === 'text_delta') {
           responseText += event.delta;
         }
-      });
+      };
+      const turnPromise = msg.trust !== undefined
+        ? runner.prompt(msg.content, onEvent, { trust: msg.trust })
+        : runner.prompt(msg.content, onEvent);
 
       let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
       const timeoutPromise = new Promise<'timeout'>((resolve) => {

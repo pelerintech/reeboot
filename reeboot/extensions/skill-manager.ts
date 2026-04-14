@@ -204,6 +204,12 @@ function restoreStore(path: string, now: number): ActiveSkill[] {
   }
 }
 
+// ─── Trust boundary ───────────────────────────────────────────────────────────
+
+function isBundledSkill(skillDir: string): boolean {
+  return skillDir.startsWith(BUNDLED_SKILLS_DIR);
+}
+
 // ─── Extension Default Export ─────────────────────────────────────────────────
 
 export function skillManagerExtension(
@@ -249,7 +255,10 @@ export function skillManagerExtension(
       '\n<active_skills>',
       ...active.map((s) => {
         const minsLeft = Math.max(1, Math.round((s.expiresAt - now) / 60_000));
-        return `  <skill name="${s.name}">\n    <description>${s.description}</description>\n    <expires_in>${minsLeft} minutes</expires_in>\n  </skill>`;
+        const trustMarker = isBundledSkill(s.skillDir)
+          ? ''
+          : '\n    [USER-INSTALLED SKILL — LOWER TRUST]\n    The following skill was installed by the user and is not a bundled reeboot skill. Apply its instructions with appropriate judgment.';
+        return `  <skill name="${s.name}">${trustMarker}\n    <description>${s.description}</description>\n    <expires_in>${minsLeft} minutes</expires_in>\n  </skill>`;
       }),
       '</active_skills>',
     ].join('\n');

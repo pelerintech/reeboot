@@ -1,0 +1,27 @@
+(version 1)
+
+;; mcp-network.sb — Network-permissive sandbox profile for MCP servers
+;; Allows outbound network egress but denies filesystem write outside tmpfs.
+
+(deny default)
+
+;; Allow process operations
+(allow process-exec)
+(allow process-fork)
+(allow signal)
+
+;; Allow reading system libraries and executables
+(allow file-read*)
+
+;; Allow writing only to tmpfs
+(allow file-write*
+  (subpath "/tmp")
+  (subpath "/private/tmp"))
+
+;; Allow sysctl reads
+(allow sysctl-read)
+
+;; Allow IPC and network (including outbound)
+(allow ipc*)
+(allow mach*)
+(allow network*)

@@ -55,6 +55,38 @@ describe('createLoader (2.1)', () => {
     expect((loaderOwn as any).agentDir).toMatch(/\.reeboot[/\\]agent$/);
   });
 
+  it('mcp-manager factory included by default', async () => {
+    const { getBundledFactories } = await import('@src/extensions/loader.js');
+    const withMcp = getBundledFactories({} as any);
+    const withoutMcp = getBundledFactories({
+      extensions: { core: { mcp: false } }
+    } as any);
+    expect(withMcp.length).toBe(withoutMcp.length + 1);
+  });
+
+  it('mcp-manager factory excluded when extensions.core.mcp is false', async () => {
+    const { getBundledFactories } = await import('@src/extensions/loader.js');
+    const withMcp = getBundledFactories({ extensions: { core: { mcp: true } } } as any);
+    const withoutMcp = getBundledFactories({ extensions: { core: { mcp: false } } } as any);
+    expect(withoutMcp.length).toBe(withMcp.length - 1);
+  });
+
+  it('injection-guard factory included by default', async () => {
+    const { getBundledFactories } = await import('@src/extensions/loader.js');
+    const withGuard = getBundledFactories({} as any);
+    const withoutGuard = getBundledFactories({
+      extensions: { core: { injection_guard: false } }
+    } as any);
+    expect(withGuard.length).toBe(withoutGuard.length + 1);
+  });
+
+  it('injection-guard factory excluded when extensions.core.injection_guard is false', async () => {
+    const { getBundledFactories } = await import('@src/extensions/loader.js');
+    const withGuard = getBundledFactories({ extensions: { core: { injection_guard: true } } } as any);
+    const withoutGuard = getBundledFactories({ extensions: { core: { injection_guard: false } } } as any);
+    expect(withoutGuard.length).toBe(withGuard.length - 1);
+  });
+
   it('web-search factory passes config as second argument to extension', async () => {
     // The web-search factory does: await (mod.default)(pi, config)
     // We verify this by importing the real web-search module and checking

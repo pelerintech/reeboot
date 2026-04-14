@@ -1,0 +1,32 @@
+(version 1)
+
+;; mcp-restricted.sb — Deny-all sandbox profile for MCP servers
+;; Denies network egress and filesystem write.
+;; Allows proc/tmpfs operations needed for basic subprocess execution.
+
+(deny default)
+
+;; Allow process operations
+(allow process-exec)
+(allow process-fork)
+(allow signal)
+
+;; Allow reading system libraries and executables
+(allow file-read*)
+
+;; Allow writing only to tmpfs
+(allow file-write*
+  (subpath "/tmp")
+  (subpath "/private/tmp"))
+
+;; Allow sysctl reads (required by many runtimes)
+(allow sysctl-read)
+
+;; Allow IPC (pipes, sockets for stdio)
+(allow ipc*)
+(allow mach*)
+(allow network-inbound (local ip))
+(allow network-bind (local ip))
+
+;; Deny all outbound network
+(deny network-outbound)
