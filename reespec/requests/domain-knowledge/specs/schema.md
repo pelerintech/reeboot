@@ -29,6 +29,7 @@ SQLite schema additions for domain knowledge: sqlite-vec extension loading, `kno
 ### GIVEN sqlite-vec is loaded
 ### WHEN the knowledge schema migration runs
 ### THEN `knowledge_chunks` vec0 virtual table exists with embedding float[768] and auxiliary columns doc_id, chunk_index, content
+### AND `chunk_index` is declared as TEXT (not INTEGER) — sqlite-vec pre-v1 auxiliary columns reject integer binding from better-sqlite3; chunk_index is stored as a string representation and parsed back to integer on retrieval
 
 ---
 

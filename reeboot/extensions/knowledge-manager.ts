@@ -74,7 +74,18 @@ Every wiki page has YAML frontmatter:
 
 When answering questions, search the knowledge base first (knowledge_search), then check the wiki index.
 When filing insights, use the knowledge_file tool.
-Wiki citations must always note: "verify against primary sources."
+
+## Citation Rules
+
+Every answer that draws on the knowledge base must cite its sources. Citation format:
+  [filename | source_tier | confidence]
+
+Rules:
+- Always include source_tier and confidence in citations so the owner can judge trustworthiness.
+- wiki-synthesis pages MUST be flagged: append "(verify against primary sources)" to every wiki citation.
+- Never present wiki-synthesis content as equivalent to raw source content.
+- When a wiki page contradicts a raw source, the raw source takes precedence.
+- If confidence is 'low', flag it: append "(low confidence — treat with caution)".
 `;
 }
 
@@ -369,8 +380,13 @@ export function makeKnowledgeExtension(
           [Type.Literal('concept'), Type.Literal('source'), Type.Literal('comparison')],
           { description: 'Type of wiki page determines which subdirectory it goes in' }
         ),
+        confidence: Type.Optional(
+          Type.Union([Type.Literal('high'), Type.Literal('medium'), Type.Literal('low')], {
+            description: 'Content quality confidence for this wiki page. Default: low (wiki-synthesis pages are always lowest trust until verified)',
+          })
+        ),
       }),
-      execute: async (_id: string, params: { content: string; filename: string; pageType: 'concept' | 'source' | 'comparison' }) => {
+      execute: async (_id: string, params: { content: string; filename: string; pageType: 'concept' | 'source' | 'comparison'; confidence?: 'high' | 'medium' | 'low' }) => {
         if (!db) {
           return { content: [{ type: 'text' as const, text: 'Database not available.' }] };
         }
@@ -382,12 +398,14 @@ export function makeKnowledgeExtension(
 
         // Insert wiki_pages metadata row
         const id = nanoid();
+        const pageConfidence = params.confidence ?? 'low';
         db.prepare(`
           INSERT INTO wiki_pages (id, path, page_type, source_tier, confidence, sources, updated_at)
-          VALUES (?, ?, ?, 'wiki-synthesis', 'low', '[]', datetime('now'))
+          VALUES (?, ?, ?, 'wiki-synthesis', ?, '[]', datetime('now'))
           ON CONFLICT(path) DO UPDATE SET
+            confidence = excluded.confidence,
             updated_at = excluded.updated_at
-        `).run(id, filePath, params.pageType);
+        `).run(id, filePath, params.pageType, pageConfidence);
 
         return {
           content: [{

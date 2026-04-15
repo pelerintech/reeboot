@@ -163,3 +163,66 @@ reason:   Spec requires 300ms debounce, hash-based dedup, `getPendingFiles()`, `
 - Brief defines two ingest paths — "Interactive (default): one document at a time, agent reads source, shares takeaways, owner steers emphasis" vs. "Silent + notify: background processing with structured summary". The implementation sends a single notification message and relies on the agent to handle both modes conversationally via `knowledge_ingest`. No spec captures this two-path flow — human should decide whether the conversational LLM-driven approach satisfies "interactive default" or whether a structured pipeline distinction is required.
 
 ---
+
+## Evaluation — 2026-04-15 20:53
+
+### schema
+verdict: ✅ SATISFIED
+reason: Spec requires `knowledge_sources` (12 columns), `knowledge_fts` FTS5 with content/doc_id/chunk_index/source_tier, `wiki_pages` (7 columns), `knowledge_chunks` vec0 with `embedding float[768]` and auxiliary columns, `chunk_index` as TEXT per the updated spec note, and idempotent migration — all present in `src/db/schema.ts::runKnowledgeMigration`, verified by 6 passing tests in `tests/db/knowledge-schema.test.ts`.
+
+---
+
+### knowledge-config
+verdict: ✅ SATISFIED
+reason: Spec requires defaults (enabled=false, embeddingModel, dimensions=768, chunkSize=512, chunkOverlap=64, wiki.enabled=false, wiki.lint.schedule="0 9 * * 1"), directory creation on enable, tool gating, sqlite-vec loading gated on `knowledge.enabled`, and Matryoshka truncation — all present in `src/config.ts` and `extensions/knowledge-manager.ts`. Tests in `tests/knowledge-config.test.ts` and `tests/knowledge-integration.test.ts` confirm (10 tests, all pass).
+
+---
+
+### extraction
+verdict: ✅ SATISFIED
+reason: Spec requires `.md`/`.txt` pass-through, `.csv` column-context transform ("Name: Alice, Age: 30, City: London" style), `.pdf` via `pdf-parse` with metadata/headers stripped, unknown extensions as plain text, and binary files throwing with a clear message — all implemented in `src/knowledge/extractor.ts` and covered by 7 passing tests in `tests/knowledge/extractor.test.ts`.
+
+---
+
+### chunking-embedding
+verdict: ✅ SATISFIED
+reason: Spec requires sliding-window chunker with overlap, `embed(texts, 'search_document')` prepending `"search_document: "`, `embedOne(query, 'search_query')` prepending `"search_query: "`, Float32Array of length 768 (default), singleton reuse, and Matryoshka truncation for dimensions < 768 — all present in `src/knowledge/chunker.ts` and `src/knowledge/embedder.ts`, covered by 10 passing tests.
+
+---
+
+### ingest-pipeline
+verdict: ✅ SATISFIED
+reason: Spec requires extract→chunk→embed→store in vec0+FTS5→upsert `knowledge_sources` with source_tier and confidence, skip on same hash, re-ingest on new hash (delete old chunks), error status on failure — all implemented in `src/knowledge/ingest.ts` and covered by 7 passing tests in `tests/knowledge/ingest.test.ts`. Note: confidence is caller-supplied (not LLM-assigned) — this is a documented won't-fix per decisions.md and the spec does not prescribe the mechanism; the spec scenario only specifies `confidence='medium'` is stored correctly, which is satisfied.
+
+---
+
+### hybrid-search
+verdict: ✅ SATISFIED
+reason: Spec requires hybrid KNN+FTS5, at most `limit` results, each result with content/filename/source_tier/confidence/doc_id/chunk_index, deduplication with vector score taking precedence, cross-tier results, empty corpus returning `[]` — all implemented in `src/knowledge/search.ts` and covered by 6 passing tests in `tests/knowledge/search.test.ts`. The semantic retrieval scenario ("without exact keyword match") cannot be verified against a mocked embedder, but the retrieval architecture — embedding with `search_query:` prefix, KNN via vec0 — is correctly implemented per the spec.
+
+---
+
+### file-watcher
+verdict: ✅ SATISFIED
+reason: Spec requires 300ms debounce, hash dedup against `knowledge_sources`, `getPendingFiles()`, `clearPending()`, binary skip, hidden/ignored directory skip, `stop()` clearing all state, modified-file re-ingest (new hash triggers pending), and pause-while-processing (`pause()`/`resume()`) — all implemented in `src/knowledge/watcher.ts` and covered by 7 passing tests in `tests/knowledge/watcher.test.ts`.
+
+---
+
+### knowledge-tools
+verdict: ⚠️ PARTIAL
+reason: Tool registration gating, `knowledge_search` citation format (filename, source_tier, confidence, excerpt), `knowledge_ingest` result, `knowledge_file` file creation and `wiki_pages` row with `source_tier='wiki-synthesis'`, `knowledge_lint` report with contradictions/orphan pages/missing concept pages/stale claims, and wiki schema block injection are all present. One gap: the spec scenario for `knowledge_file` states "a `wiki_pages` row is inserted with source_tier='wiki-synthesis', confidence='low'" — but the tool now accepts an optional `confidence` param that overrides `'low'`. The spec says `confidence='low'` as a fixed postcondition, not a default; the test for the default case still passes, but the spec scenario is technically violated when a non-`'low'` confidence is supplied. Whether this is an intentional extension or a contract violation depends on how the spec is read.
+focus: `extensions/knowledge-manager.ts` `knowledge_file` handler — spec scenario states `confidence='low'` unconditionally; implementation now allows the agent to pass `confidence='high'` or `'medium'`. The spec in `specs/tools.md` is not updated to reflect this change.
+
+---
+
+## Triage
+
+✅ Safe to skip: schema, knowledge-config, extraction, chunking-embedding, ingest-pipeline, hybrid-search, file-watcher
+
+⚠️ Worth a look:
+- **knowledge-tools** — `specs/tools.md` scenario for `knowledge_file` still says `confidence='low'` as an absolute postcondition ("a `wiki_pages` row is inserted with source_tier='wiki-synthesis', confidence='low'"), but the implementation now treats `'low'` as a default that can be overridden. The spec needs updating to match — or the implementation needs to restrict confidence to `'low'` always for wiki-synthesis pages (per the brief: "always lowest confidence").
+
+❓ Human call:
+- The brief states wiki-synthesis pages are "always lowest confidence, always points back to raw sources" — this implies `confidence='low'` should be a fixed invariant, not an override-able default. But the implementation deliberately allows the agent to assign higher confidence via the `knowledge_file` tool. This is a design tension between the brief ("always lowest confidence") and the post-implementation decision to allow LLM-assessed confidence on wiki pages. The spec update needed here is a human call: lock confidence to `'low'` for wiki-synthesis (matches brief) or explicitly permit agent-supplied confidence (current code, but spec/brief mismatch).
+
+---

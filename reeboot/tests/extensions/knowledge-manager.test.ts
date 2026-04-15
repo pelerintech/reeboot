@@ -481,8 +481,42 @@ describe('knowledge-manager extension — wiki tools', () => {
 
     expect(row).toBeDefined();
     expect(row!.source_tier).toBe('wiki-synthesis');
-    expect(row!.confidence).toBe('low');
+    expect(row!.confidence).toBe('low');  // default when not supplied
     expect(row!.page_type).toBe('comparison');
+  });
+
+  it('knowledge_file respects explicit confidence param', async () => {
+    const { makeKnowledgeExtension } = await import('../../extensions/knowledge-manager.js');
+
+    const config = {
+      knowledge: {
+        enabled: true,
+        embeddingModel: 'nomic-ai/nomic-embed-text-v1.5',
+        dimensions: 768,
+        chunkSize: 512,
+        chunkOverlap: 64,
+        wiki: { enabled: true, lint: { schedule: '0 9 * * 1' } },
+      },
+    };
+    const pi = makeMockPi(config, db);
+    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir });
+
+    const fileHandler = pi.tools.get('knowledge_file')!;
+    await fileHandler('call-id', {
+      content: '# High-quality synthesis\n\nWell-sourced analysis.',
+      filename: 'high-quality.md',
+      pageType: 'concept',
+      confidence: 'high',
+    });
+
+    const expectedPath = join(wikiDir, 'concepts', 'high-quality.md');
+    const row = db
+      .prepare('SELECT * FROM wiki_pages WHERE path = ?')
+      .get(expectedPath) as Record<string, unknown> | undefined;
+
+    expect(row).toBeDefined();
+    expect(row!.source_tier).toBe('wiki-synthesis');  // always wiki-synthesis regardless
+    expect(row!.confidence).toBe('high');              // explicit value honoured
   });
 
   it('knowledge_lint returns a structured report with required fields', async () => {
@@ -641,6 +675,10 @@ describe('knowledge-manager extension — wiki system prompt injection', () => {
     expect(result.systemPrompt).toContain('index.md');
     expect(result.systemPrompt).toContain('verify against primary sources');
     expect(result.systemPrompt).toContain('Base prompt.');
+    // Citation rules must be present
+    expect(result.systemPrompt).toContain('Citation Rules');
+    expect(result.systemPrompt).toContain('source_tier');
+    expect(result.systemPrompt).toContain('wiki-synthesis');
   });
 
   it('does NOT inject wiki block when wiki.enabled=false (but handler still registered for watcher close-while-processing)', async () => {
