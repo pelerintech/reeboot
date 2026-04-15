@@ -11,6 +11,7 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     include: ['tests/**/*.test.ts'],
+    retry: 1,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

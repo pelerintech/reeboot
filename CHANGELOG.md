@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Personal memory** — the agent now remembers facts, preferences, and corrections across sessions via two bounded markdown files (`~/.reeboot/memories/MEMORY.md` and `USER.md`). Both files are injected as a frozen snapshot into the system prompt at session start with usage percentage and char counts. The agent manages them during sessions via a `memory` tool (add/replace/remove entries) gated on `memory.enabled`. A background consolidation process (scheduled via `memory.consolidation.schedule`, default `0 2 * * *`) mines past conversations and distils new insights into memory — with auto-capacity management and `memory_log` observability logging when files are near full. Content is scanned for prompt injection patterns, credential patterns, and invisible Unicode before any write.
+
+- **Session search** — a `session_search` tool is always registered (regardless of `memory.enabled`) providing FTS5 full-text search over the `messages` table. Returns matching messages with role, timestamp, and content excerpt ordered by relevance. Zero new npm dependencies — uses the FTS5 virtual table built into SQLite.
+
+- **Memory config** — new `memory` section in `config.json` with defaults `enabled: true`, `memoryCharLimit: 2200`, `userCharLimit: 1375`, `consolidation.enabled: true`, `consolidation.schedule: "0 2 * * *"`. Memory is on by default for all deployments.
+
+- **Domain knowledge corpus** (`knowledge.enabled: false` by default) — local, persistent RAG for domain-specific deployments. Drop documents into `~/.reeboot/knowledge/raw/owner/` and the agent detects, indexes, and searches them using hybrid vector + keyword retrieval — all offline, no API key required. Details:
+  - **Supported formats**: `.md`, `.txt`, `.csv` (column-context preprocessing), `.pdf` (text extraction via `pdf-parse`)
+  - **Embedding model**: `nomic-ai/nomic-embed-text-v1.5` via `@huggingface/transformers` (local ONNX, downloaded once to `~/.cache/huggingface/` on first use, ~150 MB)
+  - **Hybrid search**: vector KNN (`sqlite-vec` extension) + FTS5 keyword search merged and deduplicated; query results cite filename, source tier, and confidence
+  - **Two-tier provenance**: `source_tier` (`template` | `owner`) tracks epistemic distance; `confidence` (`high` | `medium` | `low`) is LLM-assigned at ingest
+  - **File watcher**: `fs.watch` on `raw/` with 300 ms debounce; new files are queued and the agent offers interactive or silent ingest
+  - **Tools registered**: `knowledge_search`, `knowledge_ingest` (always when enabled); `knowledge_file`, `knowledge_lint` (when `wiki.enabled: true`)
+  - **Optional wiki synthesis layer** (`knowledge.wiki.enabled: false` by default): LLM-maintained interlinked markdown pages at `~/.reeboot/knowledge/wiki/` — concept pages, source summaries, filed query insights, and a scheduled lint pass (default weekly)
+  - **New config section**: `knowledge` with sub-keys `embeddingModel`, `dimensions` (768, Matryoshka-reducible), `chunkSize` (512), `chunkOverlap` (64), `wiki.enabled`, `wiki.lint.schedule`
+  - **New npm dependencies**: `sqlite-vec ^0.1.9`, `@huggingface/transformers ^4.1.0`, `pdf-parse ^2.4.5`
+
+### Breaking changes
+
+- **`sqlite-vec` native extension loaded unconditionally at database open** — `openDatabase()` now loads the `sqlite-vec` native extension on every startup, regardless of `knowledge.enabled`. `sqlite-vec` ships pre-compiled binaries for `darwin-x64`, `darwin-arm64`, `linux-x64`, `linux-arm64`, and `win32-x64`. **The official reeboot Docker image (`node:22-slim`, Debian glibc) is unaffected.** However, if you are running a custom Docker image based on Alpine Linux (`node:alpine`, `node:XX-alpine`), startup will fail with an "Unsupported platform" error because Alpine uses musl libc. Switch to a glibc-based image (`node:XX`, `node:XX-slim`, `node:XX-bookworm-slim`) before upgrading.
+
+### Docker
+
+- **HuggingFace model cache redirected into the volume mount** — when `knowledge.enabled: true`, the ONNX embedding model (~150 MB, downloaded once on first use) is now stored at `~/.reeboot/hf-cache/` instead of inside `node_modules`. Since `~/.reeboot` is the volume-mounted directory, the model persists across container restarts and is never re-downloaded. Override the cache path with the `HF_CACHE_DIR` environment variable — useful when sharing a model cache volume across multiple containers.
+- **No base image change required** — the Dockerfile already uses `node:22-slim` (Debian glibc); no changes are needed to the Docker setup.
+
+---
+
 ## [1.4.0] - 2026-04-14
 
 ### Added

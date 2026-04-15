@@ -180,6 +180,24 @@ const ContextConfigEntrySchema = z.object({
 
 export type ContextConfig = z.infer<typeof ContextConfigEntrySchema>;
 
+const KnowledgeWikiLintSchema = z.object({
+  schedule: z.string().default('0 9 * * 1'),
+});
+
+const KnowledgeWikiSchema = z.object({
+  enabled: z.boolean().default(false),
+  lint: KnowledgeWikiLintSchema.default({}),
+});
+
+const KnowledgeConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  embeddingModel: z.string().default('nomic-ai/nomic-embed-text-v1.5'),
+  dimensions: z.number().int().default(768),
+  chunkSize: z.number().int().default(512),
+  chunkOverlap: z.number().int().default(64),
+  wiki: KnowledgeWikiSchema.default({}),
+});
+
 export const ConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   channels: ChannelsConfigSchema.default({}),
@@ -198,9 +216,11 @@ export const ConfigSchema = z.object({
   security: SecurityConfigSchema.default({}),
   contexts: z.array(ContextConfigEntrySchema).default([]),
   memory: MemoryConfigSchema.default({}),
+  knowledge: KnowledgeConfigSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>;
 export type SearchConfig = z.infer<typeof SearchConfigSchema>;
 export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
 

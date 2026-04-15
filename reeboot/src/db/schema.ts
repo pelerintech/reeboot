@@ -144,6 +144,65 @@ export function runMemoryMigration(db: import('better-sqlite3').Database): void 
 }
 
 /**
+ * Runs an idempotent migration to add knowledge domain tables.
+ * Creates knowledge_sources, knowledge_chunks (vec0), knowledge_fts (FTS5),
+ * and wiki_pages tables. Safe to call multiple times.
+ */
+export function runKnowledgeMigration(db: import('better-sqlite3').Database): void {
+  // Raw document registry
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS knowledge_sources (
+      id           TEXT PRIMARY KEY,
+      path         TEXT NOT NULL UNIQUE,
+      hash         TEXT NOT NULL,
+      source_tier  TEXT NOT NULL,
+      confidence   TEXT NOT NULL DEFAULT 'medium',
+      filename     TEXT NOT NULL,
+      format       TEXT NOT NULL,
+      chunk_count  INTEGER NOT NULL DEFAULT 0,
+      status       TEXT NOT NULL DEFAULT 'pending',
+      ingested_at  TEXT,
+      error        TEXT,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Vector search via sqlite-vec vec0 virtual table
+  // Note: sqlite-vec auxiliary columns must be TEXT to avoid type mismatch
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunks USING vec0(
+      embedding float[768],
+      +doc_id TEXT,
+      +chunk_index TEXT,
+      +content TEXT
+    )
+  `);
+
+  // FTS5 full-text search over chunk content
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+      content,
+      doc_id UNINDEXED,
+      chunk_index UNINDEXED,
+      source_tier UNINDEXED
+    )
+  `);
+
+  // Wiki page metadata (content lives in files)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wiki_pages (
+      id           TEXT PRIMARY KEY,
+      path         TEXT NOT NULL UNIQUE,
+      page_type    TEXT NOT NULL,
+      source_tier  TEXT NOT NULL DEFAULT 'wiki-synthesis',
+      confidence   TEXT NOT NULL DEFAULT 'low',
+      sources      TEXT NOT NULL DEFAULT '[]',
+      updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+}
+
+/**
  * Runs an idempotent migration to add new columns to the tasks table and
  * create the task_runs table. Safe to call multiple times.
  */

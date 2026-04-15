@@ -17,6 +17,13 @@
 #   REEBOOT_AUTH_MODE   → --auth-mode  ("pi" | "own", default "own")
 #   REEBOOT_AGENTS_MD   → written to ~/.reeboot/agent/AGENTS.md
 #   REEBOOT_HOST        → bind address (default 0.0.0.0)
+#
+# Knowledge / embedding cache:
+#   HF_CACHE_DIR        → override path for the HuggingFace ONNX model cache
+#                         (default: ~/.reeboot/hf-cache/ — inside the volume mount,
+#                         so models persist across container restarts)
+#                         Set to a separate host path or named volume when sharing
+#                         the model cache across multiple reeboot containers.
 
 set -e
 

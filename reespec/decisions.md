@@ -28,6 +28,26 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### sqlite-vec and knowledge migration gated on knowledge.enabled — 2026-04-15 (Request: domain-knowledge)
+
+After evaluation, `loadVecExtension` and `runKnowledgeMigration` were moved out of `openDatabase()` and into `makeKnowledgeExtension`. They now only run when `knowledge.enabled: true` — consistent with the spec's intent. The knowledge extension calls both functions during its init phase (after resolving `db` from `pi.getDb()`). This keeps zero-cost deployments truly zero-cost: no sqlite-vec extension load, no vec0 table creation, no FTS index for knowledge unless the feature is explicitly enabled.
+
+### pdf-parse v2 uses class-based constructor API — 2026-04-15 (Request: domain-knowledge)
+
+pdf-parse v2 (2.4.x) is a complete API rewrite from v1. The v2 API: `new PDFParse({ verbosity: 0, data: Uint8Array })`, then `parser.load()` (no args — data is in constructor options), then `parser.getText()` which returns `{ text, pages, total }`. The v1 API (`pdfParse(buffer)` as a plain function returning `{ text }`) no longer exists. The extractor was updated to use the v2 class API. Post-extraction, PDF structural markers (object markers, stream delimiters) are stripped via regex to ensure clean text output.
+
+### knowledge_lint performs real wiki analysis, not just metadata counts — 2026-04-15 (Request: domain-knowledge)
+
+The initial knowledge_lint implementation returned only page counts and low-confidence counts. After evaluation, it was upgraded to perform actual lint analysis: (1) orphan detection — checks filesystem for pages registered in db but missing on disk; (2) missing concept pages — scans index.md for wiki-link and header references that lack a concepts/ page; (3) stale claims — compares wiki page `updated_at` against source `ingested_at` to flag pages referencing re-ingested (updated) documents; (4) contradiction detection — reads concept page content for explicit contradiction markers (CONTRADICTS, ⚠️, vs.). The output includes all four categories as structured fields alongside a flat `issues` array.
+
+### Watcher uses close-while-processing pattern via pause/resume — 2026-04-15 (Request: domain-knowledge)
+
+`KnowledgeWatcher` gained `pause()` and `resume()` methods to support the brief's "close-while-processing, reopen on agent_end" pattern. `pause()` stops the fs.watch without clearing pending files (unlike `stop()` which clears pending). `resume()` restarts watching on the same rawDir. The extension always registers `before_agent_start` (not just when wiki is enabled) to call `watcher.pause()` at the start of each agent turn, and `agent_end` calls `watcher.resume()` before checking pending files. This prevents file events from accumulating in debounce timers during agent processing.
+
+### sqlite-vec auxiliary columns must be TEXT, not INTEGER — 2026-04-15 (Request: domain-knowledge)
+
+During implementation of the ingest pipeline (Task 8), discovered that sqlite-vec auxiliary columns (defined with `+colname TYPE`) enforce strict type binding from `better-sqlite3` prepared statements. An auxiliary column declared as `+chunk_index INTEGER` rejects integer values bound from JavaScript, throwing "Auxiliary column type mismatch: The auxiliary column chunk_index has type INTEGER, but FLOAT was provided." The root cause is that better-sqlite3 promotes JavaScript integers to SQLite REAL in some binding paths. Workaround: declare all auxiliary columns as TEXT and store integers as string representations (`String(i)`). The `knowledge_chunks` schema was updated accordingly: `+chunk_index TEXT`. All retrieval code parses chunk_index back to integer with `parseInt(r.chunk_index, 10)`. INTEGER auxiliary columns remain a known limitation of sqlite-vec's pre-v1 status.
+
 ### Memory is instance-level, not context-level — 2026-04-15 (Request: personal-memory)
 
 Persistent memory (`MEMORY.md` / `USER.md`) lives at the reeboot instance level — one set of memory files shared across all contexts within a single deployment. Per-context memory was considered but rejected: contexts are a routing and isolation mechanism, not a persona mechanism. The deployment model is one reeboot instance = one agent = one soul. If an owner wants genuinely separate memories (e.g. two different clients), they deploy two separate reeboot instances rather than using contexts to split a single instance.
