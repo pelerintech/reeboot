@@ -28,6 +28,46 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Memory is instance-level, not context-level — 2026-04-15 (Request: personal-memory)
+
+Persistent memory (`MEMORY.md` / `USER.md`) lives at the reeboot instance level — one set of memory files shared across all contexts within a single deployment. Per-context memory was considered but rejected: contexts are a routing and isolation mechanism, not a persona mechanism. The deployment model is one reeboot instance = one agent = one soul. If an owner wants genuinely separate memories (e.g. two different clients), they deploy two separate reeboot instances rather than using contexts to split a single instance.
+
+### session_search is always-on, independent of memory feature flag — 2026-04-15 (Request: personal-memory)
+
+The `session_search` tool (FTS5 full-text search over the `messages` table) is registered as a core agent capability regardless of whether `memory.enabled` is true or false. Session search and memory write paths (the `memory` tool) are separate concerns that share infrastructure. Gating session search behind the memory flag was rejected because the ability to query past conversations is independently valuable and has no meaningful cost or risk associated with it.
+
+### Memory write has two paths: immediate tool and background consolidation — 2026-04-15 (Request: personal-memory)
+
+Memory is written via two complementary paths. Path 1 (immediate): the agent uses a `memory` tool during a session when the owner gives an explicit instruction ("remember that...") or the agent recognises a strong correction — written to disk immediately, visible from the next session. Path 2 (consolidation): a scheduled background process mines the `messages` table across multiple past sessions, distils cross-session patterns, and updates `MEMORY.md`/`USER.md`. Running consolidation only after sessions end (not during) was chosen because it can see patterns across multiple sessions and avoids any mid-session prompt cache invalidation. Both paths write to the same files; consolidation deduplicates against existing entries.
+
+### Memory self-manages capacity with observability logging — 2026-04-15 (Request: personal-memory)
+
+When memory files reach capacity, the agent auto-consolidates (merges and replaces existing entries) to make room — no interruption to the owner. Every auto-consolidation event is written to a `memory_log` table as a hook for the future structured audit log request. If auto-consolidation fires too frequently it signals that the configured character limits should be revisited. The alternative (surfacing capacity warnings to the owner) was rejected as too noisy for what should be a background concern.
+
+### Live external sources are skill/MCP concerns, not corpus — 2026-04-15 (Request: domain-knowledge)
+
+The domain knowledge corpus (Loop 2) covers only locally-stored documents: template knowledge shipped with agent profiles and owner-added private documents. Live external data sources — legislation APIs, client repository syncs, real-time databases — are explicitly out of scope for the corpus and belong to the skill/MCP layer. This keeps the corpus bounded, offline-capable, and free of external API dependencies. The distinction maps to a clean two-tier model: `raw/template/` (pre-packaged) and `raw/owner/` (operator-added), both feeding the same local vector index.
+
+### Vector search stays in SQLite via sqlite-vec, no separate vector database — 2026-04-15 (Request: domain-knowledge)
+
+Embeddings are stored in a `vec0` virtual table using the `sqlite-vec` extension on the existing `reeboot.db`, rather than introducing a separate vector database (ChromaDB, LanceDB, Qdrant). This keeps reeboot's zero-extra-process philosophy intact — one SQLite file, one process. sqlite-vec is pre-v1 but Mozilla-backed and already used in production by large open-source agents. Dedicated vector stores were rejected due to added infrastructure complexity and the split-storage mental model they introduce. FTS5 (already available in SQLite) provides complementary full-text search with no additional dependency.
+
+### nomic-embed-text-v1.5 as the local embedding model — 2026-04-15 (Request: domain-knowledge)
+
+`nomic-ai/nomic-embed-text-v1.5` is used for local ONNX embedding via `@huggingface/transformers`, rather than `Xenova/gte-base` or `bge-small`. Key reasons: (1) 8192 token context window handles long legal, medical, and technical documents without truncation; (2) Matryoshka Representation Learning allows dimension reduction (768→256) for storage-constrained deployments; (3) task instruction prefixes (`search_document:` / `search_query:`) meaningfully improve RAG retrieval quality; (4) native Transformers.js ONNX support confirmed on the model card. The model downloads once on first use and is cached locally — no API key, no server, no ongoing cost.
+
+### Wiki content in filesystem, metadata in SQLite — 2026-04-15 (Request: domain-knowledge)
+
+Wiki synthesis pages live as markdown files in `~/.reeboot/knowledge/wiki/` (filesystem), while structured metadata (path, source_tier, confidence, updated_at, sources) is mirrored in a `wiki_pages` SQLite table. Storing full wiki content in SQLite was considered but rejected: it removes human readability, breaks git portability, conflicts with the agent's native file tools, and creates a sync problem (which representation is ground truth?). The chosen split has a clear mental model — files are content, db is index — with no sync conflict because the db metadata points to files rather than duplicating content.
+
+### Memory is on by default, wiki synthesis is opt-in — 2026-04-15 (Request: personal-memory, domain-knowledge)
+
+Personal memory (`memory.enabled`) defaults to true — it is a core capability that benefits all deployments immediately and has no meaningful downside for single-owner agents. The wiki synthesis layer (`knowledge.wiki.enabled`) defaults to false. When disabled, the agent operates in pure RAG mode: vector search + FTS5 over raw documents, no LLM-maintained markdown pages. Wiki is enabled explicitly by the owner or as part of an agent profile configuration. This decision reflects the hallucination contamination risk identified in research (synthesised cross-references can look authoritative), the token cost of ingest-time wiki updates, and the principle of zero-friction defaults. Simple deployments (product support, FAQ agents) need pure RAG. Complex deployments (legal researcher, academic analyst) opt into synthesis.
+
+### Domain knowledge corpus uses two provenance fields, not one — 2026-04-15 (Request: domain-knowledge)
+
+Every ingested document and wiki page carries two separate metadata fields: `source_tier` (`template` | `owner` | `wiki-synthesis`, rule-based, always accurate) and `confidence` (`high` | `medium` | `low`, LLM-assigned at ingest based on content quality). A single combined field was considered but rejected because the two signals answer different questions: `source_tier` answers "how many LLM hands has this passed through?" (epistemic distance from raw source) while `confidence` answers "how trustworthy is the content itself?" (domain quality judgement). High-stakes domains (legal, medical) need both: a template document can be low confidence (outdated), and an owner document can be high confidence (primary source). Both fields appear in citations.
+
 ### Sandbox wrapper injected via DI, not which-package mock — 2026-04-14 (Request: permission-tiers)
 
 `McpServerPool` accepts an optional `sandboxWrapper` constructor parameter (defaulting to `defaultSandboxWrapper`) so tests can inject a mock wrapper directly instead of mocking the `which` package via `vi.mock`. The `which` package is a CJS module — vitest's ESM dynamic import mocking (`vi.mock` + `await import()` inside the module under test) proved unreliable for it. `mcpManagerExtension` also accepts an optional pre-built `pool` parameter for the same reason. The production code path remains unchanged: the default wrapper uses `which` to locate `sandbox-exec`/`bwrap` at runtime. This DI approach is preferred over module-level mocking for any CJS dependency used via dynamic import.

@@ -4,6 +4,7 @@ import { mkdirSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
 import * as schema from './schema.js';
+import { runMemoryMigration } from './schema.js';
 
 export type { Database as BetterSQLite3Database };
 
@@ -39,6 +40,9 @@ export function openDatabase(dbPath?: string): Database.Database {
 
   // Apply schema (CREATE TABLE IF NOT EXISTS via Drizzle push equivalent)
   applySchema(db);
+
+  // Apply memory migration (FTS5 + memory_log)
+  runMemoryMigration(db);
 
   _db = db;
   _dbClosed = false;

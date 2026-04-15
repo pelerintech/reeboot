@@ -94,6 +94,21 @@ const ChannelsConfigSchema = z.object({
   signal: SignalChannelSchema.default({}),
 });
 
+const MemoryConsolidationSchema = z.object({
+  enabled: z.boolean().default(true),
+  schedule: z.string().default('0 2 * * *'),
+});
+
+const MemoryConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  memoryCharLimit: z.number().int().default(2200),
+  userCharLimit: z.number().int().default(1375),
+  consolidation: MemoryConsolidationSchema.default({}),
+});
+
+export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
+export type MemoryConsolidationConfig = z.infer<typeof MemoryConsolidationSchema>;
+
 const SandboxConfigSchema = z.object({
   mode: z.enum(['os', 'docker']).default('os'),
 });
@@ -182,6 +197,7 @@ export const ConfigSchema = z.object({
   permissions: PermissionsConfigSchema.default({}),
   security: SecurityConfigSchema.default({}),
   contexts: z.array(ContextConfigEntrySchema).default([]),
+  memory: MemoryConfigSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

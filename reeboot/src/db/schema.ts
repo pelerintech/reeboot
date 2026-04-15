@@ -79,6 +79,71 @@ export const taskRuns = sqliteTable('task_runs', {
 // ─── Migration ───────────────────────────────────────────────────────────────
 
 /**
+ * Runs an idempotent migration to add FTS5 session search and memory_log
+ * observability table. Safe to call multiple times.
+ */
+export function runMemoryMigration(db: import('better-sqlite3').Database): void {
+  // FTS5 virtual table for session search over messages
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      content,
+      content=messages,
+      content_rowid=rowid
+    );
+  `);
+
+  // INSERT trigger: keep FTS in sync
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS messages_ai
+    AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, content)
+      VALUES (new.rowid, new.content);
+    END;
+  `);
+
+  // DELETE trigger: keep FTS in sync
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS messages_ad
+    AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, content)
+      VALUES ('delete', old.rowid, old.content);
+    END;
+  `);
+
+  // UPDATE trigger: keep FTS in sync
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS messages_au
+    AFTER UPDATE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, content)
+      VALUES ('delete', old.rowid, old.content);
+      INSERT INTO messages_fts(rowid, content)
+      VALUES (new.rowid, new.content);
+    END;
+  `);
+
+  // Backfill existing messages into FTS (idempotent via 'delete' + re-insert pattern)
+  // We use a simple approach: only backfill rows not yet indexed.
+  // FTS content tables don't have a direct "exists" check, so we rebuild cleanly.
+  db.exec(`INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`);
+
+  // memory_log observability table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_log (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      ran_at               TEXT    NOT NULL DEFAULT (datetime('now')),
+      trigger              TEXT    NOT NULL,
+      sessions_processed   INTEGER NOT NULL DEFAULT 0,
+      ops_applied          INTEGER NOT NULL DEFAULT 0,
+      memory_chars_before  INTEGER,
+      memory_chars_after   INTEGER,
+      user_chars_before    INTEGER,
+      user_chars_after     INTEGER,
+      notes                TEXT
+    );
+  `);
+}
+
+/**
  * Runs an idempotent migration to add new columns to the tasks table and
  * create the task_runs table. Safe to call multiple times.
  */
