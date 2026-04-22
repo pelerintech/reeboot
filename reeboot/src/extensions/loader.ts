@@ -47,6 +47,8 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   const schedulerEnabled     = core.scheduler_tool     ?? true;
   const tokenMeterEnabled    = core.token_meter        ?? true;
   const webSearchEnabled     = (core as any).web_search ?? true;
+  const memoryEnabled        = (config as any).memory?.enabled ?? true;
+  const knowledgeEnabled     = (config as any).knowledge?.enabled ?? false;
   const skillManagerEnabled  = (core as any).skill_manager ?? true;
   const mcpEnabled           = (core as any).mcp ?? true;
   const injectionGuardEnabled = (core as any).injection_guard ?? true;
@@ -152,6 +154,25 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
     factories.push(async (pi) => {
       const mod = await importExt('injection-guard');
       if (mod?.default) await (mod.default as any)(pi, config);
+    });
+  }
+
+  // Memory manager — loaded based on memory.enabled (defaults true).
+  // The extension itself always registers session_search (always-on capability),
+  // and gates the memory tool and system prompt injection on config.memory.enabled.
+  if (memoryEnabled) {
+    factories.push(async (pi) => {
+      const mod = await importExt('memory-manager');
+      if (mod?.default) await (mod.default as any)(pi);
+    });
+  }
+
+  // Knowledge manager — loaded when knowledge.enabled=true (default false).
+  // Registers knowledge_search, knowledge_ingest, and optionally wiki tools.
+  if (knowledgeEnabled) {
+    factories.push(async (pi) => {
+      const mod = await importExt('knowledge-manager');
+      if (mod?.default) await (mod.default as any)(pi);
     });
   }
 

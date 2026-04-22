@@ -179,7 +179,8 @@ Usage:
   });
 
   // ── session_shutdown ──────────────────────────────────────────────────────
-  pi.on('session_shutdown', async () => {
+  pi.on('session_shutdown', async (event: any) => {
+    if (event.reason === 'reload') return;
     await _pool.disconnectAll();
   });
 

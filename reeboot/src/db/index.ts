@@ -3,7 +3,10 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { mkdirSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
+import * as sqliteVec from 'sqlite-vec';
 import * as schema from './schema.js';
+import { runMemoryMigration } from './schema.js';
+export { runKnowledgeMigration } from './schema.js';
 
 export type { Database as BetterSQLite3Database };
 
@@ -39,6 +42,9 @@ export function openDatabase(dbPath?: string): Database.Database {
 
   // Apply schema (CREATE TABLE IF NOT EXISTS via Drizzle push equivalent)
   applySchema(db);
+
+  // Apply memory migration (FTS5 + memory_log)
+  runMemoryMigration(db);
 
   _db = db;
   _dbClosed = false;
@@ -79,6 +85,17 @@ export function closeDb(): void {
  */
 export function getDrizzle() {
   return drizzle(getDb(), { schema });
+}
+
+// ─── loadVecExtension ────────────────────────────────────────────────────────
+
+/**
+ * Loads the sqlite-vec extension into the given database instance.
+ * Must be called before any vec0 virtual table operations.
+ * Exported for testability.
+ */
+export function loadVecExtension(db: Database.Database): void {
+  sqliteVec.load(db);
 }
 
 // ─── Schema application ──────────────────────────────────────────────────────

@@ -95,6 +95,22 @@ describe('daemon mode — macOS', () => {
     );
   });
 
+  it('plist sets PI_CACHE_RETENTION=long in EnvironmentVariables', async () => {
+    const { startDaemon } = await import('@src/daemon.js');
+    await startDaemon({
+      platform: 'darwin',
+      reebotBin: '/usr/local/bin/reeboot',
+      reebotDir: tmpDir,
+      launchAgentsDir,
+    });
+
+    const { readFileSync: readFile } = await import('fs');
+    const plistPath = join(launchAgentsDir, 'com.reeboot.agent.plist');
+    const content = readFile(plistPath, 'utf-8');
+    expect(content).toContain('PI_CACHE_RETENTION');
+    expect(content).toContain('<string>long</string>');
+  });
+
   it('plist references log directory for stdout/stderr', async () => {
     const { startDaemon } = await import('@src/daemon.js');
     await startDaemon({
@@ -156,6 +172,21 @@ describe('daemon mode — Linux', () => {
     const unitPath = join(systemdDir, 'reeboot.service');
     const content = readFileSync(unitPath, 'utf-8');
     expect(content).toContain('ExecStart=/usr/local/bin/reeboot start');
+  });
+
+  it('systemd unit file sets PI_CACHE_RETENTION=long', async () => {
+    const { startDaemon } = await import('@src/daemon.js');
+    await startDaemon({
+      platform: 'linux',
+      reebotBin: '/usr/local/bin/reeboot',
+      reebotDir: tmpDir,
+      systemdDir,
+    });
+
+    const { readFileSync } = await import('fs');
+    const unitPath = join(systemdDir, 'reeboot.service');
+    const content = readFileSync(unitPath, 'utf-8');
+    expect(content).toContain('Environment=PI_CACHE_RETENTION=long');
   });
 
   it('startDaemon on Linux calls systemctl enable --now', async () => {

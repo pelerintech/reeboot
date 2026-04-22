@@ -9,6 +9,7 @@ import { execSync } from 'child_process';
 import { statfsSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { loadProjectContextFiles } from '@mariozechner/pi-coding-agent';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ export interface CheckResult {
 export interface DoctorOptions {
   configPath?: string;
   reebotDir?: string;
+  cwd?: string;
   /** Skip network-dependent checks (API key validation, Signal version check) */
   skipNetwork?: boolean;
 }
@@ -245,11 +247,39 @@ function checkDiskSpace(reebotDir: string): CheckResult {
   }
 }
 
+// ─── checkContextFiles ────────────────────────────────────────────────────────
+
+async function checkContextFiles(reebotDir: string, cwd: string): Promise<CheckResult> {
+  try {
+    const files = loadProjectContextFiles({ cwd, agentDir: reebotDir });
+    if (files.length === 0) {
+      return {
+        name: 'Context files',
+        status: 'warn',
+        message: 'no AGENTS.md context files found',
+        fix: `create ${join(reebotDir, 'AGENTS.md')} to define the agent persona`,
+      };
+    }
+    return {
+      name: 'Context files',
+      status: 'pass',
+      message: files.map(f => f.path).join(', '),
+    };
+  } catch (err: any) {
+    return {
+      name: 'Context files',
+      status: 'warn',
+      message: `could not load context files: ${err.message ?? err}`,
+    };
+  }
+}
+
 // ─── runDoctor ────────────────────────────────────────────────────────────────
 
 export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]> {
   const reebotDir = opts.reebotDir ?? join(homedir(), '.reeboot');
   const configPath = opts.configPath ?? join(reebotDir, 'config.json');
+  const cwd = opts.cwd ?? process.cwd();
   const skipNetwork = opts.skipNetwork ?? false;
 
   const results: CheckResult[] = [];
@@ -259,6 +289,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]
   results.push(checkDiskSpace(reebotDir));
   results.push(await checkApiKey(configPath, skipNetwork));
   results.push(await checkSignalDocker(configPath, skipNetwork));
+  results.push(await checkContextFiles(reebotDir, cwd));
 
   return results;
 }

@@ -110,6 +110,14 @@ describe('doctor', () => {
     expect(doctorExitCode(results)).toBe(0);
   });
 
+  it('runDoctor includes a Context files check', async () => {
+    const { runDoctor } = await import('@src/doctor.js');
+    const results = await runDoctor({ configPath, reebotDir: tmpDir, cwd: tmpDir, skipNetwork: true });
+    const check = results.find(r => r.name === 'Context files');
+    expect(check).toBeDefined();
+    expect(['pass', 'warn']).toContain(check!.status);
+  });
+
   it('formatResult outputs ✓ for pass, ✗ for fail, ⚠ for warn', async () => {
     const { formatResult } = await import('@src/doctor.js');
     expect(formatResult({ name: 'Config', status: 'pass', message: 'OK' })).toContain('✓');
