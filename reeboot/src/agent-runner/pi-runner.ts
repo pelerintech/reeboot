@@ -225,6 +225,20 @@ export class PiAgentRunner implements AgentRunner {
     await this.loader.reload();
   }
 
+  /**
+   * Returns the active pi session file path if file-based sessions are in use.
+   * Available after the first `prompt()` call (session is created lazily).
+   */
+  getSessionPath(): string | undefined {
+    if (!this._session) return undefined;
+    try {
+      const sm = (this._session as any).sessionManager;
+      return sm?.getSessionFile?.() ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   // ── internal ───────────────────────────────────────────────────────────────
 
   private async _getOrCreateSession(): Promise<import('@mariozechner/pi-coding-agent').AgentSession> {
@@ -249,6 +263,17 @@ export class PiAgentRunner implements AgentRunner {
 
     let sessionOpts: any;
 
+    // Build a SessionManager: use file-based if sessionsDir provided, else in-memory
+    const buildSessionManager = () => {
+      if (this.context.sessionsDir) {
+        if (this.context.sessionPath) {
+          return SessionManager.open(this.context.sessionPath, this.context.sessionsDir);
+        }
+        return SessionManager.create(this.context.workspacePath, this.context.sessionsDir);
+      }
+      return SessionManager.inMemory();
+    };
+
     if (authMode === 'pi') {
       const settingsManager = SettingsManager.create(this.context.workspacePath, piAgentDir);
       const authStorage = AuthStorage.create(join(piAgentDir, 'auth.json'));
@@ -257,7 +282,7 @@ export class PiAgentRunner implements AgentRunner {
       sessionOpts = {
         cwd: this.context.workspacePath,
         resourceLoader: this.loader,
-        sessionManager: SessionManager.inMemory(),
+        sessionManager: buildSessionManager(),
         settingsManager,
         authStorage,
         modelRegistry,
@@ -291,7 +316,7 @@ export class PiAgentRunner implements AgentRunner {
       sessionOpts = {
         cwd: this.context.workspacePath,
         resourceLoader: this.loader,
-        sessionManager: SessionManager.inMemory(),
+        sessionManager: buildSessionManager(),
         settingsManager,
         authStorage,
         modelRegistry,

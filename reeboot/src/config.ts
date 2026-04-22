@@ -198,6 +198,24 @@ const KnowledgeConfigSchema = z.object({
   wiki: KnowledgeWikiSchema.default({}),
 });
 
+const ResilienceRecoverySchema = z.object({
+  mode: z.enum(['safe_only', 'always', 'never']).default('safe_only'),
+  side_effect_tools: z.array(z.string()).default([]),
+});
+
+const ResilienceSchedulerSchema = z.object({
+  catchup_window: z.string().default('1h'),
+});
+
+const ResilienceSchema = z.object({
+  recovery: ResilienceRecoverySchema.default({}),
+  scheduler: ResilienceSchedulerSchema.default({}),
+  outage_threshold: z.number().int().min(1).default(3),
+  probe_interval: z.string().default('1h'),
+});
+
+export type ResilienceConfig = z.infer<typeof ResilienceSchema>;
+
 export const ConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   channels: ChannelsConfigSchema.default({}),
@@ -217,6 +235,7 @@ export const ConfigSchema = z.object({
   contexts: z.array(ContextConfigEntrySchema).default([]),
   memory: MemoryConfigSchema.default({}),
   knowledge: KnowledgeConfigSchema.default({}),
+  resilience: ResilienceSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

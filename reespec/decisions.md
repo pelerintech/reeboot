@@ -28,6 +28,18 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Lost-jobs accumulation checked before outage threshold — 2026-04-22 (Request: resilience)
+
+When a turn fails with a provider error, the check order matters: if an outage is already active (`_activeOutage === true`), the failed turn is recorded as a lost job immediately rather than incrementing the consecutive-failure counter. This avoids double-counting the first few failures after outage declaration and keeps the counter semantics clean: counter is only meaningful pre-outage. The counter is never incremented during an active outage.
+
+### Restart notification uses DB marker, not session file presence — 2026-04-22 (Request: resilience)
+
+`notifyRestart` detects a previous run via a `reeboot_state` SQLite table with a `last_started_at` key, rather than checking for existing session files. The DB marker approach is simpler and avoids false positives (session files could exist from manual copies or partial setups). On first startup the marker is absent — no notification sent. On every subsequent startup the notification fires. The marker is always updated to `now` during startup regardless of whether a notification was sent.
+
+### Session continuity is opt-in via sessionsDir on ContextConfig — 2026-04-22 (Request: resilience)
+
+The pi-runner defaults to `SessionManager.inMemory()` when `context.sessionsDir` is absent. File-based session persistence (required for session continuity across restarts) is activated by providing `sessionsDir` on the `ContextConfig`. This keeps tests and minimal deployments unaffected — they continue using in-memory sessions. Production server.ts passes `sessionsDir = ~/.reeboot/sessions/<contextId>/` and `sessionPath` (from `getResumedSessionPath`) to each runner context, enabling both persistence and session resume.
+
 ### LLM-assigned confidence at ingest deferred to v2 — 2026-04-15 (Request: domain-knowledge)
 
 The brief specifies that `confidence` (content quality judgement) is "LLM-assigned at ingest". In v1, `ingestDocument` accepts confidence as a caller-supplied parameter and `knowledge_ingest` defaults it to `'medium'` — no LLM call is made to assess document quality. Making an LLM call inside the ingest pipeline was rejected for v1: it couples a pure, testable pipeline function to the LLM, adds latency for every document (including background/silent ingest), and complicates error handling. The caller-supplied model still allows the agent to pass a reasoned value during interactive ingest. A dedicated v2 task should add an optional `assessConfidence(text, config)` step in `ingestDocument` that makes a brief structured LLM call ("rate this document: high / medium / low, one sentence reason") and uses the result when no caller-supplied value is given. Tracked in agent-roadmap.md.
@@ -131,3 +143,7 @@ Pi (`@mariozechner/pi-coding-agent`) is listed in reeboot's `package.json` depen
 ### Docker headless config via env vars, existing config wins — 2026-03-21 (Request: agent-isolation)
 
 For headless Docker deployments, `REEBOOT_*` env vars are translated to `--no-interactive` flags by `entrypoint.sh` only when no `config.json` exists. If a config.json is already present (volume mount from host setup), it is used as-is and env vars are ignored. `REEBOOT_AGENTS_MD` is an exception — it writes directly to `~/.reeboot/agent/AGENTS.md` before start, enabling persona injection without a wizard. A future platform can implement richer config bundle injection (URL fetch, base64 decode) as an entrypoint wrapper outside reeboot core.
+
+### Resilience startup split into DB-only phase and deferred channel phase — 2026-04-22 (Request: resilience)
+
+`server.ts` resilience startup is now two phases. Phase 1 (before channel init): `runResilienceMigration` and `applyScheduledCatchup` — these only need the DB. Phase 2 (after `_orchestrator.start()`): `notifyRestart` and `recoverCrashedTurns` — these need the populated channel adapters Map and a live bus for `requeueFn`. Previously both ran together before `initChannels`, passing the empty initial Map to the broadcast calls so all notifications were silently dropped. Moving phase 2 post-orchestrator also enables the requeueFn to call `bus.publish()` on a subscribed orchestrator. The `recovery` channel type is used for re-queued prompts; it routes to the default context (`main`) and has no adapter, so replies from the orchestrator during recovery are silently dropped (acceptable: the broadcast already notified the user).

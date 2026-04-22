@@ -79,6 +79,62 @@ export const taskRuns = sqliteTable('task_runs', {
 // ─── Migration ───────────────────────────────────────────────────────────────
 
 /**
+ * Runs an idempotent migration to add resilience tables:
+ * turn_journal, turn_journal_steps, outage_events.
+ * Also adds catchup column to tasks if not present.
+ * Safe to call multiple times.
+ */
+export function runResilienceMigration(db: import('better-sqlite3').Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS turn_journal (
+      turn_id      TEXT PRIMARY KEY,
+      context_id   TEXT NOT NULL,
+      session_path TEXT,
+      prompt       TEXT,
+      started_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      status       TEXT NOT NULL DEFAULT 'open'
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS turn_journal_steps (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      turn_id      TEXT NOT NULL REFERENCES turn_journal(turn_id) ON DELETE CASCADE,
+      seq          INTEGER NOT NULL,
+      tool_name    TEXT NOT NULL,
+      tool_input   TEXT NOT NULL,
+      tool_output  TEXT,
+      is_error     INTEGER NOT NULL DEFAULT 0,
+      fired_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS outage_events (
+      id           TEXT PRIMARY KEY,
+      provider     TEXT NOT NULL,
+      declared_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      resolved_at  TEXT,
+      lost_jobs    TEXT NOT NULL DEFAULT '[]',
+      truncated    INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+
+  // Add catchup column to tasks if the table exists and the column is missing
+  const tasksExists = (db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'`
+  ).get() as { name: string } | undefined);
+  if (tasksExists) {
+    const taskCols = new Set(
+      (db.pragma('table_info(tasks)') as Array<{ name: string }>).map(c => c.name)
+    );
+    if (!taskCols.has('catchup')) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN catchup TEXT`);
+    }
+  }
+}
+
+/**
  * Runs an idempotent migration to add FTS5 session search and memory_log
  * observability table. Safe to call multiple times.
  */
