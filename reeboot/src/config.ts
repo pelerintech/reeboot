@@ -295,6 +295,10 @@ export function loadConfig(configPath?: string): Config {
     result.server.token = process.env.REEBOOT_API_TOKEN;
   }
 
+  if (process.env.REEBOOT_AUTH_MODE === 'pi' || process.env.REEBOOT_AUTH_MODE === 'own') {
+    result.agent.model.authMode = process.env.REEBOOT_AUTH_MODE;
+  }
+
   return result;
 }
 

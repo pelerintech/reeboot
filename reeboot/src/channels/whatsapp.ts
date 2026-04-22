@@ -23,6 +23,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private _config: ChannelConfig | null = null;
   private _socket: any = null;
   private _reconnecting = false;
+  /** IDs of messages we sent — used to skip our own echoes in multi-device mode. */
+  private _sentIds = new Set<string>();
 
   constructor(authDir?: string) {
     this._authDir = authDir ?? join(homedir(), '.reeboot', 'channels', 'whatsapp', 'auth');
@@ -64,12 +66,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
       version = [2, 3000, 1027934701];
     }
 
-    const pino = (await import('pino')).default;
+    // Baileys requires a pino-compatible logger. We pass a no-op so its
+    // internal Signal Protocol noise never reaches the console. Real errors
+    // are surfaced via connection.update / our own console.* calls.
+    const noop = () => {};
+    const baileysLogger: any = {
+      trace: noop, debug: noop, info: noop, warn: noop, error: noop, fatal: noop,
+      child: () => baileysLogger,
+    };
     const sock = makeWASocket({
       version,
       auth: state,
       browser: Browsers.ubuntu('Chrome'),
-      logger: pino({ level: 'silent' }),
+      logger: baileysLogger,
     });
 
     this._socket = sock;
@@ -89,7 +98,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
         this._status = 'connected';
         this._connectedAt = new Date().toISOString();
         this._reconnecting = false;
-        console.log('[WhatsApp] Connected ✓ — ready to receive messages');
+        const user = sock.user as any;
+        console.log(`[WhatsApp] Connected ✓ — ready to receive messages (id=${user?.id} lid=${user?.lid})`);
       } else if (connection === 'close') {
         this._status = 'disconnected';
         this._connectedAt = null;
@@ -109,26 +119,47 @@ export class WhatsAppAdapter implements ChannelAdapter {
       for (const msg of messages) {
         const peerId = msg.key.remoteJid;
         const fromMe = msg.key.fromMe;
+        const msgId = msg.key.id ?? '';
         const text =
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
           msg.message?.imageMessage?.caption ||
           '';
 
-        // Only process notify-type messages
-        if (type !== 'notify') continue;
+        // 'notify' = real-time incoming; 'append' = history/retry replay.
+        // We process both so that retry-replayed messages after a Signal
+        // session handshake are not silently dropped.
+        if (type !== 'notify' && type !== 'append') continue;
 
-        // Skip messages sent by this device, except self-chat ("message yourself")
-        // Self-chat may arrive as @s.whatsapp.net or @lid (WhatsApp Linked Identity Device)
+        // Resolve user identity once per message (needed for self-chat detection
+        // and @lid → @s.whatsapp.net normalization).
         const userId = sock.user?.id?.replace(/:.*/, '');
-        const isSelfChat =
-          peerId === userId + '@s.whatsapp.net' ||
-          peerId?.endsWith('@lid');
-        if (fromMe && !isSelfChat) continue;
+        const userLid = (sock.user as any)?.lid?.replace(/:.*/, '');
+
+        if (fromMe) {
+          // Skip echoes of messages we sent (multi-device mirror).
+          if (this._sentIds.has(msgId)) {
+            this._sentIds.delete(msgId);
+            continue;
+          }
+
+          // Accept self-chat: "message yourself" via @s.whatsapp.net OR
+          // the user's own @lid (linked-device address in multi-device mode).
+          const isSelfChat =
+            peerId === userId + '@s.whatsapp.net' ||
+            (userLid && peerId === userLid + '@lid');
+
+          if (!isSelfChat) continue;
+        }
 
         if (!peerId) continue;
-        if (!text) continue;
 
+        if (!text) {
+          console.log(`[WhatsApp] Skipping empty text type=${type} fromMe=${fromMe} peerId=${peerId} keys=${Object.keys(msg.message ?? {}).join(',')}`);
+          continue;
+        }
+
+        console.log(`[WhatsApp] Received message type=${type} fromMe=${fromMe} peerId=${peerId} len=${text.length}`);
         this._bus?.publish(
           createIncomingMessage({
             channelType: 'whatsapp',
@@ -154,8 +185,13 @@ export class WhatsAppAdapter implements ChannelAdapter {
     if (!this._socket) throw new Error('WhatsApp not connected');
     const text = content.text ?? '';
 
+    const trackSent = (result: any) => {
+      const id = result?.key?.id;
+      if (id) this._sentIds.add(id);
+    };
+
     if (text.length <= CHUNK_SIZE) {
-      await this._socket.sendMessage(peerId, { text });
+      trackSent(await this._socket.sendMessage(peerId, { text }));
       return;
     }
 
@@ -163,7 +199,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     let offset = 0;
     while (offset < text.length) {
       const chunk = text.slice(offset, offset + CHUNK_SIZE);
-      await this._socket.sendMessage(peerId, { text: chunk });
+      trackSent(await this._socket.sendMessage(peerId, { text: chunk }));
       offset += CHUNK_SIZE;
       if (offset < text.length) {
         await new Promise(r => setTimeout(r, CHUNK_DELAY_MS));
@@ -233,12 +269,16 @@ export async function linkWhatsAppDevice(opts: {
   }, timeoutMs)
 
   async function connect(): Promise<void> {
-    const pino = (await import('pino')).default
+    const noop2 = () => {};
+    const wizardLogger: any = {
+      trace: noop2, debug: noop2, info: noop2, warn: noop2, error: noop2, fatal: noop2,
+      child: () => wizardLogger,
+    };
     const sock = makeWASocket({
       version,
       auth: state,
       browser: Browsers.ubuntu('Chrome'),
-      logger: pino({ level: 'silent' }),
+      logger: wizardLogger,
     })
 
     sock.ev.on('creds.update', saveCreds)

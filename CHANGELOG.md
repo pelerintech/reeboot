@@ -28,6 +28,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **New config section**: `knowledge` with sub-keys `embeddingModel`, `dimensions` (768, Matryoshka-reducible), `chunkSize` (512), `chunkOverlap` (64), `wiki.enabled`, `wiki.lint.schedule`
   - **New npm dependencies**: `sqlite-vec ^0.1.9`, `@huggingface/transformers ^4.1.0`, `pdf-parse ^2.4.5`
 
+- **Resilience & crash recovery** — reeboot now recovers gracefully from process crashes, machine restarts, and upstream LLM provider outages. Details:
+  - **Ephemeral turn journal** — every agent turn opens a per-turn journal row in SQLite at turn start; every tool call within the turn is appended (name, full input, full output, timestamp, status); on successful completion the journal row is deleted. An unclosed row on next startup signals a crashed turn.
+  - **Crash recovery on startup** — on restart, stale journals older than 24 h are silently discarded with a warning; for recent unclosed journals, policy (`safe_only` / `always` / `never`) determines whether the turn is auto-requeued or the user is notified. `safe_only` (default) auto-resumes turns where no side-effectful tool had already fired; `always` re-runs unconditionally; `never` always notifies the user. A configurable `side_effect_tools` list declares non-idempotent tools (e.g. `send_email`, `post_slack`).
+  - **Restart notification & unanswered message surfacing** — on every restart, all configured channels receive a "I was restarted" notice. If the last session ends with a user message that received no reply, an additional alert is broadcast so the user knows to re-send.
+  - **Scheduled task catchup** — on restart, tasks whose `next_run` was missed within a configurable catchup window (default `1h`) are fired immediately; tasks missed beyond that window advance to their next natural occurrence. Deduplicated so each task fires at most once per restart. Per-task override via a `catchup` column (`"always"` / `"never"` / custom duration).
+  - **Outage detection & self-healing** — after `resilience.outage_threshold` (default `3`) consecutive provider-related failures, reeboot declares an outage: inserts an `outage_events` DB row, broadcasts a notification to all channels, and creates a scheduler probe task. The probe makes a lightweight HTTP health-check against the provider every `resilience.probe_interval` (default `1h`) — no LLM call. Two consecutive successes trigger resolution: broadcasts a recovery message listing prompts lost during the outage (capped at 20; overflow flagged), cancels the probe, and resets the failure counter. Non-provider errors (validation failures, etc.) do not count toward the threshold.
+  - **New DB tables** — `turn_journal`, `turn_journal_steps`, `outage_events`; `tasks` gains a `catchup` column. All created via `runResilienceMigration()` at startup.
+  - **New `resilience` config section**:
+    ```json
+    "resilience": {
+      "recovery": {
+        "mode": "safe_only",
+        "side_effect_tools": ["send_email", "post_slack", "publish_content"]
+      },
+      "scheduler": { "catchup_window": "1h" },
+      "outage_threshold": 3,
+      "probe_interval": "1h"
+    }
+    ```
+  - **New `src/resilience/` module** — `turn-journal.ts` (`TurnJournal` class), `startup.ts` (`cleanStaleJournals`, `recoverCrashedTurns`, `applyScheduledCatchup`, `notifyRestart`, `scanSessionForUnansweredMessage`).
+  - **`broadcastToAllChannels` utility** — `src/utils/broadcast.ts` iterates all registered channel adapters and delivers a system message to each, swallowing per-adapter errors so one failing channel never blocks others.
+  - **`getSessionPath()` on `AgentRunner`** — pi-runner now exposes the active session file path so crash recovery can scan it for unanswered messages.
+  - **Resilience wiring order in `server.ts`** — DB-only operations (`runResilienceMigration`, `applyScheduledCatchup`) run immediately at init; channel-facing operations (`notifyRestart`, `recoverCrashedTurns`, unanswered-message scan) run after channel adapters are registered so notifications are never silently dropped.
+
 ### Changed
 
 - **`@mariozechner/pi-coding-agent` upgraded to 0.68.1** — bumped pin from `0.65.2`. No breaking changes affect reeboot's code: `createAgentSession` does not receive a `tools` array in our runner, `DefaultResourceLoader` already passes explicit `cwd` and `agentDir`, and none of the removed tool exports (`readTool`, `bashTool`, etc.) are imported. Picks up three minor releases of bug fixes, new providers, and the capabilities below.

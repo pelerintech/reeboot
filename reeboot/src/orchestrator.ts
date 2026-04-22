@@ -615,7 +615,7 @@ export class Orchestrator {
 
     const outageId = _randomUUID2();
     const resConfig = (this._config as any).resilience;
-    const provider = this._config.agent?.model?.provider ?? 'unknown';
+    const provider = (this._config as any).agent?.model?.provider ?? 'unknown';
 
     this._db
       .prepare(

@@ -12,7 +12,7 @@
  * SearXNG: health-checks on load; falls back to DDG if unreachable.
  */
 
-import { Type } from '@sinclair/typebox';
+import { Type } from 'typebox';
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { createRequire } from 'module';
 import { parseHTML } from 'linkedom';
