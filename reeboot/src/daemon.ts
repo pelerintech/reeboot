@@ -61,6 +61,12 @@ function generatePlist(reebotBin: string, reebotDir: string): string {
 
   <key>WorkingDirectory</key>
   <string>${reebotDir}</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PI_CACHE_RETENTION</key>
+    <string>long</string>
+  </dict>
 </dict>
 </plist>
 `;
@@ -80,6 +86,7 @@ ExecStart=${reebotBin} start
 Restart=on-failure
 RestartSec=5
 WorkingDirectory=${reebotDir}
+Environment=PI_CACHE_RETENTION=long
 StandardOutput=append:${logsDir}/reeboot.log
 StandardError=append:${logsDir}/reeboot-error.log
 

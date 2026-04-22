@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **New config section**: `knowledge` with sub-keys `embeddingModel`, `dimensions` (768, Matryoshka-reducible), `chunkSize` (512), `chunkOverlap` (64), `wiki.enabled`, `wiki.lint.schedule`
   - **New npm dependencies**: `sqlite-vec ^0.1.9`, `@huggingface/transformers ^4.1.0`, `pdf-parse ^2.4.5`
 
+### Changed
+
+- **`@mariozechner/pi-coding-agent` upgraded to 0.68.1** — bumped pin from `0.65.2`. No breaking changes affect reeboot's code: `createAgentSession` does not receive a `tools` array in our runner, `DefaultResourceLoader` already passes explicit `cwd` and `agentDir`, and none of the removed tool exports (`readTool`, `bashTool`, etc.) are imported. Picks up three minor releases of bug fixes, new providers, and the capabilities below.
+
+- **Graceful reload teardown** — `mcp-manager`, `scheduler-tool`, and `skill-manager` now inspect the new `session_shutdown` event `reason` field added in pi 0.68. On `reeboot reload`, MCP server child processes are no longer killed and restarted, active in-session timers are preserved, and the skill-manager polling loop continues uninterrupted. Full teardown still runs on `quit` (SIGTERM, SIGHUP, `reeboot stop`).
+
+- **Extended prompt cache** — `PI_CACHE_RETENTION=long` is now set in `entrypoint.sh` (Docker) and both daemon service generators (launchd plist on macOS, systemd unit on Linux). Extends the LLM provider prompt cache TTL from 5 minutes to 1 hour (Anthropic) or 24 hours (OpenAI), reducing input token costs for idle deployments where conversations are frequently separated by more than 5 minutes.
+
+- **`reeboot doctor` reports context files** — the pre-flight diagnostic now includes a "Context files" check using `loadProjectContextFiles()` (newly exported in pi 0.68). Shows which `AGENTS.md` and context files would be injected into the agent session for the current workspace. Reports `pass` with file paths when found, `warn` with a fix hint when none are present.
+
 ### Breaking changes
 
 - **`sqlite-vec` native extension loaded unconditionally at database open** — `openDatabase()` now loads the `sqlite-vec` native extension on every startup, regardless of `knowledge.enabled`. `sqlite-vec` ships pre-compiled binaries for `darwin-x64`, `darwin-arm64`, `linux-x64`, `linux-arm64`, and `win32-x64`. **The official reeboot Docker image (`node:22-slim`, Debian glibc) is unaffected.** However, if you are running a custom Docker image based on Alpine Linux (`node:alpine`, `node:XX-alpine`), startup will fail with an "Unsupported platform" error because Alpine uses musl libc. Switch to a glibc-based image (`node:XX`, `node:XX-slim`, `node:XX-bookworm-slim`) before upgrading.

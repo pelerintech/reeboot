@@ -278,7 +278,8 @@ export function skillManagerExtension(
     }
   }, 60_000);
 
-  pi.on('session_shutdown', async () => {
+  pi.on('session_shutdown', async (event: any) => {
+    if (event.reason === 'reload') return;
     clearInterval(loop);
   });
 

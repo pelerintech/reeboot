@@ -147,7 +147,8 @@ export default function (pi: ExtensionAPI) {
 
   // ─── session_shutdown cleanup ──────────────────────────────────────────────
 
-  pi.on('session_shutdown', () => {
+  pi.on('session_shutdown', (event: any) => {
+    if (event.reason === 'reload') return;
     manager.clearAll();
   });
 

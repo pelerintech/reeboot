@@ -28,6 +28,7 @@
 set -e
 
 export REEBOOT_HOST="${REEBOOT_HOST:-0.0.0.0}"
+export PI_CACHE_RETENTION=long
 CONFIG_FILE="${HOME}/.reeboot/config.json"
 
 # ── Step 1: persona injection (always, before start) ─────────────────────────
