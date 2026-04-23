@@ -20,6 +20,8 @@ export interface ScheduledTaskRef {
   taskId: string;
   contextId: string;
   prompt: string;
+  origin_channel?: string | null;
+  origin_peer?: string | null;
 }
 
 export interface SchedulerOrchestrator {
@@ -50,6 +52,8 @@ interface TaskRow {
   next_run: string | null;
   last_result: string | null;
   context_mode: string;
+  origin_channel?: string | null;
+  origin_peer?: string | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -133,6 +137,8 @@ export class Scheduler {
         taskId: task.id,
         contextId: task.context_id,
         prompt: task.prompt,
+        origin_channel: task.origin_channel ?? null,
+        origin_peer: task.origin_peer ?? null,
       });
       status = 'success';
     } catch (err: any) {
@@ -287,6 +293,32 @@ export function formatTasksDue(tasks: TaskRow[]): string {
 
 // ─── createSchedulerTools ─────────────────────────────────────────────────────
 
+// ─── buildScheduledPrompt ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Builds an enriched prompt for a scheduler-fired task.
+ * If origin_channel and origin_peer are set, the agent produces its reply
+ * and the orchestrator's _reply() auto-routes it to the correct adapter.
+ * If null, the orchestrator broadcasts to all adapters.
+ * No `send_message` tool call is needed — routing is transparent.
+ */
+export function buildScheduledPrompt(task: TaskRow): string {
+  const base = task.prompt;
+  if (task.origin_channel && task.origin_peer) {
+    return (
+      `[scheduled task | channel: ${task.origin_channel} | peer: ${task.origin_peer}]\n` +
+      `Task: ${base}\n\n` +
+      `Respond naturally. Your reply will be automatically delivered to the user ` +
+      `on ${task.origin_channel} (peer: ${task.origin_peer}).`
+    );
+  }
+  return (
+    `[scheduled task | no origin]\n` +
+    `Task: ${base}\n\n` +
+    `Respond naturally. Your reply will be broadcast to all connected channels.`
+  );
+}
+
 export interface SchedulerToolsTarget {
   registerJob(task: { id: string; contextId: string; schedule: string; prompt: string }): void;
   cancelJob(taskId: string): void;
@@ -311,6 +343,8 @@ export function createSchedulerTools(db: Database.Database, scheduler: Scheduler
       prompt: string;
       contextId?: string;
       context_mode?: string;
+      origin_channel?: string;
+      origin_peer?: string;
     }): Promise<ToolResult> {
       // Validate schedule
       let scheduleDesc: ReturnType<typeof detectScheduleType>;
@@ -346,8 +380,9 @@ export function createSchedulerTools(db: Database.Database, scheduler: Scheduler
       try {
         db.prepare(
           `INSERT INTO tasks (id, context_id, schedule, prompt, enabled,
-            schedule_type, schedule_value, normalized_ms, status, next_run, context_mode)
-           VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'active', ?, ?)`
+            schedule_type, schedule_value, normalized_ms, status, next_run, context_mode,
+            origin_channel, origin_peer)
+           VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'active', ?, ?, ?, ?)`
         ).run(
           id,
           contextId,
@@ -357,7 +392,9 @@ export function createSchedulerTools(db: Database.Database, scheduler: Scheduler
           scheduleValue,
           normalizedMs,
           nextRun,
-          contextMode
+          contextMode,
+          params.origin_channel ?? null,
+          params.origin_peer ?? null
         );
 
         return {

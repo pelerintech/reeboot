@@ -172,41 +172,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ─── timer tool ───────────────────────────────────────────────────────────
-
-  pi.registerTool({
-    name: 'timer',
-    label: 'Timer',
-    description:
-      'Set a one-shot non-blocking timer. Returns immediately. After the specified delay, fires a new agent turn with the given message. Use instead of sleep.',
-    promptSnippet: 'Set a one-shot non-blocking delay that fires a new agent turn',
-    parameters: Type.Object({
-      seconds: Type.Number({ description: 'Delay in seconds (1–3600)' }),
-      message: Type.String({ description: 'Message to include when the timer fires' }),
-      id: Type.Optional(Type.String({ description: 'Timer id (optional). Same id cancels previous timer.' })),
-    }),
-    execute: async (_callId, params) => {
-      const id = params.id ?? `timer-${Date.now()}`;
-      try {
-        manager.setTimer(pi, params.seconds, params.message, id);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Timer "${id}" set for ${params.seconds}s: "${params.message}"`,
-            },
-          ],
-          details: { id, seconds: params.seconds, message: params.message },
-        };
-      } catch (err: any) {
-        return {
-          content: [{ type: 'text' as const, text: err.message }],
-          details: {},
-          isError: true,
-        };
-      }
-    },
-  });
+  // timer tool removed — use schedule_task for all time-based actions (persisted, survives restart)
 
   // ─── heartbeat tool ───────────────────────────────────────────────────────
 
@@ -287,6 +253,12 @@ export default function (pi: ExtensionAPI) {
       ),
       context_mode: Type.Optional(
         Type.String({ description: 'Context mode: "shared" (default) or "isolated"' })
+      ),
+      origin_channel: Type.Optional(
+        Type.String({ description: 'Channel to deliver the task reply to (e.g. "whatsapp"). Set automatically from current conversation context.' })
+      ),
+      origin_peer: Type.Optional(
+        Type.String({ description: 'Peer ID to deliver the task reply to (e.g. phone number). Set automatically from current conversation context.' })
       ),
     }),
     execute: async (_id, params) => {

@@ -131,6 +131,12 @@ export function runResilienceMigration(db: import('better-sqlite3').Database): v
     if (!taskCols.has('catchup')) {
       db.exec(`ALTER TABLE tasks ADD COLUMN catchup TEXT`);
     }
+    if (!taskCols.has('origin_channel')) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN origin_channel TEXT`);
+    }
+    if (!taskCols.has('origin_peer')) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN origin_peer TEXT`);
+    }
   }
 }
 

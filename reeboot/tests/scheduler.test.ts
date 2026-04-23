@@ -49,6 +49,8 @@ function makeFullDb(): Database.Database {
     ALTER TABLE tasks ADD COLUMN next_run TEXT;
     ALTER TABLE tasks ADD COLUMN last_result TEXT;
     ALTER TABLE tasks ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'shared';
+    ALTER TABLE tasks ADD COLUMN origin_channel TEXT;
+    ALTER TABLE tasks ADD COLUMN origin_peer TEXT;
     CREATE TABLE IF NOT EXISTS task_runs (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES tasks(id),

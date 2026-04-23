@@ -79,7 +79,7 @@ describe('Orchestrator routing', () => {
     bus.publish(makeMsg());
     await new Promise(r => setTimeout(r, 20));
 
-    expect(runner.prompt).toHaveBeenCalledWith('Hello', expect.any(Function));
+    expect(runner.prompt).toHaveBeenCalledWith(expect.stringContaining('Hello'), expect.any(Function));
   });
 
   it('peer match takes highest priority over channel match and default', async () => {

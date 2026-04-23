@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Session resume after restart** — the agent now correctly resumes the most recent conversation on restart instead of starting a blank session every time. `getResumedSessionPath` previously filtered for `session-*.json` files; pi's `SessionManager` actually creates `<ISO-timestamp>_<uuid>.jsonl` files. The filter was updated to match the real format. As a side effect, the "I may not have responded to your last message" unanswered-message detection on restart is also now active.
+
+- **Memory extension never loaded** — `memory-manager.ts` and `knowledge-manager.ts` were located in `extensions/` (root), which is outside `tsconfig.json`'s `rootDir: "./src"` and was never compiled. Both files have been moved to `src/extensions/` so they are compiled into `dist/` and loaded correctly on startup. `~/.reeboot/memories/MEMORY.md` and `USER.md` are now created on first run as intended.
+
+- **Memory extension wiring** — even if the file had been found, three internal wires were broken: the extension called `pi.getConfig()`, `pi.getDb()`, and `pi.getScheduler()` which do not exist on pi's `ExtensionAPI`. All three replaced with the correct patterns: config is passed as a second argument from the loader (matching `web-search` and `mcp-manager`); DB and scheduler are accessed via `require('../db/index.js')` and `require('../scheduler-registry.js')` (matching `scheduler-tool.ts`). The loader was also not passing `config` when invoking the memory factory — fixed.
+
+- **`session_search` always-on** — the loader was gating the entire memory-manager factory (including `session_search`) behind `memory.enabled`. The guard has been removed so `session_search` is always registered, as the original spec required. The `memory` tool and system prompt injection remain gated on `memory.enabled`.
+
+- **`messages` table always empty** — the `messages` table existed in the schema and the FTS5 index was configured, but nothing ever wrote to it. Turns completed, responses went back to channels, and the table stayed at zero rows — making `session_search` and memory consolidation effectively useless. The orchestrator now writes user and assistant message rows to the DB after each completed turn. Scheduler and recovery turns are excluded (synthetic peer IDs).
+
+- **Agent doesn't know what channel it's on** — `channelType` and `peerId` were present in the orchestrator when a message arrived but were silently dropped before reaching `runner.prompt()`. The agent had to guess its channel by running `reeboot channels list` and frequently guessed wrong (defaulting to "web" even during WhatsApp conversations). The orchestrator now prepends `[channel: X | peer: Y]` to every dispatched prompt, giving the agent reliable identity context. Scheduler and recovery turns are excluded.
+
+- **Reminders and scheduled tasks delivered nowhere** — two broken systems existed in parallel. The `timer` tool used an in-memory `setTimeout` that bypassed the orchestrator entirely — the agent produced a response but it was never routed to any channel. The `schedule_task` tool was DB-persisted but dispatched replies to a fake `'scheduler'` adapter that doesn't exist, so every scheduled reply was silently dropped. Both are now fixed:
+  - The `timer` tool has been removed. All time-based actions go through `schedule_task` (persisted, survives restart).
+  - `schedule_task` now accepts `origin_channel` and `origin_peer` parameters and stores them on the task row.
+  - When a task fires, the prompt is enriched with routing instructions (`buildScheduledPrompt`) so the agent knows to call `send_message` targeting the correct channel and peer.
+  - The orchestrator's `_reply` method now routes scheduler turn replies to `origin_channel`/`origin_peer` from `msg.raw`, or broadcasts to all adapters if no origin is set (e.g. tasks created via REST API).
+
 ### Added
 
 - **Personal memory** — the agent now remembers facts, preferences, and corrections across sessions via two bounded markdown files (`~/.reeboot/memories/MEMORY.md` and `USER.md`). Both files are injected as a frozen snapshot into the system prompt at session start with usage percentage and char counts. The agent manages them during sessions via a `memory` tool (add/replace/remove entries) gated on `memory.enabled`. A background consolidation process (scheduled via `memory.consolidation.schedule`, default `0 2 * * *`) mines past conversations and distils new insights into memory — with auto-capacity management and `memory_log` observability logging when files are near full. Content is scanned for prompt injection patterns, credential patterns, and invisible Unicode before any write.

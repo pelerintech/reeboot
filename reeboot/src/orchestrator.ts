@@ -230,6 +230,19 @@ export class Orchestrator {
     let responseText = '';
     let retries = 0;
 
+    // Persist user message immediately — before the turn runs, so it is written
+    // regardless of success, error, or timeout (MP-1).
+    const skipPersist = msg.channelType === 'scheduler' || msg.channelType === 'recovery';
+    if (!skipPersist && this._db) {
+      const msgId = randomUUID();
+      try {
+        this._db.prepare(
+          `INSERT INTO messages (id, context_id, channel, peer_id, role, content)
+           VALUES (?, ?, ?, ?, 'user', ?)`
+        ).run(msgId, contextId, msg.channelType, msg.peerId, msg.content);
+      } catch { /* messages table may not exist in minimal deployments */ }
+    }
+
     while (true) {
       responseText = '';
 
@@ -255,9 +268,15 @@ export class Orchestrator {
           });
         }
       };
+      // Inject channel context header for real channel turns
+      const SKIP_HEADER_CHANNELS = new Set(['scheduler', 'recovery']);
+      const promptContent = SKIP_HEADER_CHANNELS.has(msg.channelType)
+        ? msg.content
+        : `[channel: ${msg.channelType} | peer: ${msg.peerId}]\n${msg.content}`;
+
       const turnPromise = msg.trust !== undefined
-        ? runner.prompt(msg.content, onEvent, { trust: msg.trust })
-        : runner.prompt(msg.content, onEvent);
+        ? runner.prompt(promptContent, onEvent, { trust: msg.trust })
+        : runner.prompt(promptContent, onEvent);
 
       let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
       const timeoutPromise = new Promise<'timeout'>((resolve) => {
@@ -346,6 +365,17 @@ export class Orchestrator {
     // Clean turn — delete the journal row and reset failure counter
     this._journal?.closeTurn(turnId);
     this._consecutiveFailures.set(contextId, 0);
+
+    // Persist assistant message on successful turn (user row was written before the loop)
+    if (!skipPersist && this._db && responseText) {
+      const assistantId = randomUUID();
+      try {
+        this._db.prepare(
+          `INSERT INTO messages (id, context_id, channel, peer_id, role, content)
+           VALUES (?, ?, ?, ?, 'assistant', ?)`
+        ).run(assistantId, contextId, msg.channelType, msg.peerId, responseText);
+      } catch { /* ignore */ }
+    }
 
     if (responseText) {
       this._reply(msg, responseText);
@@ -486,6 +516,27 @@ export class Orchestrator {
   }
 
   private _reply(msg: IncomingMessage, text: string): void {
+    // Scheduler turns: route to origin channel or broadcast
+    if (msg.channelType === 'scheduler') {
+      const raw = msg.raw as any;
+      const originChannel: string | null = raw?.origin_channel ?? null;
+      const originPeer: string | null = raw?.origin_peer ?? null;
+      if (originChannel && originPeer) {
+        const adapter = this._adapters.get(originChannel);
+        if (adapter) {
+          adapter.send(originPeer, { type: 'text', text }).catch((err) => {
+            console.error(`[Orchestrator] Failed to send scheduled reply: ${err}`);
+          });
+        }
+      } else {
+        // Broadcast to all adapters
+        for (const adapter of this._adapters.values()) {
+          adapter.send('__system__', { type: 'text', text }).catch(() => {/* ignore */});
+        }
+      }
+      return;
+    }
+
     const adapter = this._adapters.get(msg.channelType);
     if (!adapter) return;
     adapter.send(msg.peerId, { type: 'text', text }).catch((err) => {

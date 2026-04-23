@@ -70,27 +70,25 @@ describe('memory integration — database schema', () => {
 });
 
 describe('memory integration — extension loader', () => {
-  it('getBundledFactories includes memory-manager factory when memory.enabled=true', async () => {
+  it('getBundledFactories always includes memory-manager factory regardless of memory.enabled', async () => {
     const { getBundledFactories } = await import('../src/extensions/loader.js');
 
-    const config = {
+    // memory.enabled=true
+    const configEnabled = {
       extensions: { core: {} },
       memory: { enabled: true, memoryCharLimit: 2200, userCharLimit: 1375, consolidation: { enabled: false, schedule: '0 2 * * *' } },
     } as any;
+    const factoriesEnabled = getBundledFactories(configEnabled).length;
 
-    const factories = getBundledFactories(config);
-
-    // We can't easily assert factory names directly since they're closures.
-    // Instead, we verify the factory list grows when memory is enabled.
-    const factoriesWithMemory = factories.length;
-
-    const configNoMemory = {
+    // memory.enabled=false — factory count must be the same (session_search always-on)
+    const configDisabled = {
       extensions: { core: {} },
       memory: { enabled: false, memoryCharLimit: 2200, userCharLimit: 1375, consolidation: { enabled: false, schedule: '0 2 * * *' } },
     } as any;
-    const factoriesWithoutMemory = getBundledFactories(configNoMemory).length;
+    const factoriesDisabled = getBundledFactories(configDisabled).length;
 
-    // memory-manager adds one factory when enabled — must be strictly more
-    expect(factoriesWithMemory).toBeGreaterThan(factoriesWithoutMemory);
+    expect(factoriesEnabled).toBe(factoriesDisabled);
+    // And the list is non-trivially long (all core extensions are included)
+    expect(factoriesEnabled).toBeGreaterThan(5);
   });
 });

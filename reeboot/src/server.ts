@@ -268,15 +268,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         const { setGlobalScheduler } = await import('./scheduler-registry.js');
 
         const schedulerOrchestrator = {
-          handleScheduledTask: async (task: { taskId: string; contextId: string; prompt: string }) => {
+          handleScheduledTask: async (task: { taskId: string; contextId: string; prompt: string; origin_channel?: string | null; origin_peer?: string | null }) => {
             // Inject scheduled task as a message via the bus
-            const { MessageBus: MB, createIncomingMessage } = await import('./channels/interface.js');
+            const { createIncomingMessage } = await import('./channels/interface.js');
+            const { buildScheduledPrompt } = await import('./scheduler.js');
+            const enrichedPrompt = buildScheduledPrompt(task as any);
             bus.publish(
               createIncomingMessage({
                 channelType: 'scheduler',
                 peerId: 'scheduler',
-                content: task.prompt,
-                raw: { taskId: task.taskId },
+                content: enrichedPrompt,
+                raw: {
+                  taskId: task.taskId,
+                  origin_channel: task.origin_channel ?? null,
+                  origin_peer: task.origin_peer ?? null,
+                },
               })
             );
           },

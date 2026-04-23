@@ -123,7 +123,7 @@ describe('In-chat commands', () => {
     bus.publish(makeMsg('/search for cats'));
     await new Promise(r => setTimeout(r, 20));
 
-    expect(runner.prompt).toHaveBeenCalledWith('/search for cats', expect.any(Function));
+    expect(runner.prompt).toHaveBeenCalledWith(expect.stringContaining('/search for cats'), expect.any(Function));
   });
 
   it('commands work across channels — /new via different channelType', async () => {
