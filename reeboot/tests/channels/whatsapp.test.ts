@@ -143,6 +143,8 @@ describe('WhatsAppAdapter', () => {
   it('echo of sent message is skipped (sent ID tracked)', async () => {
     await adapter.init({ enabled: true }, bus);
     await adapter.start();
+    // Simulate connection open so status becomes 'connected' (required by send() status guard)
+    mockEv.emit('connection.update', { connection: 'open' });
 
     mockSocket.sendMessage = vi.fn().mockResolvedValue({ key: { id: 'sent-abc' } });
     await adapter.send('43624150659184@lid', { type: 'text', text: 'Reply' });
@@ -229,6 +231,7 @@ describe('WhatsAppAdapter', () => {
   it('short message sent as single sendMessage call', async () => {
     await adapter.init({ enabled: true }, bus);
     await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
 
     await adapter.send('1234@s.whatsapp.net', { type: 'text', text: 'Hello' });
 
@@ -242,6 +245,7 @@ describe('WhatsAppAdapter', () => {
   it('long message (>4096 chars) is chunked into multiple sendMessage calls', async () => {
     await adapter.init({ enabled: true }, bus);
     await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
 
     const longText = 'A'.repeat(4097);
     await adapter.send('1234@s.whatsapp.net', { type: 'text', text: longText });

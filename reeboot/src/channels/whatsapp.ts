@@ -166,6 +166,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
             peerId,
             content: text,
             raw: msg,
+            fromSelf: !!fromMe,
           })
         );
       }
@@ -182,12 +183,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async send(peerId: string, content: MessageContent): Promise<void> {
-    if (!this._socket) throw new Error('WhatsApp not connected');
+    if (!this._socket || this._status !== 'connected') return; // not ready yet — silently drop
+
     const text = content.text ?? '';
 
     const trackSent = (result: any) => {
       const id = result?.key?.id;
-      if (id) this._sentIds.add(id);
+      if (id) {
+        this._sentIds.add(id);
+        // TTL cleanup: keep the ID for 30s so that both notify and append
+        // deliveries of the same echo are caught (deleting on first match
+        // leaves the door open for a second delivery triggering a new turn).
+        setTimeout(() => this._sentIds.delete(id), 30_000);
+      }
     };
 
     if (text.length <= CHUNK_SIZE) {
@@ -213,6 +221,12 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   connectedAt(): string | null {
     return this._connectedAt;
+  }
+
+  /** Returns the connected JID (e.g. '40700000001@s.whatsapp.net') or null when not connected. */
+  selfAddress(): string | null {
+    const userId = this._socket?.user?.id?.replace(/:.*/, '');
+    return userId ? `${userId}@s.whatsapp.net` : null;
   }
 }
 

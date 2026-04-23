@@ -40,6 +40,11 @@ export class WebAdapter implements ChannelAdapter {
   }
 
   async send(peerId: string, content: MessageContent): Promise<void> {
+    if (peerId === '__system__') {
+      // Broadcast to all connected peers — errors from individual peers are silenced.
+      await Promise.all([...this._senders.values()].map(fn => fn(content).catch(() => {})));
+      return;
+    }
     const sender = this._senders.get(peerId);
     if (sender) {
       await sender(content);
@@ -52,6 +57,11 @@ export class WebAdapter implements ChannelAdapter {
 
   connectedAt(): string | null {
     return this._connectedAt;
+  }
+
+  /** Web has no self-address concept — all peers are external clients. */
+  selfAddress(): string | null {
+    return null;
   }
 
   /**

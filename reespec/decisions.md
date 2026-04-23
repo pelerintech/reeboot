@@ -28,6 +28,22 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Channel contract test stubs intentionally fail — 2026-04-23 (Request: channel-policy)
+
+The contract validation stubs (`tests/channels/contract/tier1.contract.test.ts` and `tier2.contract.test.ts`) are designed to fail permanently. They run the shared contract suites against deliberately broken adapter stubs and confirm that every contract clause is exercised. These 10 failures are load-bearing: if they started passing it would mean the contract suite is no longer catching violations. Do not fix them.
+
+### ChannelPolicyLayer wrapping happens in registry, not server.ts — 2026-04-23 (Request: channel-policy)
+
+Tier 1 channel adapters are wrapped in `ChannelPolicyLayer` inside `ChannelRegistry.initChannels()`, before `adapter.init()` is called. This ensures the policy layer intercepts the bus from the moment the channel initialises — wrapping after init would be too late since the inner adapter would already hold a reference to the unwrapped bus. The `TIER1_CHANNEL_TYPES` set in `registry.ts` is the canonical declaration of which channels are Tier 1.
+
+### Contract suite uses setup() hook for adapters requiring transport start — 2026-04-23 (Request: channel-policy)
+
+The Tier 1 contract suite's `Tier1FactoryResult` includes an optional `setup?: () => Promise<void>` function called after `init()` and before inbound/echo tests. This accommodates adapters (like WhatsApp) whose message handlers are only registered after `start()` is called. Signal bypasses this by having `simulateInbound` call `_handleIncomingMessage` directly — the factory is explicitly adapter-aware by design.
+
+### Signal echo dedup uses content-key with 10s TTL, not message ID — 2026-04-23 (Request: channel-policy)
+
+Signal's REST API does not return a stable message ID on send (unlike Baileys which returns `key.id`). Echo deduplication uses a composite key of `${peerId}::${text.slice(0, 64)}` stored in a `_sentKeys` Set with a 10-second TTL via `setTimeout`. The key is deleted on first match (one dedup per send) or after TTL expiry. This is sufficient for the agent-reply → syncMessage echo loop which typically arrives within milliseconds.
+
 ### Lost-jobs accumulation checked before outage threshold — 2026-04-22 (Request: resilience)
 
 When a turn fails with a provider error, the check order matters: if an outage is already active (`_activeOutage === true`), the failed turn is recorded as a lost job immediately rather than incrementing the consecutive-failure counter. This avoids double-counting the first few failures after outage declaration and keeps the counter semantics clean: counter is only meaningful pre-outage. The counter is never incremented during an active outage.
