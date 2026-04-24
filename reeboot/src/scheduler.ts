@@ -364,10 +364,13 @@ export function createSchedulerTools(db: Database.Database, scheduler: Scheduler
       const scheduleValue = params.schedule.trim();
       const normalizedMs = scheduleDesc.normalizedMs ?? null;
 
-      // For once tasks, next_run is the ISO string itself
+      // For once tasks: if normalizedMs is set it's a relative offset ("in 5m"),
+      // otherwise scheduleValue is an ISO datetime literal.
       let nextRun: string | null;
       if (scheduleDesc.type === 'once') {
-        nextRun = scheduleValue;
+        nextRun = scheduleDesc.normalizedMs
+          ? new Date(Date.now() + scheduleDesc.normalizedMs).toISOString()
+          : scheduleValue;
       } else {
         nextRun = computeNextRun({
           schedule_type: scheduleDesc.type,

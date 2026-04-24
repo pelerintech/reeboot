@@ -129,13 +129,10 @@ export class TimerManager {
 
 export default function (pi: ExtensionAPI) {
   // Lazily resolve DB and scheduler to avoid circular imports
-  function getTools() {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getDb } = require('../db/index.js') as typeof import('../db/index.js');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createSchedulerTools } = require('../scheduler.js') as typeof import('../scheduler.js');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { globalScheduler } = require('../scheduler-registry.js') as typeof import('../scheduler-registry.js');
+  async function getTools() {
+    const { getDb } = await import('../db/index.js');
+    const { createSchedulerTools } = await import('../scheduler.js');
+    const { globalScheduler } = await import('../scheduler-registry.js');
 
     const db = getDb();
     return createSchedulerTools(db, globalScheduler);
@@ -239,15 +236,35 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: 'schedule_task',
     label: 'Schedule Task',
-    description:
-      'Schedule a task. Provide a human-friendly schedule string (e.g. "every 30m", "daily", "0 9 * * *", "2026-04-01T09:00:00Z"), a prompt, and optionally contextId and context_mode.',
-    promptSnippet: 'Schedule a task by cron, interval, or datetime',
+    description: [
+      'Schedule a task to run at a future time or on a recurring schedule.',
+      '',
+      'SCHEDULE FORMAT — choose one:',
+      '  • One-time offset:  "in 5 minutes", "in 2 hours", "in 1 day"  (fires that long from NOW)',
+      '  • One-time exact:   ISO 8601 UTC datetime, e.g. "2026-04-24T10:30:00Z"',
+      '    ↳ If you need an exact time, run `date -u` in bash FIRST to get the current UTC',
+      '      time, then add the requested offset to compute the correct target datetime.',
+      '  • Recurring:        "every 5m", "every 2h", "every 1d", "hourly", "daily", "weekly"',
+      '    ↳ ALWAYS prefer "every Nm" over cron for simple recurrences.',
+      '      "every 10m" fires exactly 10 min from now, then every 10 min after that.',
+      '      Cron (e.g. "*/10 * * * *") fires at fixed clock-ticks and the first fire',
+      '      can happen in as little as 1 minute if you are near a tick boundary.',
+      '  • Cron:             standard 5-field cron, e.g. "0 9 * * 1-5" (weekdays at 9 AM UTC)',
+      '    ↳ Only use cron when you need a specific time of day or day of week.',
+      '',
+      'ROUTING — always set origin_channel and origin_peer:',
+      '  The conversation header at the top of the context shows:',
+      '    [channel: <TYPE> | peer: <ID>]',
+      '  Copy those values verbatim into origin_channel and origin_peer.',
+      '  Without them the reminder reply cannot be delivered back to the user.',
+    ].join('\n'),
+    promptSnippet: 'Schedule a one-time or recurring task',
     parameters: Type.Object({
       schedule: Type.String({
         description:
-          'Schedule: cron expression, ISO datetime, or interval like "every 30m", "hourly", "daily"',
+          'When to run. Examples: "in 5 minutes", "in 2 hours", "2026-04-24T10:30:00Z", "every 30m", "daily", "0 9 * * 1-5".',
       }),
-      prompt: Type.String({ description: 'Prompt to dispatch to the agent on schedule' }),
+      prompt: Type.String({ description: 'What the agent should do when the task fires' }),
       contextId: Type.Optional(
         Type.String({ description: 'Context to run in (default: main)' })
       ),
@@ -255,14 +272,14 @@ export default function (pi: ExtensionAPI) {
         Type.String({ description: 'Context mode: "shared" (default) or "isolated"' })
       ),
       origin_channel: Type.Optional(
-        Type.String({ description: 'Channel to deliver the task reply to (e.g. "whatsapp"). Set automatically from current conversation context.' })
+        Type.String({ description: 'Channel type from the [channel: X | peer: Y] header (e.g. "whatsapp"). Required so the reply is delivered back to the user.' })
       ),
       origin_peer: Type.Optional(
-        Type.String({ description: 'Peer ID to deliver the task reply to (e.g. phone number). Set automatically from current conversation context.' })
+        Type.String({ description: 'Peer ID from the [channel: X | peer: Y] header (e.g. the phone number). Required so the reply is delivered back to the user.' })
       ),
     }),
     execute: async (_id, params) => {
-      const tools = getTools();
+      const tools = await getTools();
       return tools.schedule_task(params);
     },
   });
@@ -277,7 +294,7 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: 'List all scheduled tasks with status and next run time',
     parameters: Type.Object({}),
     execute: async () => {
-      const tools = getTools();
+      const tools = await getTools();
       return tools.list_tasks({} as Record<string, never>);
     },
   });
@@ -293,7 +310,7 @@ export default function (pi: ExtensionAPI) {
       task_id: Type.String({ description: 'Task ID to cancel (from list_tasks)' }),
     }),
     execute: async (_id, params) => {
-      const tools = getTools();
+      const tools = await getTools();
       return tools.cancel_task(params);
     },
   });
@@ -309,7 +326,7 @@ export default function (pi: ExtensionAPI) {
       task_id: Type.String({ description: 'Task ID to pause (from list_tasks)' }),
     }),
     execute: async (_id, params) => {
-      const tools = getTools();
+      const tools = await getTools();
       return tools.pause_task(params);
     },
   });
@@ -325,7 +342,7 @@ export default function (pi: ExtensionAPI) {
       task_id: Type.String({ description: 'Task ID to resume (from list_tasks)' }),
     }),
     execute: async (_id, params) => {
-      const tools = getTools();
+      const tools = await getTools();
       return tools.resume_task(params);
     },
   });
@@ -347,7 +364,7 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     execute: async (_id, params) => {
-      const tools = getTools();
+      const tools = await getTools();
       return tools.update_task(params);
     },
   });
@@ -359,10 +376,8 @@ export default function (pi: ExtensionAPI) {
     description:
       'Task management. Use "/tasks due" to list overdue tasks, or "/tasks" to list all active tasks.',
     execute: async (args: string) => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { getDb } = require('../db/index.js') as typeof import('../db/index.js');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { getTasksDue, formatTasksDue } = require('../scheduler.js') as typeof import('../scheduler.js');
+      const { getDb } = await import('../db/index.js');
+      const { getTasksDue, formatTasksDue } = await import('../scheduler.js');
 
       const db = getDb();
       const subCmd = args?.trim().toLowerCase();

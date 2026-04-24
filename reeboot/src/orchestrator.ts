@@ -272,7 +272,7 @@ export class Orchestrator {
       const SKIP_HEADER_CHANNELS = new Set(['scheduler', 'recovery']);
       const promptContent = SKIP_HEADER_CHANNELS.has(msg.channelType)
         ? msg.content
-        : `[channel: ${msg.channelType} | peer: ${msg.peerId}]\n${msg.content}`;
+        : `[channel: ${msg.channelType} | peer: ${msg.peerId}]\n[scheduling: if calling schedule_task, set origin_channel="${msg.channelType}" and origin_peer="${msg.peerId}"]\n${msg.content}`;
 
       const turnPromise = msg.trust !== undefined
         ? runner.prompt(promptContent, onEvent, { trust: msg.trust })
