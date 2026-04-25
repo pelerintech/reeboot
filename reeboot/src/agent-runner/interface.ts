@@ -26,10 +26,18 @@ export interface AgentRunner {
   abort(): void;
 
   /**
-   * Dispose the runner and release underlying resources.
-   * Idempotent — safe to call multiple times.
+   * Dispose the runner permanently (e.g. server shutdown). After dispose(),
+   * the runner must not be used again. Idempotent.
    */
   dispose(): Promise<void>;
+
+  /**
+   * Reset the runner for a new session without permanently disabling it.
+   * Clears the active pi session and any in-flight abort controller so the
+   * next prompt() call starts a fresh session. Used by the inactivity timer
+   * and /new command instead of dispose().
+   */
+  reset(): Promise<void>;
 
   /**
    * Hot-reload extensions/skills without restarting the process.

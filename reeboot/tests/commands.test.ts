@@ -33,6 +33,7 @@ function makeRunner() {
     }),
     abort: vi.fn(),
     dispose: vi.fn().mockResolvedValue(undefined),
+    reset: vi.fn().mockResolvedValue(undefined),
     reload: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -66,11 +67,12 @@ describe('In-chat commands', () => {
     orc.start();
   });
 
-  it('/new resets session — runner.dispose() called', async () => {
+  it('/new resets session — runner.reset() called', async () => {
     bus.publish(makeMsg('/new'));
     await new Promise(r => setTimeout(r, 20));
 
-    expect(runner.dispose).toHaveBeenCalled();
+    expect(runner.reset).toHaveBeenCalled();
+    expect(runner.dispose).not.toHaveBeenCalled();
     expect(adapter.send).toHaveBeenCalledWith(
       'peer1@s.whatsapp.net',
       { type: 'text', text: 'New session started.' }
@@ -140,7 +142,7 @@ describe('In-chat commands', () => {
     bus.publish(makeMsg('/new', { channelType: 'web' }));
     await new Promise(r => setTimeout(r, 20));
 
-    expect(runner.dispose).toHaveBeenCalled();
+    expect(runner.reset).toHaveBeenCalled();
     expect(webAdapter.send).toHaveBeenCalledWith(
       'peer1@s.whatsapp.net',
       { type: 'text', text: 'New session started.' }

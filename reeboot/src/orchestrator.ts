@@ -232,7 +232,7 @@ export class Orchestrator {
 
     // Persist user message immediately — before the turn runs, so it is written
     // regardless of success, error, or timeout (MP-1).
-    const skipPersist = msg.channelType === 'scheduler' || msg.channelType === 'recovery';
+    const skipPersist = msg.channelType === 'scheduler' || msg.channelType === 'recovery' || msg.channelType === 'heartbeat';
     if (!skipPersist && this._db) {
       const msgId = randomUUID();
       try {
@@ -269,7 +269,7 @@ export class Orchestrator {
         }
       };
       // Inject channel context header for real channel turns
-      const SKIP_HEADER_CHANNELS = new Set(['scheduler', 'recovery']);
+      const SKIP_HEADER_CHANNELS = new Set(['scheduler', 'recovery', 'heartbeat']);
       const promptContent = SKIP_HEADER_CHANNELS.has(msg.channelType)
         ? msg.content
         : `[channel: ${msg.channelType} | peer: ${msg.peerId}]\n[scheduling: if calling schedule_task, set origin_channel="${msg.channelType}" and origin_peer="${msg.peerId}"]\n${msg.content}`;
@@ -378,7 +378,7 @@ export class Orchestrator {
     }
 
     if (responseText) {
-      this._reply(msg, responseText);
+      this._reply(msg, responseText, true);
     }
   }
 
@@ -421,7 +421,7 @@ export class Orchestrator {
   async handleNew(contextId: string, msg: IncomingMessage): Promise<void> {
     const runner = this._runners.get(contextId);
     if (runner) {
-      await runner.dispose();
+      await runner.reset();
     }
     this._reply(msg, 'New session started.');
   }
@@ -452,9 +452,9 @@ export class Orchestrator {
     this._reply(msg, 'Session compacted.');
   }
 
-  // ── Heartbeat dispatch ───────────────────────────────────────────────────
+  // ── Heartbeat dispatch (kept for backward compat; routing now via bus) ────
 
-  /** Dispatch a heartbeat tick to a context, returning the agent's response. */
+  /** @deprecated Heartbeat now routes through the bus — this is unused. */
   async handleHeartbeatTick(params: { contextId: string; prompt: string }): Promise<string> {
     const runner = this._runners.get(params.contextId);
     if (!runner) {
@@ -495,7 +495,9 @@ export class Orchestrator {
     state.inactivityTimer = setTimeout(async () => {
       const runner = this._runners.get(contextId);
       if (runner) {
-        await runner.dispose();
+        // reset() clears the session so memory is freed, but leaves the runner
+        // usable — the next message will lazily start a fresh session.
+        await runner.reset();
       }
       this._contextState.delete(contextId);
     }, timeoutMs);
@@ -515,7 +517,17 @@ export class Orchestrator {
     return this._contextState.get(contextId)!;
   }
 
-  private _reply(msg: IncomingMessage, text: string): void {
+  private _reply(msg: IncomingMessage, text: string, isAgentResponse = false): void {
+    // Heartbeat turns: only forward genuine agent responses, suppress everything else
+    // (system errors, timeouts, disk warnings, busy messages must not reach users).
+    if (msg.channelType === 'heartbeat') {
+      if (!isAgentResponse || text.trim().toUpperCase() === 'IDLE') return;
+      for (const adapter of this._adapters.values()) {
+        adapter.send('__system__', { type: 'text', text }).catch(() => {/* ignore */});
+      }
+      return;
+    }
+
     // Scheduler turns: route to origin channel or broadcast
     if (msg.channelType === 'scheduler') {
       const raw = msg.raw as any;

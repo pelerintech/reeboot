@@ -295,8 +295,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         console.log('[server] Scheduler started');
 
         // ── Heartbeat init (after scheduler) ───────────────────────────
-        if (appConfig.heartbeat && _orchestrator) {
-          startHeartbeat(appConfig.heartbeat, db, _orchestrator);
+        if (appConfig.heartbeat) {
+          startHeartbeat(appConfig.heartbeat, db, bus);
           if (appConfig.heartbeat.enabled) {
             console.log('[server] System heartbeat started');
           }

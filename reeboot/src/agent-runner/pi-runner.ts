@@ -219,6 +219,17 @@ export class PiAgentRunner implements AgentRunner {
     this._session = null;
   }
 
+  /**
+   * Reset for reuse: clear the current session (it will be recreated lazily on
+   * the next prompt) without permanently disabling the runner.
+   */
+  async reset(): Promise<void> {
+    this.abort();
+    this._session = null;
+    this.disposed = false;
+    this._toolCallHookRegistered = false; // re-register guard on next session
+  }
+
   // ── reload ─────────────────────────────────────────────────────────────────
 
   async reload(): Promise<void> {
