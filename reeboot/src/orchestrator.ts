@@ -13,9 +13,15 @@
 import { statfsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
 import type { MessageBus, IncomingMessage, ChannelAdapter } from './channels/interface.js';
 import type { AgentRunner } from './agent-runner/index.js';
 import { resolveMessageTrust } from './trust.js';
+import { TurnJournal } from './resilience/turn-journal.js';
+import { broadcastToAllChannels } from './utils/broadcast.js';
+import { parseHumanInterval } from './scheduler/parse.js';
+import type { Database } from 'better-sqlite3';
+import { randomUUID as _randomUUID2 } from 'crypto';
 
 // ─── Config types ─────────────────────────────────────────────────────────────
 
@@ -91,17 +97,26 @@ export class Orchestrator {
   private _runners: Map<string, AgentRunner>;
   private _contextState = new Map<string, ContextState>();
   private _unsubscribe: (() => void) | null = null;
+  private _journal: TurnJournal | null = null;
+  private _db: Database | null = null;
+  private _consecutiveFailures = new Map<string, number>();
+  private _activeOutage = false;
 
   constructor(
     config: OrchestratorConfig,
     bus: MessageBus,
     adapters: Map<string, ChannelAdapter>,
-    runners: Map<string, AgentRunner>
+    runners: Map<string, AgentRunner>,
+    db?: Database
   ) {
     this._config = config;
     this._bus = bus;
     this._adapters = adapters;
     this._runners = runners;
+    if (db) {
+      this._db = db;
+      this._journal = new TurnJournal(db);
+    }
   }
 
   start(): void {
@@ -205,25 +220,63 @@ export class Orchestrator {
       return;
     }
 
+    const turnId = randomUUID();
+    const sessionPath = runner?.getSessionPath?.() ?? undefined;
+    this._journal?.openTurn(turnId, contextId, msg.content, sessionPath);
+
     const turnTimeoutMs = this._config.agent?.turnTimeout ?? DEFAULT_TURN_TIMEOUT_MS;
     const maxRetries = this._config.agent?.rateLimitRetries ?? DEFAULT_RATE_LIMIT_RETRIES;
 
     let responseText = '';
     let retries = 0;
 
+    // Persist user message immediately — before the turn runs, so it is written
+    // regardless of success, error, or timeout (MP-1).
+    const skipPersist = msg.channelType === 'scheduler' || msg.channelType === 'recovery' || msg.channelType === 'heartbeat';
+    if (!skipPersist && this._db) {
+      const msgId = randomUUID();
+      try {
+        this._db.prepare(
+          `INSERT INTO messages (id, context_id, channel, peer_id, role, content)
+           VALUES (?, ?, ?, ?, 'user', ?)`
+        ).run(msgId, contextId, msg.channelType, msg.peerId, msg.content);
+      } catch { /* messages table may not exist in minimal deployments */ }
+    }
+
     while (true) {
       responseText = '';
 
       // Build a promise that races the turn vs. timeout
       let aborted = false;
+      let stepSeq = 0;
       const onEvent = (event: any) => {
         if (event.type === 'text_delta') {
           responseText += event.delta;
         }
+        if (event.type === 'tool_call_end' && this._journal) {
+          stepSeq++;
+          this._journal.appendStep(turnId, {
+            seq: stepSeq,
+            toolName: event.tool_name ?? event.toolName ?? 'unknown',
+            toolInput: typeof event.tool_input === 'string'
+              ? event.tool_input
+              : JSON.stringify(event.tool_input ?? {}),
+            toolOutput: typeof event.tool_output === 'string'
+              ? event.tool_output
+              : JSON.stringify(event.tool_output ?? null),
+            isError: !!(event.is_error ?? event.isError),
+          });
+        }
       };
+      // Inject channel context header for real channel turns
+      const SKIP_HEADER_CHANNELS = new Set(['scheduler', 'recovery', 'heartbeat']);
+      const promptContent = SKIP_HEADER_CHANNELS.has(msg.channelType)
+        ? msg.content
+        : `[channel: ${msg.channelType} | peer: ${msg.peerId}]\n[scheduling: if calling schedule_task, set origin_channel="${msg.channelType}" and origin_peer="${msg.peerId}"]\n${msg.content}`;
+
       const turnPromise = msg.trust !== undefined
-        ? runner.prompt(msg.content, onEvent, { trust: msg.trust })
-        : runner.prompt(msg.content, onEvent);
+        ? runner.prompt(promptContent, onEvent, { trust: msg.trust })
+        : runner.prompt(promptContent, onEvent);
 
       let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
       const timeoutPromise = new Promise<'timeout'>((resolve) => {
@@ -252,6 +305,7 @@ export class Orchestrator {
       }
 
       if (result === 'timeout') {
+        // Leave journal open — this counts as a crashed turn
         this._reply(msg, 'Your request timed out. The agent took too long to respond.');
         return;
       }
@@ -277,7 +331,29 @@ export class Orchestrator {
           continue; // retry
         }
 
-        // Non-retryable error
+        // Check if this is a provider error (4xx/5xx or network failure)
+        const isProviderError =
+          (typeof err?.status === 'number' && err.status >= 400) ||
+          err?.code === 'ECONNREFUSED' ||
+          err?.code === 'ENOTFOUND' ||
+          err?.code === 'ETIMEDOUT';
+
+        if (isProviderError && this._db) {
+          const count = (this._consecutiveFailures.get(contextId) ?? 0) + 1;
+          this._consecutiveFailures.set(contextId, count);
+          const threshold = (this._config as any).resilience?.outage_threshold ?? 3;
+          if (this._activeOutage) {
+            // Record lost job during active outage
+            this._recordLostJob(contextId, msg.content);
+          } else if (count >= threshold) {
+            this._declareOutage(contextId);
+          }
+        } else if (isProviderError) {
+          const count = (this._consecutiveFailures.get(contextId) ?? 0) + 1;
+          this._consecutiveFailures.set(contextId, count);
+        }
+
+        // Non-retryable error — leave journal open (crash evidence)
         this._reply(msg, `Error: ${err?.message ?? String(err)}`);
         return;
       }
@@ -286,8 +362,23 @@ export class Orchestrator {
       break;
     }
 
+    // Clean turn — delete the journal row and reset failure counter
+    this._journal?.closeTurn(turnId);
+    this._consecutiveFailures.set(contextId, 0);
+
+    // Persist assistant message on successful turn (user row was written before the loop)
+    if (!skipPersist && this._db && responseText) {
+      const assistantId = randomUUID();
+      try {
+        this._db.prepare(
+          `INSERT INTO messages (id, context_id, channel, peer_id, role, content)
+           VALUES (?, ?, ?, ?, 'assistant', ?)`
+        ).run(assistantId, contextId, msg.channelType, msg.peerId, responseText);
+      } catch { /* ignore */ }
+    }
+
     if (responseText) {
-      this._reply(msg, responseText);
+      this._reply(msg, responseText, true);
     }
   }
 
@@ -330,7 +421,7 @@ export class Orchestrator {
   async handleNew(contextId: string, msg: IncomingMessage): Promise<void> {
     const runner = this._runners.get(contextId);
     if (runner) {
-      await runner.dispose();
+      await runner.reset();
     }
     this._reply(msg, 'New session started.');
   }
@@ -361,9 +452,9 @@ export class Orchestrator {
     this._reply(msg, 'Session compacted.');
   }
 
-  // ── Heartbeat dispatch ───────────────────────────────────────────────────
+  // ── Heartbeat dispatch (kept for backward compat; routing now via bus) ────
 
-  /** Dispatch a heartbeat tick to a context, returning the agent's response. */
+  /** @deprecated Heartbeat now routes through the bus — this is unused. */
   async handleHeartbeatTick(params: { contextId: string; prompt: string }): Promise<string> {
     const runner = this._runners.get(params.contextId);
     if (!runner) {
@@ -404,7 +495,9 @@ export class Orchestrator {
     state.inactivityTimer = setTimeout(async () => {
       const runner = this._runners.get(contextId);
       if (runner) {
-        await runner.dispose();
+        // reset() clears the session so memory is freed, but leaves the runner
+        // usable — the next message will lazily start a fresh session.
+        await runner.reset();
       }
       this._contextState.delete(contextId);
     }, timeoutMs);
@@ -424,12 +517,194 @@ export class Orchestrator {
     return this._contextState.get(contextId)!;
   }
 
-  private _reply(msg: IncomingMessage, text: string): void {
+  private _reply(msg: IncomingMessage, text: string, isAgentResponse = false): void {
+    // Heartbeat turns: only forward genuine agent responses, suppress everything else
+    // (system errors, timeouts, disk warnings, busy messages must not reach users).
+    if (msg.channelType === 'heartbeat') {
+      if (!isAgentResponse || text.trim().toUpperCase() === 'IDLE') return;
+      for (const adapter of this._adapters.values()) {
+        adapter.send('__system__', { type: 'text', text }).catch(() => {/* ignore */});
+      }
+      return;
+    }
+
+    // Scheduler turns: route to origin channel or broadcast
+    if (msg.channelType === 'scheduler') {
+      const raw = msg.raw as any;
+      const originChannel: string | null = raw?.origin_channel ?? null;
+      const originPeer: string | null = raw?.origin_peer ?? null;
+      if (originChannel && originPeer) {
+        const adapter = this._adapters.get(originChannel);
+        if (adapter) {
+          adapter.send(originPeer, { type: 'text', text }).catch((err) => {
+            console.error(`[Orchestrator] Failed to send scheduled reply: ${err}`);
+          });
+        }
+      } else {
+        // Broadcast to all adapters
+        for (const adapter of this._adapters.values()) {
+          adapter.send('__system__', { type: 'text', text }).catch(() => {/* ignore */});
+        }
+      }
+      return;
+    }
+
     const adapter = this._adapters.get(msg.channelType);
     if (!adapter) return;
     adapter.send(msg.peerId, { type: 'text', text }).catch((err) => {
       console.error(`[Orchestrator] Failed to send reply: ${err}`);
     });
+  }
+
+  // ── Outage detection ──────────────────────────────────────────────────
+
+  // ── Probe + resolution ────────────────────────────────────────────
+
+  private _probeSuccessCount = 0;
+
+  /**
+   * Handle a scheduled task dispatch. Routes probe tasks to the outage probe
+   * handler. All other tasks are not handled here (the scheduler calls runners
+   * directly).
+   */
+  async handleScheduledTask(task: { taskId: string; contextId: string; prompt: string }): Promise<void> {
+    if (task.contextId === '__outage_probe__') {
+      await this._runOutageProbe(task.taskId);
+    }
+  }
+
+  private async _runOutageProbe(taskId: string): Promise<void> {
+    // Determine the provider health endpoint
+    const provider = (this._config as any).agent?.model?.provider ?? '';
+    let url = 'https://api.anthropic.com';
+    if (provider === 'openai' || provider.includes('openai')) {
+      url = 'https://api.openai.com';
+    }
+
+    let success = false;
+    try {
+      const res = await fetch(url);
+      // Treat any non-5xx response as a sign the provider is reachable
+      success = res.status < 500;
+    } catch {
+      success = false;
+    }
+
+    if (success) {
+      this._probeSuccessCount++;
+      if (this._probeSuccessCount >= 2) {
+        await this._resolveOutage(taskId);
+      }
+    } else {
+      this._probeSuccessCount = 0;
+      // Advance probe task next_run to next probe interval
+      if (this._db) {
+        const resConfig = (this._config as any).resilience;
+        const probeInterval = resConfig?.probe_interval ?? '1h';
+        const intervalMs = parseHumanInterval(probeInterval) ?? 3_600_000;
+        const nextRun = new Date(Date.now() + intervalMs).toISOString();
+        this._db.prepare('UPDATE tasks SET next_run = ? WHERE id = ?').run(nextRun, taskId);
+      }
+    }
+  }
+
+  private async _resolveOutage(probeTaskId: string): Promise<void> {
+    if (!this._db) return;
+
+    // Find the unresolved outage
+    const outage = this._db
+      .prepare(`SELECT * FROM outage_events WHERE resolved_at IS NULL ORDER BY declared_at DESC LIMIT 1`)
+      .get() as { id: string; lost_jobs: string; truncated: number } | undefined;
+
+    if (outage) {
+      this._db
+        .prepare(`UPDATE outage_events SET resolved_at = datetime('now') WHERE id = ?`)
+        .run(outage.id);
+
+      let lostJobs: Array<{ contextId: string; prompt: string }> = [];
+      try { lostJobs = JSON.parse(outage.lost_jobs); } catch { /* ignore */ }
+
+      let recoveryMsg =
+        `✅ Provider is back online. Outage has been resolved.`;
+      if (lostJobs.length > 0) {
+        recoveryMsg += `\n\nThe following requests were lost during the outage:`;
+        for (const job of lostJobs) {
+          recoveryMsg += `\n  • [${job.contextId}] ${job.prompt}`;
+        }
+        if (outage.truncated) {
+          recoveryMsg += `\n  … (list truncated)`;
+        }
+        recoveryMsg += `\n\nPlease re-send any requests you'd like me to process.`;
+      }
+
+      broadcastToAllChannels(this._adapters, recoveryMsg);
+    }
+
+    // Delete the probe task
+    this._db.prepare('DELETE FROM tasks WHERE id = ?').run(probeTaskId);
+
+    this._activeOutage = false;
+    this._probeSuccessCount = 0;
+    this._consecutiveFailures.clear();
+  }
+
+  private _recordLostJob(contextId: string, prompt: string): void {
+    if (!this._db) return;
+    const outage = this._db
+      .prepare(`SELECT id, lost_jobs, truncated FROM outage_events WHERE resolved_at IS NULL ORDER BY declared_at DESC LIMIT 1`)
+      .get() as { id: string; lost_jobs: string; truncated: number } | undefined;
+    if (!outage) return;
+
+    let jobs: Array<{ contextId: string; prompt: string }> = [];
+    try { jobs = JSON.parse(outage.lost_jobs); } catch { /* ignore */ }
+
+    if (jobs.length >= 20) {
+      // Cap at 20; set truncation flag if not already set
+      if (!outage.truncated) {
+        this._db.prepare(`UPDATE outage_events SET truncated = 1 WHERE id = ?`).run(outage.id);
+      }
+      return;
+    }
+
+    jobs.push({ contextId, prompt });
+    this._db
+      .prepare(`UPDATE outage_events SET lost_jobs = ? WHERE id = ?`)
+      .run(JSON.stringify(jobs), outage.id);
+  }
+
+  private _declareOutage(contextId: string): void {
+    if (!this._db) return;
+    this._activeOutage = true;
+
+    const outageId = _randomUUID2();
+    const resConfig = (this._config as any).resilience;
+    const provider = (this._config as any).agent?.model?.provider ?? 'unknown';
+
+    this._db
+      .prepare(
+        `INSERT INTO outage_events (id, provider) VALUES (?, ?)`
+      )
+      .run(outageId, provider);
+
+    broadcastToAllChannels(
+      this._adapters,
+      `⚠️ Outage detected: the LLM provider appears to be unavailable ` +
+        `(context: ${contextId}). I'll probe for recovery and notify you when it's back.`
+    );
+
+    // Create a self-healing probe task
+    const probeInterval = resConfig?.probe_interval ?? '1h';
+    const intervalMs = parseHumanInterval(probeInterval) ?? 3_600_000;
+    const nextRun = new Date(Date.now() + intervalMs).toISOString();
+    const probeId = _randomUUID2();
+
+    this._db
+      .prepare(
+        `INSERT OR IGNORE INTO tasks
+           (id, context_id, schedule, schedule_type, schedule_value, normalized_ms, status, prompt, next_run)
+         VALUES (?, '__outage_probe__', ?, 'interval', ?, ?, 'active', '__probe__', ?)`
+      )
+      .run(probeId, probeInterval, probeInterval, intervalMs, nextRun);
   }
 
   /** Expose runners for reload/restart */

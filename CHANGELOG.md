@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Session resume after restart** — the agent now correctly resumes the most recent conversation on restart instead of starting a blank session every time. `getResumedSessionPath` previously filtered for `session-*.json` files; pi's `SessionManager` actually creates `<ISO-timestamp>_<uuid>.jsonl` files. The filter was updated to match the real format. As a side effect, the "I may not have responded to your last message" unanswered-message detection on restart is also now active.
+
+- **Memory extension never loaded** — `memory-manager.ts` and `knowledge-manager.ts` were located in `extensions/` (root), which is outside `tsconfig.json`'s `rootDir: "./src"` and was never compiled. Both files have been moved to `src/extensions/` so they are compiled into `dist/` and loaded correctly on startup. `~/.reeboot/memories/MEMORY.md` and `USER.md` are now created on first run as intended.
+
+- **Memory extension wiring** — even if the file had been found, three internal wires were broken: the extension called `pi.getConfig()`, `pi.getDb()`, and `pi.getScheduler()` which do not exist on pi's `ExtensionAPI`. All three replaced with the correct patterns: config is passed as a second argument from the loader (matching `web-search` and `mcp-manager`); DB and scheduler are accessed via `require('../db/index.js')` and `require('../scheduler-registry.js')` (matching `scheduler-tool.ts`). The loader was also not passing `config` when invoking the memory factory — fixed.
+
+- **`session_search` always-on** — the loader was gating the entire memory-manager factory (including `session_search`) behind `memory.enabled`. The guard has been removed so `session_search` is always registered, as the original spec required. The `memory` tool and system prompt injection remain gated on `memory.enabled`.
+
+- **`messages` table always empty** — the `messages` table existed in the schema and the FTS5 index was configured, but nothing ever wrote to it. Turns completed, responses went back to channels, and the table stayed at zero rows — making `session_search` and memory consolidation effectively useless. The orchestrator now writes user and assistant message rows to the DB after each completed turn. Scheduler and recovery turns are excluded (synthetic peer IDs).
+
+- **Agent doesn't know what channel it's on** — `channelType` and `peerId` were present in the orchestrator when a message arrived but were silently dropped before reaching `runner.prompt()`. The agent had to guess its channel by running `reeboot channels list` and frequently guessed wrong (defaulting to "web" even during WhatsApp conversations). The orchestrator now prepends `[channel: X | peer: Y]` to every dispatched prompt, giving the agent reliable identity context. Scheduler and recovery turns are excluded.
+
+- **Reminders and scheduled tasks delivered nowhere** — two broken systems existed in parallel. The `timer` tool used an in-memory `setTimeout` that bypassed the orchestrator entirely — the agent produced a response but it was never routed to any channel. The `schedule_task` tool was DB-persisted but dispatched replies to a fake `'scheduler'` adapter that doesn't exist, so every scheduled reply was silently dropped. Both are now fixed:
+  - The `timer` tool has been removed. All time-based actions go through `schedule_task` (persisted, survives restart).
+  - `schedule_task` now accepts `origin_channel` and `origin_peer` parameters and stores them on the task row.
+  - When a task fires, the prompt is enriched with routing instructions (`buildScheduledPrompt`) so the agent knows to call `send_message` targeting the correct channel and peer.
+  - The orchestrator's `_reply` method now routes scheduler turn replies to `origin_channel`/`origin_peer` from `msg.raw`, or broadcasts to all adapters if no origin is set (e.g. tasks created via REST API).
+
 ### Added
 
 - **Personal memory** — the agent now remembers facts, preferences, and corrections across sessions via two bounded markdown files (`~/.reeboot/memories/MEMORY.md` and `USER.md`). Both files are injected as a frozen snapshot into the system prompt at session start with usage percentage and char counts. The agent manages them during sessions via a `memory` tool (add/replace/remove entries) gated on `memory.enabled`. A background consolidation process (scheduled via `memory.consolidation.schedule`, default `0 2 * * *`) mines past conversations and distils new insights into memory — with auto-capacity management and `memory_log` observability logging when files are near full. Content is scanned for prompt injection patterns, credential patterns, and invisible Unicode before any write.
@@ -27,6 +47,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Optional wiki synthesis layer** (`knowledge.wiki.enabled: false` by default): LLM-maintained interlinked markdown pages at `~/.reeboot/knowledge/wiki/` — concept pages, source summaries, filed query insights, and a scheduled lint pass (default weekly)
   - **New config section**: `knowledge` with sub-keys `embeddingModel`, `dimensions` (768, Matryoshka-reducible), `chunkSize` (512), `chunkOverlap` (64), `wiki.enabled`, `wiki.lint.schedule`
   - **New npm dependencies**: `sqlite-vec ^0.1.9`, `@huggingface/transformers ^4.1.0`, `pdf-parse ^2.4.5`
+
+- **Resilience & crash recovery** — reeboot now recovers gracefully from process crashes, machine restarts, and upstream LLM provider outages. Details:
+  - **Ephemeral turn journal** — every agent turn opens a per-turn journal row in SQLite at turn start; every tool call within the turn is appended (name, full input, full output, timestamp, status); on successful completion the journal row is deleted. An unclosed row on next startup signals a crashed turn.
+  - **Crash recovery on startup** — on restart, stale journals older than 24 h are silently discarded with a warning; for recent unclosed journals, policy (`safe_only` / `always` / `never`) determines whether the turn is auto-requeued or the user is notified. `safe_only` (default) auto-resumes turns where no side-effectful tool had already fired; `always` re-runs unconditionally; `never` always notifies the user. A configurable `side_effect_tools` list declares non-idempotent tools (e.g. `send_email`, `post_slack`).
+  - **Restart notification & unanswered message surfacing** — on every restart, all configured channels receive a "I was restarted" notice. If the last session ends with a user message that received no reply, an additional alert is broadcast so the user knows to re-send.
+  - **Scheduled task catchup** — on restart, tasks whose `next_run` was missed within a configurable catchup window (default `1h`) are fired immediately; tasks missed beyond that window advance to their next natural occurrence. Deduplicated so each task fires at most once per restart. Per-task override via a `catchup` column (`"always"` / `"never"` / custom duration).
+  - **Outage detection & self-healing** — after `resilience.outage_threshold` (default `3`) consecutive provider-related failures, reeboot declares an outage: inserts an `outage_events` DB row, broadcasts a notification to all channels, and creates a scheduler probe task. The probe makes a lightweight HTTP health-check against the provider every `resilience.probe_interval` (default `1h`) — no LLM call. Two consecutive successes trigger resolution: broadcasts a recovery message listing prompts lost during the outage (capped at 20; overflow flagged), cancels the probe, and resets the failure counter. Non-provider errors (validation failures, etc.) do not count toward the threshold.
+  - **New DB tables** — `turn_journal`, `turn_journal_steps`, `outage_events`; `tasks` gains a `catchup` column. All created via `runResilienceMigration()` at startup.
+  - **New `resilience` config section**:
+    ```json
+    "resilience": {
+      "recovery": {
+        "mode": "safe_only",
+        "side_effect_tools": ["send_email", "post_slack", "publish_content"]
+      },
+      "scheduler": { "catchup_window": "1h" },
+      "outage_threshold": 3,
+      "probe_interval": "1h"
+    }
+    ```
+  - **New `src/resilience/` module** — `turn-journal.ts` (`TurnJournal` class), `startup.ts` (`cleanStaleJournals`, `recoverCrashedTurns`, `applyScheduledCatchup`, `notifyRestart`, `scanSessionForUnansweredMessage`).
+  - **`broadcastToAllChannels` utility** — `src/utils/broadcast.ts` iterates all registered channel adapters and delivers a system message to each, swallowing per-adapter errors so one failing channel never blocks others.
+  - **`getSessionPath()` on `AgentRunner`** — pi-runner now exposes the active session file path so crash recovery can scan it for unanswered messages.
+  - **Resilience wiring order in `server.ts`** — DB-only operations (`runResilienceMigration`, `applyScheduledCatchup`) run immediately at init; channel-facing operations (`notifyRestart`, `recoverCrashedTurns`, unanswered-message scan) run after channel adapters are registered so notifications are never silently dropped.
 
 ### Changed
 

@@ -2,21 +2,17 @@
  * System Heartbeat
  *
  * Runs at the server level (not per-session). Fires at a configurable interval,
- * renders a live prompt with the current task snapshot, and dispatches it
- * through the orchestrator. IDLE responses are silently suppressed.
+ * renders a live prompt with the current task snapshot, and publishes it to the
+ * MessageBus as channelType 'heartbeat'. The orchestrator handles serialisation,
+ * inactivity-timer reset, and IDLE suppression — just like any other channel.
  */
 
 import type Database from 'better-sqlite3';
 import type { HeartbeatConfig } from '../config.js';
+import type { MessageBus } from '../channels/interface.js';
+import { createIncomingMessage } from '../channels/interface.js';
 import { parseHumanInterval } from './parse.js';
 import { getTasksDue, formatTasksDue } from '../scheduler.js';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface HeartbeatOrchestrator {
-  handleHeartbeatTick(params: { contextId: string; prompt: string }): Promise<string>;
-  sendToDefaultChannel(contextId: string, text: string): void;
-}
 
 // ─── renderHeartbeatPrompt ────────────────────────────────────────────────────
 
@@ -66,22 +62,23 @@ let _heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 export function startHeartbeat(
   config: HeartbeatConfig,
   db: Database.Database,
-  orchestrator: HeartbeatOrchestrator
+  bus: MessageBus
 ): void {
   if (!config.enabled) return;
 
   const intervalMs = parseHumanInterval(config.interval) ?? 300_000; // default 5 min
 
-  const tick = async () => {
+  const tick = () => {
     try {
       const prompt = renderHeartbeatPrompt(db);
-      const result = await orchestrator.handleHeartbeatTick({
-        contextId: config.contextId,
-        prompt,
-      });
-      if (result.trim().toUpperCase() !== 'IDLE') {
-        orchestrator.sendToDefaultChannel(config.contextId, result);
-      }
+      bus.publish(
+        createIncomingMessage({
+          channelType: 'heartbeat',
+          peerId: config.contextId,
+          content: prompt,
+          raw: null,
+        })
+      );
     } catch (err) {
       console.warn(`[Heartbeat] tick failed: ${err}`);
     }

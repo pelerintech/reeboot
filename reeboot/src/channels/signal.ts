@@ -93,12 +93,15 @@ export class SignalAdapter implements ChannelAdapter {
     return `ws://127.0.0.1:${this._apiPort}`;
   }
 
+  /** Short-lived dedup keys for echo suppression. Key = `peerId::text[:64]`, TTL 10s. */
+  private _sentKeys = new Set<string>();
+
   async init(config: ChannelConfig, bus: MessageBus): Promise<void> {
     const signalConfig = config as any;
     if (signalConfig.phoneNumber) this._setPhoneNumber(signalConfig.phoneNumber);
     if (signalConfig.apiPort) this._setApiPort(signalConfig.apiPort);
     this._bus = bus;
-    this._status = 'disconnected';
+    this._status = 'initializing';
   }
 
   private _setPhoneNumber(n: string) { (this as any)._phoneNumber = n; }
@@ -211,25 +214,46 @@ export class SignalAdapter implements ChannelAdapter {
     let text = '';
     let peerId = source;
 
+    let fromSelf = false;
     if (envelope.dataMessage) {
       // Regular incoming message from another user — ignore if it's from ourselves
       if (source === this._phoneNumber) return;
       text = envelope.dataMessage.message ?? '';
+      fromSelf = false;
     } else if (envelope.syncMessage?.sentMessage) {
-      // Note-to-self: message synced from our own device
+      // Note-to-self only: drop synced messages sent to third parties.
+      // A syncMessage fires for every message you send from your phone —
+      // we only want the ones addressed back to our own number.
       const sent = envelope.syncMessage.sentMessage;
+      const dest = sent.destinationNumber ?? sent.destination ?? '';
+      if (dest && dest !== this._phoneNumber) return;
       text = sent.message ?? '';
-      peerId = sent.destinationNumber ?? sent.destination ?? source;
+      peerId = dest || source;
+      fromSelf = true;
+
+      // Echo dedup: suppress syncMessages that echo back a message we just sent.
+      if (text) {
+        const key = this._makeSentKey(peerId, text);
+        if (this._sentKeys.has(key)) {
+          this._sentKeys.delete(key);
+          return;
+        }
+      }
     }
 
-    if (!text) return;
+    if (!text) {
+      console.log(`[Signal] Skipping empty envelope source=${source}`);
+      return;
+    }
 
+    console.log(`[Signal] Received message peerId=${peerId} fromSelf=${fromSelf} len=${text.length}`);
     this._bus?.publish(
       createIncomingMessage({
         channelType: 'signal',
         peerId,
         content: text,
         raw: msg,
+        fromSelf,
       })
     );
   }
@@ -261,6 +285,8 @@ export class SignalAdapter implements ChannelAdapter {
   // ── Send ───────────────────────────────────────────────────────────────────
 
   async send(peerId: string, content: MessageContent): Promise<void> {
+    if (this._status !== 'connected') return; // not ready — silently drop
+
     const text = content.text ?? '';
 
     if (text.length <= CHUNK_SIZE) {
@@ -279,7 +305,15 @@ export class SignalAdapter implements ChannelAdapter {
     }
   }
 
+  private _makeSentKey(peerId: string, text: string): string {
+    return `${peerId}::${text.slice(0, 64)}`;
+  }
+
   private async _sendChunk(peerId: string, text: string): Promise<void> {
+    const key = this._makeSentKey(peerId, text);
+    this._sentKeys.add(key);
+    setTimeout(() => this._sentKeys.delete(key), 10_000);
+
     const res = await fetch(`${this._baseUrl}/v2/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -302,6 +336,11 @@ export class SignalAdapter implements ChannelAdapter {
 
   connectedAt(): string | null {
     return this._connectedAt;
+  }
+
+  /** Returns the configured phone number, or null if not set. */
+  selfAddress(): string | null {
+    return this._phoneNumber || null;
   }
 }
 

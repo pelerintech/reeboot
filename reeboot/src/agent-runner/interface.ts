@@ -26,16 +26,30 @@ export interface AgentRunner {
   abort(): void;
 
   /**
-   * Dispose the runner and release underlying resources.
-   * Idempotent — safe to call multiple times.
+   * Dispose the runner permanently (e.g. server shutdown). After dispose(),
+   * the runner must not be used again. Idempotent.
    */
   dispose(): Promise<void>;
+
+  /**
+   * Reset the runner for a new session without permanently disabling it.
+   * Clears the active pi session and any in-flight abort controller so the
+   * next prompt() call starts a fresh session. Used by the inactivity timer
+   * and /new command instead of dispose().
+   */
+  reset(): Promise<void>;
 
   /**
    * Hot-reload extensions/skills without restarting the process.
    * Calls loader.reload() on the underlying DefaultResourceLoader.
    */
   reload(): Promise<void>;
+
+  /**
+   * Returns the current pi session file path (if file-based sessions are in use).
+   * Returns undefined for in-memory sessions or before the first prompt.
+   */
+  getSessionPath?(): string | undefined;
 }
 
 // ─── AgentRunnerFactory ──────────────────────────────────────────────────────
@@ -45,6 +59,18 @@ export interface ContextConfig {
   id: string;
   /** Workspace directory for this context (cwd for pi session) */
   workspacePath: string;
+  /**
+   * Optional: directory where pi session files are persisted for this context.
+   * When provided, sessions are saved to disk instead of in-memory, enabling
+   * session continuity across restarts.
+   */
+  sessionsDir?: string;
+  /**
+   * Optional: path to a specific session file to resume.
+   * When provided, the agent loads this session rather than starting fresh.
+   * Derived from getResumedSessionPath() on startup.
+   */
+  sessionPath?: string;
 }
 
 export interface AgentRunnerFactory {

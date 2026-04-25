@@ -12,7 +12,7 @@
  * - session_shutdown: cleans up all in-session timers and heartbeat
  */
 
-import { Type } from '@sinclair/typebox';
+import { Type } from 'typebox';
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 
 // ─── isSleepOnlyOrLast ────────────────────────────────────────────────────────

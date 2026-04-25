@@ -13,6 +13,7 @@ import {
   createContext,
   getContextById,
   getActiveSessionPath,
+  getResumedSessionPath,
   listSessions,
   initContextWorkspace,
   initContexts,
@@ -23,6 +24,7 @@ import { migratePackages } from './packages.js';
 import { homedir } from 'os';
 import type { ChannelAdapter } from './channels/interface.js';
 import type { Orchestrator } from './orchestrator.js';
+import { broadcastToAllChannels } from './utils/broadcast.js';
 import type { Scheduler } from './scheduler.js';
 import type { FastifyInstance as CredProxyInstance } from 'fastify';
 
@@ -148,6 +150,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
   const agentDir = join(reebotDir, 'agent');
   await migratePackages(configPath, agentDir);
 
+  // ── Resilience startup — DB-only phase (no adapters needed) ───────────────
+  {
+    const { runResilienceMigration } = await import('./db/schema.js');
+    const { applyScheduledCatchup } = await import('./resilience/startup.js');
+    runResilienceMigration(db);
+    const resConfig = opts.config ?? {};
+    applyScheduledCatchup(db, resConfig as any);
+  }
+
   // ── Channel & Orchestrator init ───────────────────────────────────────────
 
   const appConfig = opts.config;
@@ -170,14 +181,32 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         bus
       );
 
+      // Needed for unanswered-message scan inside the contexts loop below
+      const { scanSessionForUnansweredMessage } = await import('./resilience/startup.js');
+
       // Build runner map for orchestrator (main context)
       const orchestratorRunners = new Map<string, AgentRunner>();
       const contexts = listContexts(db);
+      const inactivityMs = (appConfig as any).session?.inactivityTimeout ?? 14_400_000;
       for (const ctx of contexts) {
+        const sessionsDir = join(reebotDir, 'sessions', ctx.id);
+        const sessionPath = getResumedSessionPath(ctx.id, inactivityMs, reebotDir) ?? undefined;
+        if (sessionPath) {
+          const unanswered = scanSessionForUnansweredMessage(sessionPath);
+          if (unanswered) {
+            const snippet = unanswered.length > 120
+              ? unanswered.substring(0, 120) + '…'
+              : unanswered;
+            broadcastToAllChannels(
+              _channelAdapters,
+              `⚠️ It looks like I may not have responded to your last message: “${snippet}”. Please re-send if needed.`
+            );
+          }
+        }
         orchestratorRunners.set(
           ctx.id,
           createRunner(
-            { id: ctx.id, workspacePath: join(reebotDir, 'contexts', ctx.id, 'workspace') },
+            { id: ctx.id, workspacePath: join(reebotDir, 'contexts', ctx.id, 'workspace'), sessionsDir, sessionPath },
             appConfig
           )
         );
@@ -187,9 +216,37 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         appConfig as any,
         bus,
         _channelAdapters,
-        orchestratorRunners
+        orchestratorRunners,
+        db
       );
       _orchestrator.start();
+
+      // ── Resilience startup — deferred phase (requires channels + bus) ───────
+      // notifyRestart and recoverCrashedTurns must run AFTER initChannels so
+      // _channelAdapters is the populated Map, not the empty initial one.
+      try {
+        const { notifyRestart, recoverCrashedTurns } = await import('./resilience/startup.js');
+        const { createIncomingMessage } = await import('./channels/interface.js');
+        notifyRestart(db, _channelAdapters);
+        await recoverCrashedTurns(
+          db,
+          appConfig as any,
+          _channelAdapters,
+          (contextId: string, prompt: string) => {
+            // Re-queue the crashed prompt into the running orchestrator via the bus.
+            bus.publish(
+              createIncomingMessage({
+                channelType: 'recovery',
+                peerId: contextId,
+                content: prompt,
+                raw: null,
+              })
+            );
+          }
+        );
+      } catch (err) {
+        console.error('[server] Deferred resilience startup failed:', err);
+      }
 
       // ── Credential proxy init ──────────────────────────────────────────
       if ((appConfig as any).credentialProxy?.enabled) {
@@ -211,15 +268,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         const { setGlobalScheduler } = await import('./scheduler-registry.js');
 
         const schedulerOrchestrator = {
-          handleScheduledTask: async (task: { taskId: string; contextId: string; prompt: string }) => {
+          handleScheduledTask: async (task: { taskId: string; contextId: string; prompt: string; origin_channel?: string | null; origin_peer?: string | null }) => {
             // Inject scheduled task as a message via the bus
-            const { MessageBus: MB, createIncomingMessage } = await import('./channels/interface.js');
+            const { createIncomingMessage } = await import('./channels/interface.js');
+            const { buildScheduledPrompt } = await import('./scheduler.js');
+            const enrichedPrompt = buildScheduledPrompt(task as any);
             bus.publish(
               createIncomingMessage({
                 channelType: 'scheduler',
                 peerId: 'scheduler',
-                content: task.prompt,
-                raw: { taskId: task.taskId },
+                content: enrichedPrompt,
+                raw: {
+                  taskId: task.taskId,
+                  origin_channel: task.origin_channel ?? null,
+                  origin_peer: task.origin_peer ?? null,
+                },
               })
             );
           },
@@ -232,8 +295,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         console.log('[server] Scheduler started');
 
         // ── Heartbeat init (after scheduler) ───────────────────────────
-        if (appConfig.heartbeat && _orchestrator) {
-          startHeartbeat(appConfig.heartbeat, db, _orchestrator);
+        if (appConfig.heartbeat) {
+          startHeartbeat(appConfig.heartbeat, db, bus);
           if (appConfig.heartbeat.enabled) {
             console.log('[server] System heartbeat started');
           }

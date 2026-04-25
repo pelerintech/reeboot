@@ -77,6 +77,12 @@ const WebChannelSchema = z.object({
 
 const WhatsAppChannelSchema = z.object({
   enabled: z.boolean().default(false),
+  /** The owner's phone number or JID on this channel.
+   *  Empty = Mode 1 (self-chat: agent runs on your own account).
+   *  Non-empty = Mode 2 (dedicated account: agent runs on a separate account). */
+  owner_id: z.string().default(''),
+  /** When true, only messages from the owner are processed. Defaults to true — opt-out explicitly if you want the agent to respond to others. */
+  owner_only: z.boolean().default(true),
   ...ChannelTrustFields,
 });
 
@@ -85,6 +91,12 @@ const SignalChannelSchema = z.object({
   phoneNumber: z.string().default(''),
   apiPort: z.number().int().default(8080),
   pollInterval: z.number().int().default(1000),
+  /** The owner's phone number (e.g. '+40700000001').
+   *  Empty = Mode 1 (self-chat / note-to-self).
+   *  Non-empty = Mode 2 (dedicated account). */
+  owner_id: z.string().default(''),
+  /** When true, only messages from the owner are processed. Defaults to true — opt-out explicitly if you want the agent to respond to others. */
+  owner_only: z.boolean().default(true),
   ...ChannelTrustFields,
 });
 
@@ -198,6 +210,24 @@ const KnowledgeConfigSchema = z.object({
   wiki: KnowledgeWikiSchema.default({}),
 });
 
+const ResilienceRecoverySchema = z.object({
+  mode: z.enum(['safe_only', 'always', 'never']).default('safe_only'),
+  side_effect_tools: z.array(z.string()).default([]),
+});
+
+const ResilienceSchedulerSchema = z.object({
+  catchup_window: z.string().default('1h'),
+});
+
+const ResilienceSchema = z.object({
+  recovery: ResilienceRecoverySchema.default({}),
+  scheduler: ResilienceSchedulerSchema.default({}),
+  outage_threshold: z.number().int().min(1).default(3),
+  probe_interval: z.string().default('1h'),
+});
+
+export type ResilienceConfig = z.infer<typeof ResilienceSchema>;
+
 export const ConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   channels: ChannelsConfigSchema.default({}),
@@ -217,6 +247,7 @@ export const ConfigSchema = z.object({
   contexts: z.array(ContextConfigEntrySchema).default([]),
   memory: MemoryConfigSchema.default({}),
   knowledge: KnowledgeConfigSchema.default({}),
+  resilience: ResilienceSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -274,6 +305,10 @@ export function loadConfig(configPath?: string): Config {
 
   if (process.env.REEBOOT_API_TOKEN) {
     result.server.token = process.env.REEBOOT_API_TOKEN;
+  }
+
+  if (process.env.REEBOOT_AUTH_MODE === 'pi' || process.env.REEBOOT_AUTH_MODE === 'own') {
+    result.agent.model.authMode = process.env.REEBOOT_AUTH_MODE;
   }
 
   return result;

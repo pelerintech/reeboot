@@ -18,6 +18,7 @@ const mockSocket = {
   sendMessage: vi.fn().mockResolvedValue({}),
   logout: vi.fn().mockResolvedValue({}),
   end: vi.fn(),
+  user: { id: '40740025025:0@s.whatsapp.net', lid: '43624150659184:0@lid' },
 } as any;
 
 const mockMakeWASocket = vi.fn().mockReturnValue(mockSocket);
@@ -117,7 +118,76 @@ describe('WhatsAppAdapter', () => {
     expect(received).toHaveLength(0);
   });
 
-  it('non-notify type messages are ignored', async () => {
+  it('self-chat via own @lid (multi-device) is accepted', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+
+    const received: any[] = [];
+    bus.onMessage((msg) => received.push(msg));
+
+    // fromMe=true but peerId matches sock.user.lid → self-chat
+    mockEv.emit('messages.upsert', {
+      type: 'notify',
+      messages: [
+        {
+          key: { remoteJid: '43624150659184@lid', fromMe: true, id: 'self1' },
+          message: { conversation: 'Hello bot' },
+        },
+      ],
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].content).toBe('Hello bot');
+  });
+
+  it('echo of sent message is skipped (sent ID tracked)', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    // Simulate connection open so status becomes 'connected' (required by send() status guard)
+    mockEv.emit('connection.update', { connection: 'open' });
+
+    mockSocket.sendMessage = vi.fn().mockResolvedValue({ key: { id: 'sent-abc' } });
+    await adapter.send('43624150659184@lid', { type: 'text', text: 'Reply' });
+
+    const received: any[] = [];
+    bus.onMessage((msg) => received.push(msg));
+
+    // Echo of our own sent message arrives
+    mockEv.emit('messages.upsert', {
+      type: 'notify',
+      messages: [
+        {
+          key: { remoteJid: '43624150659184@lid', fromMe: true, id: 'sent-abc' },
+          message: { conversation: 'Reply' },
+        },
+      ],
+    });
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('@lid fromMe=true with unknown lid is ignored (prevents echo loop)', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+
+    const received: any[] = [];
+    bus.onMessage((msg) => received.push(msg));
+
+    // peerId does NOT match user's own lid
+    mockEv.emit('messages.upsert', {
+      type: 'notify',
+      messages: [
+        {
+          key: { remoteJid: '99999999999@lid', fromMe: true, id: 'echo1' },
+          message: { conversation: 'Echoed outgoing message' },
+        },
+      ],
+    });
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('append type messages are processed (retry/replay support)', async () => {
     await adapter.init({ enabled: true }, bus);
     await adapter.start();
 
@@ -129,7 +199,28 @@ describe('WhatsAppAdapter', () => {
       messages: [
         {
           key: { remoteJid: '1234@s.whatsapp.net', fromMe: false, id: 'msg3' },
-          message: { conversation: 'Status update' },
+          message: { conversation: 'Retry replayed message' },
+        },
+      ],
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].content).toBe('Retry replayed message');
+  });
+
+  it('unknown upsert types are ignored', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+
+    const received: any[] = [];
+    bus.onMessage((msg) => received.push(msg));
+
+    mockEv.emit('messages.upsert', {
+      type: 'history_sync',
+      messages: [
+        {
+          key: { remoteJid: '1234@s.whatsapp.net', fromMe: false, id: 'msg4' },
+          message: { conversation: 'Old history' },
         },
       ],
     });
@@ -140,6 +231,7 @@ describe('WhatsAppAdapter', () => {
   it('short message sent as single sendMessage call', async () => {
     await adapter.init({ enabled: true }, bus);
     await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
 
     await adapter.send('1234@s.whatsapp.net', { type: 'text', text: 'Hello' });
 
@@ -153,6 +245,7 @@ describe('WhatsAppAdapter', () => {
   it('long message (>4096 chars) is chunked into multiple sendMessage calls', async () => {
     await adapter.init({ enabled: true }, bus);
     await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
 
     const longText = 'A'.repeat(4097);
     await adapter.send('1234@s.whatsapp.net', { type: 'text', text: longText });
