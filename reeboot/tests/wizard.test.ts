@@ -20,6 +20,7 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true })
   vi.restoreAllMocks()
+  delete process.env.REEBOOT_AUTH_MODE
 })
 
 // ─── Helper: build minimal prompter answers for full wizard ──────────────────

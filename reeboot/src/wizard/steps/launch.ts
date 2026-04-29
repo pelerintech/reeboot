@@ -1,6 +1,7 @@
 import type { Prompter } from '../prompter.js'
 import type { Config } from '../../config.js'
 import { defaultConfig } from '../../config.js'
+import { fb } from '../../utils/fallback.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,11 +45,22 @@ export async function runLaunchStep(opts: {
   console.log(`  Web search:   ${draft.searchProvider}`)
   console.log('  ─────────────────────────────────────────────────────────────\n')
 
-  // ── Build config ─────────────────────────────────────────────────────────
+  // ── Build config (defensively merge existing with defaults) ───────────────
+  const { loadConfig } = await import('../../config.js');
+  let rawExisting: unknown = null;
+  try {
+    rawExisting = await loadConfig(finalConfigPath);
+  } catch {
+    // No existing config — use defaults
+  }
+
+  // Type-guard: ensure rawExisting is a Config or null
+  const existing = (rawExisting && typeof rawExisting === 'object') ? (rawExisting as Config) : null;
+
   const config: Config = {
-    ...defaultConfig,
+    ...fb(existing, defaultConfig),
     agent: {
-      ...defaultConfig.agent,
+      ...fb(existing?.agent, defaultConfig.agent),
       name: draft.agentName,
       model: {
         authMode: draft.authMode ?? 'own',
@@ -58,29 +70,44 @@ export async function runLaunchStep(opts: {
       },
     },
     channels: {
-      web: { ...defaultConfig.channels.web, enabled: true, port: defaultConfig.channels.web.port },
-      whatsapp: { ...defaultConfig.channels.whatsapp, enabled: draft.whatsapp },
+      web: {
+        ...fb(existing?.channels?.web, defaultConfig.channels.web),
+        enabled: true,
+        port: fb(existing?.channels?.web, defaultConfig.channels.web).port,
+      },
+      whatsapp: {
+        ...fb(existing?.channels?.whatsapp, defaultConfig.channels.whatsapp),
+        enabled: draft.whatsapp,
+      },
       signal: {
-        ...defaultConfig.channels.signal,
+        ...fb(existing?.channels?.signal, defaultConfig.channels.signal),
         enabled: draft.signal,
-        phoneNumber: draft.signalPhone ?? '',
-        apiPort: defaultConfig.channels.signal.apiPort,
-        pollInterval: defaultConfig.channels.signal.pollInterval,
+        phoneNumber: draft.signalPhone ?? fb(existing?.channels?.signal, defaultConfig.channels.signal).phoneNumber,
+        apiPort: fb(existing?.channels?.signal, defaultConfig.channels.signal).apiPort,
+        pollInterval: fb(existing?.channels?.signal, defaultConfig.channels.signal).pollInterval,
       },
     },
     search: {
       provider: draft.searchProvider as any,
-      apiKey: draft.searchApiKey ?? '',
-      searxngBaseUrl: draft.searxngBaseUrl ?? 'http://localhost:8888',
+      apiKey: draft.searchApiKey ?? fb(existing?.search, defaultConfig.search).apiKey,
+      searxngBaseUrl: draft.searxngBaseUrl ?? fb(existing?.search, defaultConfig.search).searxngBaseUrl,
     },
-    heartbeat: defaultConfig.heartbeat,
-    sandbox: defaultConfig.sandbox,
-    logging: defaultConfig.logging,
-    server: defaultConfig.server,
-    extensions: defaultConfig.extensions,
-    routing: defaultConfig.routing,
-    session: defaultConfig.session,
-    credentialProxy: defaultConfig.credentialProxy,
+    heartbeat: fb(existing?.heartbeat, defaultConfig.heartbeat),
+    sandbox: fb(existing?.sandbox, defaultConfig.sandbox),
+    logging: fb(existing?.logging, defaultConfig.logging),
+    server: fb(existing?.server, defaultConfig.server),
+    extensions: fb(existing?.extensions, defaultConfig.extensions),
+    routing: fb(existing?.routing, defaultConfig.routing),
+    session: fb(existing?.session, defaultConfig.session),
+    credentialProxy: fb(existing?.credentialProxy, defaultConfig.credentialProxy),
+    skills: fb(existing?.skills, defaultConfig.skills),
+    mcp: fb(existing?.mcp, defaultConfig.mcp),
+    permissions: fb(existing?.permissions, defaultConfig.permissions),
+    security: fb(existing?.security, defaultConfig.security),
+    contexts: existing?.contexts ?? defaultConfig.contexts,
+    memory: fb(existing?.memory, defaultConfig.memory),
+    knowledge: fb(existing?.knowledge, defaultConfig.knowledge),
+    resilience: fb(existing?.resilience, defaultConfig.resilience),
   }
 
   // ── Ask to start now ──────────────────────────────────────────────────────
