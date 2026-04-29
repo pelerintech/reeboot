@@ -1,7 +1,16 @@
-import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
+/**
+ * Main server (Hono)
+ *
+ * HTTP server + WebSocket endpoint for the reeboot agent.
+ * Replaces the previous Fastify-based implementation.
+ */
+
+import { Hono } from 'hono';
+import { createAdaptorServer } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { createNodeWebSocket } from '@hono/node-ws';
+import type { ServerType } from '@hono/node-server';
 import { startHeartbeat } from './scheduler/heartbeat.js';
-import fastifyWebsocket from '@fastify/websocket';
-import fastifyStatic from '@fastify/static';
 import { readFileSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -26,7 +35,6 @@ import type { ChannelAdapter } from './channels/interface.js';
 import type { Orchestrator } from './orchestrator.js';
 import { broadcastToAllChannels } from './utils/broadcast.js';
 import type { Scheduler } from './scheduler.js';
-import type { FastifyInstance as CredProxyInstance } from 'fastify';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -60,7 +68,7 @@ export interface ServerOptions {
 
 // ─── Singleton ───────────────────────────────────────────────────────────────
 
-let _server: FastifyInstance | null = null;
+let _server: ServerType | null = null;
 
 // Active runners: contextId → AgentRunner
 const _activeRunners = new Map<string, AgentRunner>();
@@ -75,7 +83,7 @@ let _orchestrator: Orchestrator | null = null;
 let _scheduler: Scheduler | null = null;
 
 // Credential proxy (set during startServer)
-let _credProxy: CredProxyInstance | null = null;
+let _credProxy: ServerType | null = null;
 
 // ─── Auth helper ─────────────────────────────────────────────────────────────
 
@@ -83,43 +91,26 @@ function isLoopback(ip: string): boolean {
   return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
 }
 
-function extractToken(req: FastifyRequest): string | undefined {
-  const authHeader = req.headers['authorization'];
+function extractToken(c: any): string | undefined {
+  const authHeader = c.req.header('authorization');
   if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7);
-  const url = new URL(req.url, 'http://localhost');
-  return url.searchParams.get('token') ?? undefined;
+  return c.req.query('token') ?? undefined;
 }
 
 // ─── startServer ─────────────────────────────────────────────────────────────
 
-export async function startServer(opts: ServerOptions = {}): Promise<FastifyInstance> {
+export async function startServer(opts: ServerOptions = {}): Promise<{ port: number; host: string }> {
   const port = opts.port ?? 3000;
   const host = opts.host ?? '127.0.0.1';
-  const logLevel = opts.logLevel ?? 'info';
   const reebotDir = opts.reebotDir ?? join(homedir(), '.reeboot');
   const serverToken = opts.token;
 
-  const isDev = process.env.NODE_ENV !== 'production';
-  const logger = logLevel === 'silent'
-    ? false
-    : {
-        level: logLevel,
-        ...(isDev ? { transport: { target: 'pino-pretty', options: { colorize: true } } } : {}),
-      };
+  const app = new Hono();
 
-  const server = Fastify({ logger });
-
-  // Register WebSocket plugin
-  await server.register(fastifyWebsocket);
-
-  // Register static file serving for webchat
+  // ── Static file serving for webchat ──────────────────────────────────────
   const webchatDir = resolve(__dirname, '../webchat');
   try {
-    await server.register(fastifyStatic, {
-      root: webchatDir,
-      prefix: '/',
-      decorateReply: false,
-    });
+    app.use('*', serveStatic({ root: webchatDir, index: 'index.html' }));
   } catch {
     // webchat dir may not exist in test environments — that's OK
   }
@@ -129,28 +120,26 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
   if (opts.db) {
     db = opts.db;
     createContextsTable(db);
-    // Ensure main context exists
     if (!getContextById(db, 'main')) {
       createContext(db, { id: 'main', name: 'main', modelProvider: '', modelId: '' });
     }
   } else {
     const { openDatabase } = await import('./db/index.js');
     db = openDatabase();
-    // Ensure main context exists
     if (!getContextById(db, 'main')) {
       createContext(db, { id: 'main', name: 'main', modelProvider: '', modelId: '' });
     }
   }
 
-  // Ensure context workspace and agent dir (AGENTS.md persona) exist
+  // Ensure context workspace and agent dir exist
   await initContexts(db, reebotDir);
 
-  // Migrate legacy config.json packages to ~/.reeboot/agent/settings.json
+  // Migrate legacy config.json packages
   const configPath = join(reebotDir, 'config.json');
   const agentDir = join(reebotDir, 'agent');
   await migratePackages(configPath, agentDir);
 
-  // ── Resilience startup — DB-only phase (no adapters needed) ───────────────
+  // ── Resilience startup — DB-only phase ───────────────────────────────────
   {
     const { runResilienceMigration } = await import('./db/schema.js');
     const { applyScheduledCatchup } = await import('./resilience/startup.js');
@@ -159,12 +148,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
     applyScheduledCatchup(db, resConfig as any);
   }
 
-  // ── Channel & Orchestrator init ───────────────────────────────────────────
+  // ── Channel & Orchestrator init ─────────────────────────────────────────
 
   const appConfig = opts.config;
   if (appConfig) {
     try {
-      // Import built-in adapters so they self-register
       await import('./channels/web.js');
       await import('./channels/whatsapp.js');
       await import('./channels/signal.js');
@@ -175,16 +163,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
 
       const bus = new MessageBus();
 
-      // Init channels from config
-      _channelAdapters = await globalRegistry.initChannels(
-        appConfig as any,
-        bus
-      );
+      _channelAdapters = await globalRegistry.initChannels(appConfig as any, bus);
 
-      // Needed for unanswered-message scan inside the contexts loop below
       const { scanSessionForUnansweredMessage } = await import('./resilience/startup.js');
 
-      // Build runner map for orchestrator (main context)
       const orchestratorRunners = new Map<string, AgentRunner>();
       const contexts = listContexts(db);
       const inactivityMs = (appConfig as any).session?.inactivityTimeout ?? 14_400_000;
@@ -199,7 +181,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
               : unanswered;
             broadcastToAllChannels(
               _channelAdapters,
-              `⚠️ It looks like I may not have responded to your last message: “${snippet}”. Please re-send if needed.`
+              `⚠️ It looks like I may not have responded to your last message: "${snippet}". Please re-send if needed.`
             );
           }
         }
@@ -221,9 +203,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
       );
       _orchestrator.start();
 
-      // ── Resilience startup — deferred phase (requires channels + bus) ───────
-      // notifyRestart and recoverCrashedTurns must run AFTER initChannels so
-      // _channelAdapters is the populated Map, not the empty initial one.
+      // ── Deferred resilience phase ───────────────────────────────────────
       try {
         const { notifyRestart, recoverCrashedTurns } = await import('./resilience/startup.js');
         const { createIncomingMessage } = await import('./channels/interface.js');
@@ -233,7 +213,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
           appConfig as any,
           _channelAdapters,
           (contextId: string, prompt: string) => {
-            // Re-queue the crashed prompt into the running orchestrator via the bus.
             bus.publish(
               createIncomingMessage({
                 channelType: 'recovery',
@@ -262,17 +241,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         }
       }
 
-      // ── Scheduler init (after orchestrator) ────────────────────────────
+      // ── Scheduler init ─────────────────────────────────────────────────
       try {
         const { Scheduler } = await import('./scheduler.js');
         const { setGlobalScheduler } = await import('./scheduler-registry.js');
 
         const schedulerOrchestrator = {
-          handleScheduledTask: async (task: { taskId: string; contextId: string; prompt: string; origin_channel?: string | null; origin_peer?: string | null }) => {
-            // Inject scheduled task as a message via the bus
+          handleScheduledTask: async (task: any) => {
             const { createIncomingMessage } = await import('./channels/interface.js');
             const { buildScheduledPrompt } = await import('./scheduler.js');
-            const enrichedPrompt = buildScheduledPrompt(task as any);
+            const enrichedPrompt = buildScheduledPrompt(task);
             bus.publish(
               createIncomingMessage({
                 channelType: 'scheduler',
@@ -294,7 +272,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         _scheduler = schedulerInstance;
         console.log('[server] Scheduler started');
 
-        // ── Heartbeat init (after scheduler) ───────────────────────────
+        // ── Heartbeat init ───────────────────────────────────────────
         if (appConfig.heartbeat) {
           startHeartbeat(appConfig.heartbeat, db, bus);
           if (appConfig.heartbeat.enabled) {
@@ -309,77 +287,72 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
     }
   }
 
-  // ── Routes ────────────────────────────────────────────────────────────────
+  // ── Routes ──────────────────────────────────────────────────────────────
 
-  // GET / — serve WebChat
-  server.get('/', async (req, reply) => {
+  // GET / — serve WebChat (fallback if serveStatic missed it)
+  app.get('/', async (c) => {
     const webchatPath = resolve(__dirname, '../webchat/index.html');
     try {
       const html = readFileSync(webchatPath, 'utf-8');
-      reply.type('text/html').send(html);
+      return c.text(html, 200, { 'Content-Type': 'text/html' });
     } catch {
-      reply.status(404).send({ error: 'WebChat not found' });
+      return c.json({ error: 'WebChat not found' }, 404);
     }
   });
 
   // GET /api/health
-  server.get('/api/health', async (_req, _reply) => {
-    return {
+  app.get('/api/health', (c) => {
+    return c.json({
       status: 'ok',
       uptime: Math.floor((Date.now() - startTime) / 1000),
       version: getVersion(),
-    };
+    });
   });
 
   // GET /api/status
-  server.get('/api/status', async (_req, _reply) => {
-    return {
+  app.get('/api/status', (c) => {
+    return c.json({
       agent: { name: 'Reeboot', model: { provider: '', id: '' } },
       channels: [],
       uptime: Math.floor((Date.now() - startTime) / 1000),
-    };
+    });
   });
 
-  // ── Channel REST API ──────────────────────────────────────────────────────
+  // ── Channel REST API ────────────────────────────────────────────────────
 
-  // GET /api/channels
-  server.get('/api/channels', async (_req, _reply) => {
+  app.get('/api/channels', (c) => {
     const result: Array<{ type: string; status: string; connectedAt: string | null }> = [];
     for (const [type, adapter] of _channelAdapters) {
       result.push({ type, status: adapter.status(), connectedAt: adapter.connectedAt() });
     }
-    return result;
+    return c.json(result);
   });
 
-  // POST /api/channels/:type/login
-  server.post<{ Params: { type: string } }>('/api/channels/:type/login', async (req, reply) => {
-    const { type } = req.params;
+  app.post('/api/channels/:type/login', async (c) => {
+    const type = c.req.param('type');
     const adapter = _channelAdapters.get(type);
     if (!adapter) {
-      return reply.status(404).send({ error: `Unknown channel type: ${type}` });
+      return c.json({ error: `Unknown channel type: ${type}` }, 404);
     }
-    // Start login flow asynchronously (QR appears in terminal)
-    adapter.start().catch((err) => console.error(`[channels] login error for ${type}:`, err));
-    return reply.status(202).send({ message: 'Login initiated. Check terminal for QR code.' });
+    adapter.start().catch((err: any) => console.error(`[channels] login error for ${type}:`, err));
+    return c.json({ message: 'Login initiated. Check terminal for QR code.' }, 202);
   });
 
-  // POST /api/channels/:type/logout
-  server.post<{ Params: { type: string } }>('/api/channels/:type/logout', async (req, reply) => {
-    const { type } = req.params;
+  app.post('/api/channels/:type/logout', async (c) => {
+    const type = c.req.param('type');
     const adapter = _channelAdapters.get(type);
     if (!adapter) {
-      return reply.status(404).send({ error: `Unknown channel type: ${type}` });
+      return c.json({ error: `Unknown channel type: ${type}` }, 404);
     }
     await adapter.stop();
-    return reply.status(200).send({ message: `${type} logged out.` });
+    return c.json({ message: `${type} logged out.` }, 200);
   });
 
-  // ── Reload & Restart ──────────────────────────────────────────────────────
+  // ── Reload & Restart ────────────────────────────────────────────────────
 
-  // POST /api/reload — hot-reload extensions/skills on all runners
-  server.post('/api/reload', async (_req, reply) => {
+  app.post('/api/reload', async (c) => {
     if (!_orchestrator) {
-      return reply.status(503).send({ error: 'Orchestrator not running' });
+      return c.json({ error: 'Orchestrator not running' }, 503);
     }
     const errors: string[] = [];
     for (const [id, runner] of _orchestrator.runners) {
@@ -390,72 +363,70 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
       }
     }
     if (errors.length > 0) {
-      return reply.status(500).send({ error: errors.join('; ') });
+      return c.json({ error: errors.join('; ') }, 500);
     }
-    return { message: 'Extensions and skills reloaded.' };
+    return c.json({ message: 'Extensions and skills reloaded.' }, 200);
   });
 
-  // POST /api/restart — graceful shutdown, process supervisor restarts
-  server.post('/api/restart', async (_req, reply) => {
-    reply.status(200).send({ message: 'Restarting...' });
+  app.post('/api/restart', async (c) => {
+    // Note: we can't block on async cleanup in a Hono handler easily,
+    // but the original used reply.send() then process.exit(0).
+    // We'll return the response and schedule the shutdown.
+    const response = c.json({ message: 'Restarting...' }, 200);
 
-    // Drain in-flight turns (timeout 30s)
-    const DRAIN_TIMEOUT_MS = 30_000;
-    const drainStart = Date.now();
+    // Schedule shutdown after response is sent
+    setTimeout(async () => {
+      const DRAIN_TIMEOUT_MS = 30_000;
+      const drainStart = Date.now();
 
-    // Stop orchestrator so no new messages are dispatched
-    if (_orchestrator) {
-      _orchestrator.stop();
-    }
-
-    // Wait for active runners (ws handler uses _activeRunners)
-    while (_activeRunners.size > 0 && Date.now() - drainStart < DRAIN_TIMEOUT_MS) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-
-    // Stop channels and dispose orchestrator runners
-    for (const adapter of _channelAdapters.values()) {
-      try { await adapter.stop(); } catch { /* ignore */ }
-    }
-
-    if (_orchestrator) {
-      for (const runner of _orchestrator.runners.values()) {
-        try { await runner.dispose(); } catch { /* ignore */ }
+      if (_orchestrator) {
+        _orchestrator.stop();
       }
-      _orchestrator = null;
-    }
 
-    // Close server and exit — supervisor restarts
-    try { await _server?.close(); } catch { /* ignore */ }
-    process.exit(0);
+      while (_activeRunners.size > 0 && Date.now() - drainStart < DRAIN_TIMEOUT_MS) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      for (const adapter of _channelAdapters.values()) {
+        try { await adapter.stop(); } catch { /* ignore */ }
+      }
+
+      if (_orchestrator) {
+        for (const runner of _orchestrator.runners.values()) {
+          try { await runner.dispose(); } catch { /* ignore */ }
+        }
+        _orchestrator = null;
+      }
+
+      try { await _server?.close(() => {}); } catch { /* ignore */ }
+      process.exit(0);
+    }, 100);
+
+    return response;
   });
 
-  // ── REST: Task API ────────────────────────────────────────────────────────
+  // ── REST: Task API ──────────────────────────────────────────────────────
 
-  // GET /api/tasks
-  server.get('/api/tasks', async (_req, _reply) => {
+  app.get('/api/tasks', (c) => {
     const tasks = db
       .prepare('SELECT id, context_id as contextId, schedule, prompt, enabled, last_run as lastRun, created_at as createdAt FROM tasks')
       .all();
-    return tasks;
+    return c.json(tasks);
   });
 
-  // POST /api/tasks
-  server.post<{
-    Body: { contextId?: string; schedule?: string; prompt?: string };
-  }>('/api/tasks', async (req, reply) => {
-    const { contextId = 'main', schedule, prompt } = req.body ?? {};
+  app.post('/api/tasks', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const { contextId = 'main', schedule, prompt } = body ?? {};
 
     if (!schedule || !prompt) {
-      return reply.status(400).send({ error: 'schedule and prompt are required' });
+      return c.json({ error: 'schedule and prompt are required' }, 400);
     }
 
-    // Validate schedule string (supports cron, interval, or ISO datetime)
     const { detectScheduleType } = await import('./scheduler/parse.js');
     try {
       detectScheduleType(schedule);
     } catch {
-      return reply.status(400).send({ error: 'invalid schedule expression' });
+      return c.json({ error: 'invalid schedule expression' }, 400);
     }
 
     const { nanoid: nanoId } = await import('nanoid');
@@ -465,7 +436,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
       'INSERT INTO tasks (id, context_id, schedule, prompt, enabled) VALUES (?, ?, ?, ?, 1)'
     ).run(id, contextId, schedule, prompt);
 
-    // Register with scheduler if available
     if (_scheduler) {
       _scheduler.registerJob({ id, contextId, schedule, prompt });
     }
@@ -474,15 +444,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
       .prepare('SELECT id, context_id as contextId, schedule, prompt, enabled, last_run as lastRun FROM tasks WHERE id = ?')
       .get(id);
 
-    return reply.status(201).send(task);
+    return c.json(task, 201);
   });
 
-  // DELETE /api/tasks/:id
-  server.delete<{ Params: { id: string } }>('/api/tasks/:id', async (req, reply) => {
-    const { id } = req.params;
+  app.delete('/api/tasks/:id', async (c) => {
+    const id = c.req.param('id');
     const task = db.prepare('SELECT id FROM tasks WHERE id = ?').get(id);
     if (!task) {
-      return reply.status(404).send({ error: `Task not found: ${id}` });
+      return c.json({ error: `Task not found: ${id}` }, 404);
     }
 
     db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
@@ -491,23 +460,20 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
       _scheduler.cancelJob(id);
     }
 
-    return reply.status(204).send();
+    return c.body(null, 204);
   });
 
-  // ── REST: Context API ─────────────────────────────────────────────────────
+  // ── REST: Context API ───────────────────────────────────────────────────
 
-  // GET /api/contexts
-  server.get('/api/contexts', async (_req, _reply) => {
-    return listContexts(db);
+  app.get('/api/contexts', (c) => {
+    return c.json(listContexts(db));
   });
 
-  // POST /api/contexts
-  server.post<{
-    Body: { name?: string; model_provider?: string; model_id?: string };
-  }>('/api/contexts', async (req, reply) => {
-    const { name, model_provider, model_id } = req.body ?? {};
+  app.post('/api/contexts', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const { name, model_provider, model_id } = body ?? {};
     if (!name) {
-      return reply.status(400).send({ error: 'name is required' });
+      return c.json({ error: 'name is required' }, 400);
     }
     const ctx = createContext(db, {
       name,
@@ -515,60 +481,57 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
       modelId: model_id ?? '',
     });
     await initContextWorkspace(ctx.id, reebotDir);
-    return reply.status(201).send(ctx);
+    return c.json(ctx, 201);
   });
 
-  // GET /api/contexts/:id/sessions
-  server.get<{ Params: { id: string } }>('/api/contexts/:id/sessions', async (req, reply) => {
-    const ctx = getContextById(db, req.params.id);
+  app.get('/api/contexts/:id/sessions', async (c) => {
+    const ctx = getContextById(db, c.req.param('id'));
     if (!ctx) {
-      return reply.status(404).send({ error: 'Context not found' });
+      return c.json({ error: 'Context not found' }, 404);
     }
-    const sessions = await listSessions(req.params.id, reebotDir);
-    return sessions;
+    const sessions = await listSessions(c.req.param('id'), reebotDir);
+    return c.json(sessions);
   });
 
-  // ── WebSocket: /ws/chat/:contextId ───────────────────────────────────────
+  // ── WebSocket: /ws/chat/:contextId ──────────────────────────────────────
 
-  server.get<{ Params: { contextId: string } }>(
-    '/ws/chat/:contextId',
-    { websocket: true },
-    async (socket, req) => {
-      const { contextId } = req.params;
+  const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
 
-      // Auth check for non-loopback connections
-      if (serverToken) {
-        const clientIp = req.socket.remoteAddress ?? '';
-        if (!isLoopback(clientIp)) {
-          const provided = extractToken(req);
-          if (provided !== serverToken) {
-            socket.close(1008, 'Unauthorized');
-            return;
+  app.get('/ws/chat/:contextId', upgradeWebSocket((c) => {
+    const contextId = c.req.param('contextId')!;
+    const clientIp = (c.env as any)?.incoming?.socket?.remoteAddress ?? '';
+
+    return {
+      onOpen(_event, ws) {
+        // Auth check for non-loopback connections
+        if (serverToken) {
+          if (!isLoopback(clientIp)) {
+            const provided = extractToken(c);
+            if (provided !== serverToken) {
+              ws.close(1008, 'Unauthorized');
+              return;
+            }
           }
         }
-      }
 
-      // Validate context exists
-      const ctx = getContextById(db, contextId);
-      if (!ctx) {
-        socket.close(4004, 'Unknown context');
-        return;
-      }
+        // Validate context exists
+        const ctx = getContextById(db, contextId);
+        if (!ctx) {
+          ws.close(4004, 'Unknown context');
+          return;
+        }
 
-      // Generate session ID
-      const sessionId = nanoid();
+        // Generate session ID
+        const sessionId = nanoid();
+        ws.send(JSON.stringify({ type: 'connected', contextId, sessionId }));
+      },
 
-      // Send connected message
-      socket.send(JSON.stringify({ type: 'connected', contextId, sessionId }));
-
-      let activeRunId: string | null = null;
-
-      socket.on('message', async (rawData: Buffer | string) => {
+      onMessage: async (event, ws) => {
         let msg: any;
         try {
-          msg = JSON.parse(rawData.toString());
+          msg = JSON.parse(event.data as string);
         } catch {
-          socket.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
           return;
         }
 
@@ -576,9 +539,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
           const runner = _activeRunners.get(contextId);
           if (runner) {
             runner.abort();
-            socket.send(JSON.stringify({ type: 'cancelled', runId: activeRunId }));
             _activeRunners.delete(contextId);
-            activeRunId = null;
+            ws.send(JSON.stringify({ type: 'cancelled' }));
           }
           return;
         }
@@ -586,7 +548,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
         if (msg.type === 'message') {
           // Check if a turn is already in-flight
           if (_activeRunners.has(contextId)) {
-            socket.send(JSON.stringify({
+            ws.send(JSON.stringify({
               type: 'error',
               message: 'Agent is busy. Cancel the current turn first.',
             }));
@@ -594,7 +556,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
           }
 
           const runId = nanoid();
-          activeRunId = runId;
 
           // Get or create runner
           let runner: AgentRunner;
@@ -605,8 +566,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
               { id: contextId, workspacePath: join(reebotDir, 'contexts', contextId, 'workspace') },
               cfg
             );
-          } catch (err) {
-            socket.send(JSON.stringify({ type: 'error', message: String((err as Error).message) }));
+          } catch (err: any) {
+            ws.send(JSON.stringify({ type: 'error', message: String(err?.message ?? err) }));
             return;
           }
 
@@ -614,39 +575,47 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
 
           try {
             await runner.prompt(msg.content ?? '', (event) => {
-              socket.send(JSON.stringify(event));
+              ws.send(JSON.stringify(event));
             });
           } catch (err: any) {
             if (err?.name !== 'AbortError') {
-              socket.send(JSON.stringify({ type: 'error', message: String(err?.message ?? err) }));
+              ws.send(JSON.stringify({ type: 'error', message: String(err?.message ?? err) }));
             }
           } finally {
             _activeRunners.delete(contextId);
-            activeRunId = null;
           }
         }
-      });
+      },
 
-      socket.on('close', () => {
-        // Abort runner if still active
+      onClose(_event, ws) {
         const runner = _activeRunners.get(contextId);
         if (runner) {
           runner.abort();
           _activeRunners.delete(contextId);
         }
-      });
-    }
-  );
+      },
+    };
+  }));
 
   // Custom 404 handler
-  server.setNotFoundHandler((_req, reply) => {
-    reply.status(404).send({ error: 'Not found' });
+  app.notFound((c) => {
+    return c.json({ error: 'Not found' }, 404);
   });
 
-  await server.listen({ port, host });
+  // ── Start HTTP server ───────────────────────────────────────────────────
+
+  const server = createAdaptorServer({ fetch: app.fetch });
+  injectWebSocket(server);
+
+  await new Promise<void>((resolve) => {
+    server.listen(port, host, () => resolve());
+  });
+
+  const address = server.address();
+  const boundPort = typeof address === 'object' && address !== null ? address.port : port;
 
   _server = server;
-  return server;
+  return { port: boundPort, host };
 }
 
 // ─── stopServer ──────────────────────────────────────────────────────────────
@@ -654,7 +623,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<FastifyInst
 export async function stopServer(): Promise<void> {
   // Stop credential proxy
   if (_credProxy) {
-    try { await _credProxy.close(); } catch { /* ignore */ }
+    try { await new Promise<void>((r) => _credProxy!.close(() => r())); } catch { /* ignore */ }
     _credProxy = null;
   }
 
@@ -687,7 +656,9 @@ export async function stopServer(): Promise<void> {
   _activeRunners.clear();
 
   if (_server) {
-    await _server.close();
+    await new Promise<void>((resolve) => {
+      _server!.close(() => resolve());
+    });
     _server = null;
   }
 }

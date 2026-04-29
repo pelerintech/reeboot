@@ -11,18 +11,17 @@ afterEach(async () => {
   try { await stopServer(); } catch { /* already stopped */ }
 });
 
-describe('HTTP Server', () => {
+describe('HTTP Server (Hono)', () => {
   it('starts and listens on configured port', async () => {
-    const server = await startServer({ port: 0, logLevel: 'silent' });
-    const address = server.addresses()[0];
-    expect(address).toBeDefined();
-    expect(address.port).toBeGreaterThan(0);
+    const result = await startServer({ port: 0, logLevel: 'silent' });
+    expect(result).toBeDefined();
+    expect(result.port).toBeGreaterThan(0);
+    expect(result.host).toBe('127.0.0.1');
   });
 
   it('GET /api/health returns { status, uptime, version }', async () => {
-    const server = await startServer({ port: 0, logLevel: 'silent' });
-    const address = server.addresses()[0];
-    const res = await fetch(`http://localhost:${address.port}/api/health`);
+    const { port } = await startServer({ port: 0, logLevel: 'silent' });
+    const res = await fetch(`http://localhost:${port}/api/health`);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.status).toBe('ok');
@@ -31,9 +30,8 @@ describe('HTTP Server', () => {
   });
 
   it('GET /api/status returns { agent, channels }', async () => {
-    const server = await startServer({ port: 0, logLevel: 'silent' });
-    const address = server.addresses()[0];
-    const res = await fetch(`http://localhost:${address.port}/api/status`);
+    const { port } = await startServer({ port: 0, logLevel: 'silent' });
+    const res = await fetch(`http://localhost:${port}/api/status`);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.agent).toBeDefined();
@@ -41,9 +39,8 @@ describe('HTTP Server', () => {
   });
 
   it('unknown routes return 404 JSON with error key', async () => {
-    const server = await startServer({ port: 0, logLevel: 'silent' });
-    const address = server.addresses()[0];
-    const res = await fetch(`http://localhost:${address.port}/api/nonexistent`);
+    const { port } = await startServer({ port: 0, logLevel: 'silent' });
+    const res = await fetch(`http://localhost:${port}/api/nonexistent`);
     expect(res.status).toBe(404);
     const body = await res.json() as any;
     expect(body.error).toBeDefined();
@@ -51,6 +48,12 @@ describe('HTTP Server', () => {
 
   it('stopServer() resolves without error', async () => {
     await startServer({ port: 0, logLevel: 'silent' });
+    await expect(stopServer()).resolves.toBeUndefined();
+  });
+
+  it('stopServer() is idempotent', async () => {
+    await startServer({ port: 0, logLevel: 'silent' });
+    await stopServer();
     await expect(stopServer()).resolves.toBeUndefined();
   });
 });

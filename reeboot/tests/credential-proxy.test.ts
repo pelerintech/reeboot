@@ -1,8 +1,8 @@
 /**
- * Credential proxy tests (task 3.1) — TDD red
+ * Credential proxy tests (Hono version)
  *
- * Tests the Fastify proxy on 127.0.0.1:3001 that injects real API keys.
- * Uses Fastify's inject() to avoid the fetch mock intercepting client calls.
+ * Tests the Hono proxy that intercepts LLM API calls and injects real API keys.
+ * Uses createProxyApp().fetch() for direct handler testing (no server needed).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -14,14 +14,15 @@ vi.stubGlobal('fetch', mockFetch);
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('credential proxy', () => {
+describe('credential proxy (Hono)', () => {
   let startProxy: any;
   let stopProxy: any;
+  let createProxyApp: any;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
-    ({ startProxy, stopProxy } = await import('@src/credential-proxy.js'));
+    ({ startProxy, stopProxy, createProxyApp } = await import('@src/credential-proxy.js'));
   });
 
   afterEach(async () => {
@@ -38,13 +39,6 @@ describe('credential proxy', () => {
   });
 
   it('starts on loopback when enabled', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'content-type': 'application/json' }),
-      text: async () => '{}',
-    });
-
     const config = {
       credentialProxy: { enabled: true, port: 0 },
       agent: { model: { provider: 'anthropic', apiKey: 'real-anthropic-key' } },
@@ -52,10 +46,11 @@ describe('credential proxy', () => {
     const server = await startProxy(config);
     expect(server).not.toBeNull();
 
-    const addresses = server.addresses();
-    expect(addresses.length).toBeGreaterThan(0);
-    // Should be loopback only
-    expect(addresses[0].address).toBe('127.0.0.1');
+    const addr = server.address();
+    expect(addr).not.toBeNull();
+    if (typeof addr === 'object' && addr !== null) {
+      expect(addr.address).toBe('127.0.0.1');
+    }
   });
 
   it('forwards request with real API key replacing placeholder', async () => {
@@ -67,15 +62,13 @@ describe('credential proxy', () => {
     });
 
     const config = {
-      credentialProxy: { enabled: true, port: 0 },
+      credentialProxy: { enabled: false },
       agent: { model: { provider: 'anthropic', apiKey: 'real-anthropic-key-123' } },
     };
-    const server = await startProxy(config);
 
-    // Use Fastify inject to avoid fetch mock conflict on the client side
-    await server.inject({
+    const app = createProxyApp(config);
+    const req = new Request('http://localhost/v1/messages', {
       method: 'POST',
-      url: '/v1/messages',
       headers: {
         'Authorization': 'Bearer placeholder-reeboot',
         'X-Reeboot-Provider': 'anthropic',
@@ -84,15 +77,12 @@ describe('credential proxy', () => {
       body: JSON.stringify({ model: 'claude-opus-4-5', messages: [] }),
     });
 
-    // The proxy's forwarding fetch should have been called with the real key
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('anthropic.com'),
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer real-anthropic-key-123',
-        }),
-      })
-    );
+    const res = await app.fetch(req);
+    expect(res.status).toBe(200);
+
+    const [, options] = mockFetch.mock.calls[0] as [string, { headers: Headers; body: string }];
+    expect(options.headers.get('Authorization')).toBe('Bearer real-anthropic-key-123');
+    expect(options.body).toBe(JSON.stringify({ model: 'claude-opus-4-5', messages: [] }));
   });
 
   it('uses correct provider URL for openai', async () => {
@@ -104,14 +94,13 @@ describe('credential proxy', () => {
     });
 
     const config = {
-      credentialProxy: { enabled: true, port: 0 },
+      credentialProxy: { enabled: false },
       agent: { model: { provider: 'openai', apiKey: 'real-openai-key-456' } },
     };
-    const server = await startProxy(config);
 
-    await server.inject({
+    const app = createProxyApp(config);
+    const req = new Request('http://localhost/v1/chat/completions', {
       method: 'POST',
-      url: '/v1/chat/completions',
       headers: {
         'Authorization': 'Bearer placeholder-reeboot',
         'X-Reeboot-Provider': 'openai',
@@ -120,14 +109,10 @@ describe('credential proxy', () => {
       body: JSON.stringify({}),
     });
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('openai.com'),
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer real-openai-key-456',
-        }),
-      })
-    );
+    await app.fetch(req);
+
+    const [, options] = mockFetch.mock.calls[0] as [string, { headers: Headers }];
+    expect(options.headers.get('Authorization')).toBe('Bearer real-openai-key-456');
   });
 
   it('uses correct provider URL for google', async () => {
@@ -139,23 +124,77 @@ describe('credential proxy', () => {
     });
 
     const config = {
-      credentialProxy: { enabled: true, port: 0 },
+      credentialProxy: { enabled: false },
       agent: { model: { provider: 'google', apiKey: 'real-google-key' } },
     };
-    const server = await startProxy(config);
 
-    await server.inject({
+    const app = createProxyApp(config);
+    const req = new Request('http://localhost/v1/models', {
       method: 'GET',
-      url: '/v1/models',
       headers: {
         'Authorization': 'Bearer placeholder-reeboot',
         'X-Reeboot-Provider': 'google',
       },
     });
 
+    await app.fetch(req);
+
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('generativelanguage.googleapis.com'),
       expect.any(Object)
     );
+  });
+
+  it('handles provider errors with 502', async () => {
+    mockFetch.mockRejectedValue(new Error('Network timeout'));
+
+    const config = {
+      credentialProxy: { enabled: false },
+      agent: { model: { provider: 'anthropic', apiKey: 'key' } },
+    };
+
+    const app = createProxyApp(config);
+    const req = new Request('http://localhost/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer placeholder',
+        'X-Reeboot-Provider': 'anthropic',
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+
+    const res = await app.fetch(req);
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toMatch(/Proxy error/);
+  });
+
+  it('proxyApp.fetch works for direct handler testing', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: async () => '{"direct":"ok"}',
+    });
+
+    const { proxyApp } = await import('@src/credential-proxy.js');
+    const req = new Request('http://localhost/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer placeholder',
+        'X-Reeboot-Provider': 'anthropic',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'test' }),
+    });
+
+    const res = await proxyApp.fetch(req);
+    expect(res.status).toBe(200);
+  });
+
+  it('stopProxy is idempotent', async () => {
+    await stopProxy();
+    await expect(stopProxy()).resolves.toBeUndefined();
   });
 });

@@ -1,14 +1,16 @@
 /**
- * Credential Proxy
+ * Credential Proxy (Hono)
  *
- * A lightweight Fastify instance on 127.0.0.1:3001 (or configured port).
+ * A lightweight Hono instance on 127.0.0.1:3001 (or configured port).
  * Intercepts LLM API calls from a sandboxed agent process, injects the real
  * API key, and forwards the request to the actual provider.
  *
  * Only started when config.credentialProxy.enabled === true.
  */
 
-import Fastify, { FastifyInstance } from 'fastify';
+import { Hono } from 'hono';
+import { createAdaptorServer } from '@hono/node-server';
+import type { ServerType } from '@hono/node-server';
 
 // ─── Provider URL map ─────────────────────────────────────────────────────────
 
@@ -34,64 +36,44 @@ export interface CredentialProxyConfig {
   };
 }
 
-// ─── Singleton ────────────────────────────────────────────────────────────────
+// ─── Factory: create proxy Hono app (exported for direct handler testing) ────
 
-let _proxyServer: FastifyInstance | null = null;
-
-// ─── startProxy ───────────────────────────────────────────────────────────────
-
-export async function startProxy(config: CredentialProxyConfig): Promise<FastifyInstance | null> {
-  if (!config.credentialProxy?.enabled) {
-    return null;
-  }
-
-  const port = config.credentialProxy?.port ?? 3001;
+export function createProxyApp(config: CredentialProxyConfig): Hono {
   const defaultProvider = config.agent?.model?.provider ?? 'anthropic';
   const defaultApiKey = config.agent?.model?.apiKey ?? '';
 
-  const server = Fastify({ logger: false });
+  const app = new Hono();
 
-  // Forward all routes to the provider
-  server.all('/*', async (req, reply) => {
-    // Determine provider from header or default
-    const providerHeader = (req.headers['x-reeboot-provider'] as string) ?? defaultProvider;
-    const provider = providerHeader.toLowerCase();
-
+  app.all('/*', async (c) => {
+    const providerHeader = c.req.header('x-reeboot-provider');
+    const provider = (providerHeader ?? defaultProvider).toLowerCase();
     const baseUrl = PROVIDER_BASE_URLS[provider] ?? PROVIDER_BASE_URLS['anthropic'];
 
-    // Resolve the API key (use default key; in future could look up per-provider)
-    const apiKey = defaultApiKey;
-
-    // Build target URL
-    const path = (req.url ?? '/').replace(/^\/?/, '/');
+    const path = new URL(c.req.url).pathname;
     const targetUrl = `${baseUrl}${path}`;
 
-    // Build forwarded headers (strip proxy-specific headers, inject real auth)
-    const forwardHeaders: Record<string, string> = {};
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (
-        k.toLowerCase() === 'host' ||
-        k.toLowerCase() === 'x-reeboot-provider' ||
-        k.toLowerCase() === 'connection'
-      ) {
-        continue;
+    // Forward headers (strip proxy-specific, inject real auth)
+    const forwardHeaders = new Headers();
+    c.req.raw.headers.forEach((value, key) => {
+      const lower = key.toLowerCase();
+      if (lower === 'host' || lower === 'x-reeboot-provider' || lower === 'connection') {
+        return;
       }
-      if (typeof v === 'string') forwardHeaders[k] = v;
-      else if (Array.isArray(v)) forwardHeaders[k] = v[0];
-    }
+      forwardHeaders.set(key, value);
+    });
 
     // Inject real API key
-    forwardHeaders['Authorization'] = `Bearer ${apiKey}`;
+    forwardHeaders.set('Authorization', `Bearer ${defaultApiKey}`);
 
     // Forward request
-    const method = req.method;
+    const method = c.req.method;
     const hasBody = method !== 'GET' && method !== 'HEAD' && method !== 'DELETE';
 
-    let bodyText: string | undefined;
-    if (hasBody && req.body) {
-      bodyText = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-      if (!forwardHeaders['content-type']) {
-        forwardHeaders['content-type'] = 'application/json';
+    let body: string | undefined;
+    if (hasBody) {
+      body = await c.req.text();
+      if (!forwardHeaders.has('content-type')) {
+        forwardHeaders.set('content-type', 'application/json');
       }
     }
 
@@ -99,36 +81,63 @@ export async function startProxy(config: CredentialProxyConfig): Promise<Fastify
       const response = await fetch(targetUrl, {
         method,
         headers: forwardHeaders,
-        body: hasBody ? bodyText : undefined,
+        body: hasBody ? body : undefined,
       });
 
-      reply.status(response.status);
+      const responseText = await response.text();
 
       // Forward response headers
-      for (const [k, v] of response.headers.entries()) {
-        if (k.toLowerCase() !== 'transfer-encoding') {
-          reply.header(k, v);
+      const headers: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        if (key.toLowerCase() !== 'transfer-encoding') {
+          headers[key] = value;
         }
-      }
+      });
 
-      const responseText = await response.text();
-      return reply.send(responseText);
+      return c.newResponse(responseText, response.status as any, headers);
     } catch (err: any) {
-      return reply.status(502).send({ error: `Proxy error: ${err.message}` });
+      return c.json({ error: `Proxy error: ${err.message}` }, 502);
     }
   });
 
-  await server.listen({ port, host: '127.0.0.1' });
+  return app;
+}
+
+// ─── Legacy singleton (empty config) ──────────────────────────────────────────
+
+export const proxyApp = createProxyApp({});
+
+// ─── Singleton ──────────────────────────────────────────────────────────────
+
+let _proxyServer: ServerType | null = null;
+
+// ─── startProxy ───────────────────────────────────────────────────────────────
+
+export async function startProxy(config: CredentialProxyConfig): Promise<ServerType | null> {
+  if (!config.credentialProxy?.enabled) {
+    return null;
+  }
+
+  const port = config.credentialProxy?.port ?? 3001;
+
+  const app = createProxyApp(config);
+  const server = createAdaptorServer({ fetch: app.fetch });
+
+  await new Promise<void>((resolve) => {
+    server.listen(port, '127.0.0.1', () => resolve());
+  });
 
   _proxyServer = server;
   return server;
 }
 
-// ─── stopProxy ────────────────────────────────────────────────────────────────
+// ─── stopProxy ───────────────────────────────────────────────────────────────
 
 export async function stopProxy(): Promise<void> {
   if (_proxyServer) {
-    await _proxyServer.close();
+    await new Promise<void>((resolve) => {
+      _proxyServer!.close(() => resolve());
+    });
     _proxyServer = null;
   }
 }

@@ -1,5 +1,5 @@
 /**
- * REST API tests (5.1) — /api/contexts routes
+ * REST API tests (Hono version)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -29,10 +29,8 @@ afterEach(async () => {
 });
 
 async function startTestServer() {
-  const server = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-  const address = server.addresses()[0];
-  const base = `http://localhost:${address.port}`;
-  return { server, base };
+  const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
+  return { port, base: `http://localhost:${port}` };
 }
 
 describe('GET /api/contexts', () => {
@@ -104,6 +102,32 @@ describe('GET /api/contexts/:id/sessions', () => {
   it('returns 404 for unknown context', async () => {
     const { base } = await startTestServer();
     const res = await fetch(`${base}/api/contexts/nonexistent/sessions`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /api/channels', () => {
+  it('returns 200 with empty array when no config', async () => {
+    const { base } = await startTestServer();
+    const res = await fetch(`${base}/api/channels`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any[];
+    expect(Array.isArray(body)).toBe(true);
+  });
+});
+
+describe('POST /api/channels/:type/login', () => {
+  it('unknown type returns 404', async () => {
+    const { base } = await startTestServer();
+    const res = await fetch(`${base}/api/channels/unknown/login`, { method: 'POST' });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/channels/:type/logout', () => {
+  it('unknown type returns 404', async () => {
+    const { base } = await startTestServer();
+    const res = await fetch(`${base}/api/channels/unknown/logout`, { method: 'POST' });
     expect(res.status).toBe(404);
   });
 });

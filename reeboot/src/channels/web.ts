@@ -28,7 +28,7 @@ export class WebAdapter implements ChannelAdapter {
   }
 
   async start(): Promise<void> {
-    // WebSocket server lifecycle is managed by Fastify; we just mark connected
+    // WebSocket server lifecycle is managed by the HTTP server; we just mark connected
     this._status = 'connected';
     this._connectedAt = new Date().toISOString();
   }
