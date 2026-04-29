@@ -20,10 +20,11 @@ export type Tier2FactoryResult = {
 
 export type Tier2Factory = (bus: MessageBus) => Tier2FactoryResult;
 
-export function runLiteContractTests(factory: Tier2Factory): void {
+export function runLiteContractTests(factory: Tier2Factory, expectFail = false): void {
+  const _it = expectFail ? it.fails : it;
 
   describe('Tier 2 contract: send() silent drop when not connected', () => {
-    it('send() returns without throwing when not started', async () => {
+    _it('send() returns without throwing when not started', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -33,7 +34,7 @@ export function runLiteContractTests(factory: Tier2Factory): void {
   });
 
   describe('Tier 2 contract: __system__ broadcasts to all peers', () => {
-    it('broadcasts to all registered peers', async () => {
+    _it('broadcasts to all registered peers', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -53,7 +54,7 @@ export function runLiteContractTests(factory: Tier2Factory): void {
       expect(receivedB[0].text).toBe('hello');
     });
 
-    it('__system__ with no peers returns without throwing', async () => {
+    _it('__system__ with no peers returns without throwing', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -62,7 +63,7 @@ export function runLiteContractTests(factory: Tier2Factory): void {
       await expect(adapter.send('__system__', { type: 'text', text: 'hello' })).resolves.toBeUndefined();
     });
 
-    it('__system__ broadcast continues if one peer sender throws', async () => {
+    _it('__system__ broadcast continues if one peer sender throws', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -79,7 +80,7 @@ export function runLiteContractTests(factory: Tier2Factory): void {
   });
 
   describe('Tier 2 contract: lifecycle', () => {
-    it('init() transitions status to initializing', async () => {
+    _it('init() transitions status to initializing', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -87,7 +88,7 @@ export function runLiteContractTests(factory: Tier2Factory): void {
       expect(adapter.status()).toBe('initializing');
     });
 
-    it('stop() transitions status to disconnected', async () => {
+    _it('stop() transitions status to disconnected', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);

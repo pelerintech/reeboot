@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Config reset on wizard re-run** — the setup wizard (`reeboot setup`, `reeboot config wizard`) was building a brand-new config from `defaultConfig` on every run, silently discarding existing custom settings such as `authMode: 'pi'`, custom tool whitelists, channel trust rules, and user preferences. Both the interactive launch step (`src/wizard/steps/launch.ts`) and the non-interactive wizard (`src/setup-wizard.ts`) now **merge with any existing config**, preserving all user edits while only updating the fields being configured. Uses a shared defensive `fb()` fallback helper (`src/utils/fallback.ts`) so every section defaults safely when the existing file is missing or incomplete.
+
 - **Session resume after restart** — the agent now correctly resumes the most recent conversation on restart instead of starting a blank session every time. `getResumedSessionPath` previously filtered for `session-*.json` files; pi's `SessionManager` actually creates `<ISO-timestamp>_<uuid>.jsonl` files. The filter was updated to match the real format. As a side effect, the "I may not have responded to your last message" unanswered-message detection on restart is also now active.
 
 - **Memory extension never loaded** — `memory-manager.ts` and `knowledge-manager.ts` were located in `extensions/` (root), which is outside `tsconfig.json`'s `rootDir: "./src"` and was never compiled. Both files have been moved to `src/extensions/` so they are compiled into `dist/` and loaded correctly on startup. `~/.reeboot/memories/MEMORY.md` and `USER.md` are now created on first run as intended.

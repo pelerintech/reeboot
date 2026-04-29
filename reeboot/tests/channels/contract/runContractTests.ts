@@ -33,10 +33,11 @@ export type Tier1FactoryResult = {
 
 export type Tier1Factory = (bus: MessageBus) => Tier1FactoryResult;
 
-export function runChannelContractTests(factory: Tier1Factory): void {
+export function runChannelContractTests(factory: Tier1Factory, expectFail = false): void {
+  const _it = expectFail ? it.fails : it;
 
   describe('Tier 1 contract: send() silent drop when not connected', () => {
-    it('send() returns without throwing when not started', async () => {
+    _it('send() returns without throwing when not started', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -45,7 +46,7 @@ export function runChannelContractTests(factory: Tier1Factory): void {
       await expect(adapter.send('some-peer', { type: 'text', text: 'hello' })).resolves.toBeUndefined();
     });
 
-    it('send() with __system__ returns without throwing when not started', async () => {
+    _it('send() with __system__ returns without throwing when not started', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -55,7 +56,7 @@ export function runChannelContractTests(factory: Tier1Factory): void {
   });
 
   describe('Tier 1 contract: lifecycle', () => {
-    it('init() transitions status to initializing', async () => {
+    _it('init() transitions status to initializing', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -63,7 +64,7 @@ export function runChannelContractTests(factory: Tier1Factory): void {
       expect(adapter.status()).toBe('initializing');
     });
 
-    it('stop() transitions status to disconnected', async () => {
+    _it('stop() transitions status to disconnected', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -72,7 +73,7 @@ export function runChannelContractTests(factory: Tier1Factory): void {
       expect(adapter.status()).toBe('disconnected');
     });
 
-    it('stop() does not throw when called twice', async () => {
+    _it('stop() does not throw when called twice', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const { adapter } = factory(bus);
@@ -83,7 +84,7 @@ export function runChannelContractTests(factory: Tier1Factory): void {
   });
 
   describe('Tier 1 contract: fromSelf on inbound messages', () => {
-    it('message from own account has fromSelf=true', async () => {
+    _it('message from own account has fromSelf=true', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const received: any[] = [];
@@ -98,7 +99,7 @@ export function runChannelContractTests(factory: Tier1Factory): void {
       expect(received[0].fromSelf).toBe(true);
     });
 
-    it('message from third party has fromSelf=false', async () => {
+    _it('message from third party has fromSelf=false', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const received: any[] = [];
@@ -115,7 +116,7 @@ export function runChannelContractTests(factory: Tier1Factory): void {
   });
 
   describe('Tier 1 contract: echo deduplication', () => {
-    it('echo of a sent message is suppressed', async () => {
+    _it('echo of a sent message is suppressed', async () => {
       const { MessageBus } = await import('@src/channels/interface.js');
       const bus = new MessageBus();
       const received: any[] = [];

@@ -1,9 +1,15 @@
 /**
- * Tier 1 contract suite run against a deliberately broken stub adapter.
- * Every contract clause should FAIL against this stub — confirming the suite
- * is actually exercising real behaviour.
+ * ⚠️ INTENTIONALLY BROKEN TESTS — DO NOT "FIX" ⚠️
  *
- * Expected result: ALL tests in this file fail.
+ * This file runs the Tier 1 contract suite against a deliberately broken stub
+ * adapter. Every clause is designed to FAIL against the shared contract suite.
+ * That failure is the signal that the suite correctly catches adapter violations.
+ *
+ * Tests are wrapped in `it.fails` via `expectFail: true` — they report as PASS
+ * in vitest output when the assertion inside fails. If they start FAILING here,
+ * the contract suite itself has a regression, NOT this stub.
+ *
+ * See decisions.md: "Channel contract test stubs intentionally fail"
  */
 
 import { runChannelContractTests } from './runContractTests.js';
@@ -32,6 +38,7 @@ class BrokenTier1Adapter implements ChannelAdapter {
 
   async stop(): Promise<void> {
     this._status = 'disconnected';
+    throw new Error('BrokenAdapter: stop() throws');
   }
 
   async send(_peerId: string, _content: MessageContent): Promise<void> {
@@ -75,4 +82,4 @@ const brokenFactory: Tier1Factory = (bus) => {
   };
 };
 
-runChannelContractTests(brokenFactory);
+runChannelContractTests(brokenFactory, true);
