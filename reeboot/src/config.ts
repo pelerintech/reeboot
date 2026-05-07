@@ -127,6 +127,9 @@ const SandboxConfigSchema = z.object({
 
 const LoggingConfigSchema = z.object({
   level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+  /** Remaining tokens below which a rate_limit_warning is emitted. Default: 5000. */
+  rate_limit_warn_threshold: z.number().int().min(0).default(5000),
+  retention_days: z.number().int().min(1).default(30),
 });
 
 const ServerConfigSchema = z.object({

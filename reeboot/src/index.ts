@@ -771,6 +771,122 @@ skillsCmd
     process.exit(0);
   });
 
+// ─── logs ────────────────────────────────────────────────────────────────────────
+
+program
+  .command('logs')
+  .description('View or tail agent logs')
+  .option('--follow', 'Follow the live log stream in real-time')
+  .option('--level <level>', 'Minimum log level to show (debug|info|warn|error|fatal)', 'info')
+  .action(async (opts) => {
+    if (!opts.follow) {
+      console.log('Use --follow to tail the live log stream. Example: reeboot logs --follow');
+      process.exit(0);
+    }
+
+    const { homedir } = await import('os');
+    const { join } = await import('path');
+    const { readdirSync, createReadStream } = await import('fs');
+
+    // Try to load config for port
+    let port = 3000;
+    try {
+      const configPath = join(homedir(), '.reeboot', 'config.json');
+      const cfg = JSON.parse(require('fs').readFileSync(configPath, 'utf-8'));
+      port = cfg?.channels?.web?.port ?? 3000;
+    } catch { /* use default */ }
+
+    const url = `http://localhost:${port}/api/logs/stream?level=${opts.level}`;
+
+    // Try connecting to the SSE endpoint
+    try {
+      const { EventSource } = await import('eventsource').catch(() => ({ EventSource: null as any }));
+
+      // Fallback: use native fetch with streaming
+      const controller = new AbortController();
+      process.on('SIGINT', () => { controller.abort(); process.exit(0); });
+      process.on('SIGTERM', () => { controller.abort(); process.exit(0); });
+
+      let res: Response;
+      try {
+        res = await fetch(url, { signal: controller.signal });
+      } catch {
+        throw new Error('server_not_running');
+      }
+
+      if (!res.ok) throw new Error('server_not_running');
+      if (!res.body) throw new Error('server_not_running');
+
+      console.log(`📍 Streaming logs from ${url}`);
+      console.log('Press Ctrl+C to stop.\n');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const json = line.slice(6).trim();
+            if (json) {
+              try {
+                const rec = JSON.parse(json);
+                const level = _levelName(rec.level ?? 30);
+                const time = new Date(rec.time ?? Date.now()).toISOString();
+                const component = rec.component ? `[${rec.component}] ` : '';
+                console.log(`${time} ${level} ${component}${rec.msg ?? ''}`);
+              } catch {
+                console.log(json);
+              }
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err?.message === 'server_not_running' || err?.code === 'ECONNREFUSED' || (err?.cause?.code === 'ECONNREFUSED')) {
+        // Fall back to tailing the log file
+        const logDir = join(homedir(), '.reeboot', 'logs');
+        let logFile: string | null = null;
+        try {
+          const files = readdirSync(logDir)
+            .filter((f: string) => f.startsWith('reeboot-') && f.endsWith('.log'))
+            .sort()
+            .reverse();
+          logFile = files[0] ? join(logDir, files[0]) : null;
+        } catch { /* no log dir */ }
+
+        if (!logFile) {
+          console.error('No log files found and server is not running.');
+          process.exit(1);
+        }
+
+        console.log(`Server not running — tailing log file: ${logFile}`);
+        const { exec } = await import('child_process');
+        const tail = exec(`tail -f ${JSON.stringify(logFile)}`);
+        tail.stdout?.pipe(process.stdout);
+        tail.stderr?.pipe(process.stderr);
+        process.on('SIGINT', () => { tail.kill(); process.exit(0); });
+      } else if (err?.name !== 'AbortError') {
+        console.error('Error connecting to log stream:', err?.message ?? err);
+        process.exit(1);
+      }
+    }
+  });
+
+function _levelName(level: number): string {
+  if (level >= 60) return 'FATAL';
+  if (level >= 50) return 'ERROR';
+  if (level >= 40) return 'WARN ';
+  if (level >= 30) return 'INFO ';
+  if (level >= 20) return 'DEBUG';
+  return 'TRACE';
+}
+
 program.on('command:*', () => {
   console.error(`Unknown command: ${program.args.join(' ')}`);
   console.error('Run "reeboot --help" for available commands.');

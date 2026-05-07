@@ -57,7 +57,8 @@ function makeDb(): Database.Database {
       turn_id TEXT PRIMARY KEY, context_id TEXT NOT NULL,
       session_path TEXT, prompt TEXT,
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
-      status TEXT NOT NULL DEFAULT 'open'
+      status TEXT NOT NULL DEFAULT 'open',
+      closed_at TEXT
     );
     CREATE TABLE IF NOT EXISTS turn_journal_steps (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

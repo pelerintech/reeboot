@@ -419,7 +419,8 @@ describe('12: violation logging on EPERM error', () => {
     mockClientInstance = mockClient;
     vi.mocked(Client).mockImplementation(() => mockClient as any);
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { getLogger } = await import('@src/observability/logger.js');
+    const warnSpy = vi.spyOn(getLogger(), 'warn').mockImplementation((() => {}) as any);
 
     const { mcpManagerExtension, McpServerPool } = await import('@src/extensions/mcp-manager.js');
     const pi = makeMockPi();
@@ -433,7 +434,7 @@ describe('12: violation logging on EPERM error', () => {
     await pi._callTool('mcp', { action: 'call', server: 'postgres', tool: 'query', args: {} });
 
     const violationCall = warnSpy.mock.calls.find(callArgs =>
-      callArgs.some(a => typeof a === 'string' && a.includes('mcp_permission_violation'))
+      callArgs.some(a => typeof a === 'object' && a !== null && (a as any).event === 'mcp_permission_violation')
     );
     expect(violationCall).toBeDefined();
 

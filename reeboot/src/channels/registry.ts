@@ -8,6 +8,7 @@
 
 import type { ChannelAdapter, ChannelConfig, MessageBus } from './interface.js';
 import { ChannelPolicyLayer } from './policy.js';
+import { getLogger } from '../observability/logger.js';
 
 /** Channel types that must be wrapped in ChannelPolicyLayer (Tier 1: external messaging). */
 const TIER1_CHANNEL_TYPES = new Set(['whatsapp', 'signal', 'telegram', 'slack', 'discord']);
@@ -57,13 +58,13 @@ export class ChannelRegistry {
               throw new Error(`Custom adapter at ${channelCfg.adapter} has no default export factory`);
             }
           } catch (err) {
-            console.error(`[ChannelRegistry] Failed to load custom adapter for "${type}": ${err}`);
+            getLogger().error({ component: 'channel-registry', type, err }, `[ChannelRegistry] Failed to load custom adapter for "${type}"`);
             continue;
           }
         }
 
         if (!factory) {
-          console.warn(`[ChannelRegistry] No adapter registered for channel type "${type}" — skipping`);
+          getLogger().warn({ component: 'channel-registry', type }, `[ChannelRegistry] No adapter registered for channel type "${type}" — skipping`);
           continue;
         }
 
@@ -81,7 +82,7 @@ export class ChannelRegistry {
 
         all.set(type, adapter);
       } catch (err) {
-        console.error(`[ChannelRegistry] Failed to initialise channel "${type}": ${err}`);
+        getLogger().error({ component: 'channel-registry', type, err }, `[ChannelRegistry] Failed to initialise channel "${type}"`);
       }
     }
 

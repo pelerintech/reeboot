@@ -260,16 +260,17 @@ describe('Orchestrator routing', () => {
 // ─── Turn Journal ─────────────────────────────────────────────────────────────
 
 describe('turn journal', () => {
-  it('inserts a turn_journal row during the turn and deletes it on success', async () => {
+  it('inserts a turn_journal row during the turn and closes it on success', async () => {
     vi.resetModules();
     const Database = (await import('better-sqlite3')).default;
-    const { runResilienceMigration } = await import('@src/db/schema.js');
+    const { runResilienceMigration, runObservabilityMigration } = await import('@src/db/schema.js');
     const { Orchestrator } = await import('@src/orchestrator.js');
     const { MessageBus } = await import('@src/channels/interface.js');
 
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, context_id TEXT NOT NULL, schedule TEXT NOT NULL, prompt TEXT NOT NULL)`);
     runResilienceMigration(db);
+    runObservabilityMigration(db);
 
     let journalRowDuringTurn: any = null;
 
@@ -296,21 +297,24 @@ describe('turn journal', () => {
     expect(journalRowDuringTurn).toBeTruthy();
     expect(journalRowDuringTurn.status).toBe('open');
 
-    // Row was deleted after success
-    const afterRow = db.prepare('SELECT * FROM turn_journal').get();
-    expect(afterRow).toBeUndefined();
+    // Row is now kept as a permanent audit record with status='closed'
+    const afterRow = db.prepare('SELECT * FROM turn_journal').get() as any;
+    expect(afterRow).toBeDefined();
+    expect(afterRow.status).toBe('closed');
+    expect(afterRow.closed_at).toBeTruthy();
   });
 
   it('leaves the turn_journal row open when the runner rejects', async () => {
     vi.resetModules();
     const Database = (await import('better-sqlite3')).default;
-    const { runResilienceMigration } = await import('@src/db/schema.js');
+    const { runResilienceMigration, runObservabilityMigration } = await import('@src/db/schema.js');
     const { Orchestrator } = await import('@src/orchestrator.js');
     const { MessageBus } = await import('@src/channels/interface.js');
 
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, context_id TEXT NOT NULL, schedule TEXT NOT NULL, prompt TEXT NOT NULL)`);
     runResilienceMigration(db);
+    runObservabilityMigration(db);
 
     const errorRunner = {
       prompt: vi.fn().mockRejectedValue(new Error('provider down')),
@@ -339,7 +343,7 @@ describe('outage detection', () => {
   async function makeOutageSetup(threshold = 3) {
     vi.resetModules();
     const Database = (await import('better-sqlite3')).default;
-    const { runResilienceMigration, runMigration } = await import('@src/db/schema.js');
+    const { runResilienceMigration, runMigration, runObservabilityMigration: robsSetup } = await import('@src/db/schema.js');
     const { Orchestrator } = await import('@src/orchestrator.js');
     const { MessageBus } = await import('@src/channels/interface.js');
 
@@ -360,6 +364,7 @@ describe('outage detection', () => {
     `);
     runMigration(db);
     runResilienceMigration(db);
+    robsSetup(db);
 
     const providerError = Object.assign(new Error('provider unavailable'), { status: 503 });
     const errorRunner = {
@@ -425,7 +430,7 @@ describe('outage detection', () => {
   it('resets failure counter after a successful turn', async () => {
     vi.resetModules();
     const Database = (await import('better-sqlite3')).default;
-    const { runResilienceMigration, runMigration } = await import('@src/db/schema.js');
+    const { runResilienceMigration, runMigration, runObservabilityMigration: robsReset } = await import('@src/db/schema.js');
     const { Orchestrator } = await import('@src/orchestrator.js');
     const { MessageBus } = await import('@src/channels/interface.js');
 
@@ -435,6 +440,7 @@ describe('outage detection', () => {
     db.exec(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, context_id TEXT NOT NULL, schedule TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '')`);
     runMigration(db);
     runResilienceMigration(db);
+    robsReset(db);
 
     const providerError = Object.assign(new Error('provider down'), { status: 503 });
     let callCount = 0;
@@ -484,7 +490,7 @@ describe('outage detection', () => {
     // Replace the error runner with one that throws a plain tool error (no .status)
     vi.resetModules();
     const Database2 = (await import('better-sqlite3')).default;
-    const { runResilienceMigration: rrm2, runMigration: rm2 } = await import('@src/db/schema.js');
+    const { runResilienceMigration: rrm2, runMigration: rm2, runObservabilityMigration: robsNonProvider } = await import('@src/db/schema.js');
     const { Orchestrator: Orc2 } = await import('@src/orchestrator.js');
     const { MessageBus: MB2 } = await import('@src/channels/interface.js');
 
@@ -494,6 +500,7 @@ describe('outage detection', () => {
     db2.exec(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, context_id TEXT NOT NULL, schedule TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '')`);
     rm2(db2);
     rrm2(db2);
+    robsNonProvider(db2);
 
     // Plain tool error — no .status, no network code
     const toolError = new Error('tool execution failed');
@@ -532,7 +539,7 @@ describe('outage detection — lost jobs', () => {
   async function makeOutageLostJobsSetup() {
     vi.resetModules();
     const Database = (await import('better-sqlite3')).default;
-    const { runResilienceMigration, runMigration } = await import('@src/db/schema.js');
+    const { runResilienceMigration, runMigration, runObservabilityMigration: robsLostJobs } = await import('@src/db/schema.js');
     const { Orchestrator } = await import('@src/orchestrator.js');
     const { MessageBus } = await import('@src/channels/interface.js');
 
@@ -542,6 +549,7 @@ describe('outage detection — lost jobs', () => {
     db.exec(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, context_id TEXT NOT NULL, schedule TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '')`);
     runMigration(db);
     runResilienceMigration(db);
+    robsLostJobs(db);
 
     const providerError = Object.assign(new Error('provider unavailable'), { status: 503 });
     const errorRunner = {
@@ -618,13 +626,14 @@ describe('turn journal — additional scenarios', () => {
   it('journal remains open after turn timeout', async () => {
     vi.resetModules();
     const Database = (await import('better-sqlite3')).default;
-    const { runResilienceMigration } = await import('@src/db/schema.js');
+    const { runResilienceMigration, runObservabilityMigration: robsTimeout } = await import('@src/db/schema.js');
     const { Orchestrator } = await import('@src/orchestrator.js');
     const { MessageBus } = await import('@src/channels/interface.js');
 
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, context_id TEXT NOT NULL, schedule TEXT NOT NULL, prompt TEXT NOT NULL)`);
     runResilienceMigration(db);
+    robsTimeout(db);
 
     // Runner that never resolves (simulates a hung turn)
     const hungRunner = {

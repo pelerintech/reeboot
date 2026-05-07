@@ -193,6 +193,68 @@
       margin-top: 6px;
       text-align: right;
     }
+
+    /* ─── Tab navigation ──────────────────────────────────────────────── */
+    #tab-nav {
+      display: flex;
+      gap: 2px;
+      padding: 0 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+      padding: 8px 16px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      position: relative;
+    }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .tab-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--error);
+      color: #fff;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      margin-left: 5px;
+      vertical-align: middle;
+    }
+    .tab-badge[hidden] { display: none; }
+    #tab-chat, #tab-logs-panel { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    #tab-logs-panel { display: none; padding: 12px; }
+    #tab-logs-panel.active { display: flex; flex-direction: column; gap: 8px; }
+
+    /* ─── Logs tab panel ──────────────────────────────────────────── */
+    #logs-toolbar { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    #logs-level-filter { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; }
+    #logs-pause-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 4px 12px; border-radius: 4px; cursor: pointer; }
+    #logs-table {
+      flex: 1;
+      overflow-y: auto;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.78rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px;
+    }
+    .log-row { padding: 2px 0; white-space: pre-wrap; word-break: break-all; }
+    .log-row.level-warn { color: #f0a500; }
+    .log-row.level-error { color: var(--error); }
+    .log-row.level-fatal { color: #ff4444; font-weight: bold; }
+    .log-row.level-debug { color: var(--text-muted); }
+    .log-row.level-info { color: var(--text); }
   </style>
 </head>
 <body>
@@ -205,9 +267,39 @@
   </div>
 </header>
 
-<div id="messages"></div>
+<!-- Tab navigation -->
+<nav id="tab-nav">
+  <button class="tab-btn active" data-tab="chat">Chat</button>
+  <button class="tab-btn" data-tab="logs" id="logs-tab-btn">
+    Logs
+    <span id="logs-error-badge" class="tab-badge" hidden>0</span>
+  </button>
+</nav>
 
-<footer>
+<!-- Chat panel -->
+<div id="tab-chat">
+  <div id="messages"></div>
+
+</div><!-- end #tab-chat -->
+
+<!-- Logs panel -->
+<div id="tab-logs-panel">
+  <div id="logs-toolbar">
+    <label for="logs-level-filter">Level:</label>
+    <select id="logs-level-filter">
+      <option value="debug">debug</option>
+      <option value="info" selected>info</option>
+      <option value="warn">warn</option>
+      <option value="error">error</option>
+      <option value="fatal">fatal</option>
+    </select>
+    <button id="logs-pause-btn">Pause</button>
+    <span id="logs-status" style="color: var(--text-muted); font-size: 0.8rem;">Connecting…</span>
+  </div>
+  <div id="logs-table"></div>
+</div>
+
+<footer id="chat-footer">
   <div id="input-row">
     <textarea
       id="input"
@@ -417,5 +509,6 @@
   connect();
 })();
 </script>
+<script src="logs.js"></script>
 </body>
 </html>

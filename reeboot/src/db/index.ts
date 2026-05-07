@@ -5,8 +5,9 @@ import { dirname, join } from 'path';
 import { homedir } from 'os';
 import * as sqliteVec from 'sqlite-vec';
 import * as schema from './schema.js';
-import { runMemoryMigration } from './schema.js';
-export { runKnowledgeMigration } from './schema.js';
+import { runMemoryMigration, runObservabilityMigration } from './schema.js';
+export { runKnowledgeMigration, runObservabilityMigration } from './schema.js';
+import { patchDb } from '../observability/db-wrapper.js';
 
 export type { Database as BetterSQLite3Database };
 
@@ -45,6 +46,12 @@ export function openDatabase(dbPath?: string): Database.Database {
 
   // Apply memory migration (FTS5 + memory_log)
   runMemoryMigration(db);
+
+  // Apply observability migration (events, session_events, rate_limits, operational_logs)
+  runObservabilityMigration(db);
+
+  // Patch prepare() to emit debug logs for every query
+  patchDb(db);
 
   _db = db;
   _dbClosed = false;

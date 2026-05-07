@@ -35,7 +35,7 @@ function makeOrchestrator(runner: AgentRunner) {
     content TEXT NOT NULL, tokens_used INTEGER DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
-  db.exec(`CREATE TABLE IF NOT EXISTS turn_journal (turn_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, session_path TEXT, prompt TEXT, started_at TEXT NOT NULL DEFAULT (datetime('now')), status TEXT NOT NULL DEFAULT 'open')`);
+  db.exec(`CREATE TABLE IF NOT EXISTS turn_journal (turn_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, session_path TEXT, prompt TEXT, started_at TEXT NOT NULL DEFAULT (datetime('now')), status TEXT NOT NULL DEFAULT 'open', closed_at TEXT)`);
   db.exec(`CREATE TABLE IF NOT EXISTS turn_journal_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, turn_id TEXT NOT NULL, seq INTEGER NOT NULL, tool_name TEXT NOT NULL, tool_input TEXT NOT NULL, tool_output TEXT, is_error INTEGER NOT NULL DEFAULT 0, fired_at TEXT NOT NULL DEFAULT (datetime('now')))`);
 
   const bus = new MessageBus();

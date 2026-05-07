@@ -15,6 +15,12 @@ import { WebSocket } from 'ws';
 import type { ChannelAdapter, ChannelConfig, MessageBus, MessageContent, ChannelStatus } from './interface.js';
 import { createIncomingMessage } from './interface.js';
 import { registerChannel } from './registry.js';
+import { getLogger } from '../observability/logger.js';
+import { emitEvent } from '../observability/events.js';
+import { getDb } from '../db/index.js';
+
+// Module-level child logger — component bound once, used everywhere in this module
+const _log = getLogger().child({ component: 'signal' });
 
 const CHUNK_SIZE = 4096;
 const CHUNK_DELAY_MS = 100;
@@ -110,12 +116,12 @@ export class SignalAdapter implements ChannelAdapter {
   async start(): Promise<void> {
     if (!isDockerRunning()) {
       this._status = 'error';
-      console.error('[Signal] Docker is not running — cannot start Signal adapter');
+      _log.error('[Signal] Docker is not running — cannot start Signal adapter');
       return;
     }
 
     if (!detectSignalContainer()) {
-      console.warn('[Signal] signal-cli-rest-api container not found — try: reeboot channels login signal');
+      _log.warn('[Signal] signal-cli-rest-api container not found — try: reeboot channels login signal');
     }
 
     // Detect API mode from /v1/about
@@ -132,13 +138,14 @@ export class SignalAdapter implements ChannelAdapter {
 
     this._status = 'connected';
     this._connectedAt = new Date().toISOString();
+    try { emitEvent(getDb(), { type: 'channel_connected', severity: 9, payload: { channelType: 'signal' } }).catch(() => {}); } catch { /* db not ready */ }
 
     if (mode === 'json-rpc') {
-      console.log('[Signal] Connected ✓ — listening via WebSocket (json-rpc mode)');
+      _log.info('[Signal] Connected ✓ — listening via WebSocket (json-rpc mode)');
       this._wsStopped = false;
       this._connectWebSocket();
     } else {
-      console.log(`[Signal] Connected ✓ — polling for messages (${mode} mode)`);
+      _log.info({ mode }, '[Signal] Connected ✓ — polling for messages');
       this._startPolling();
     }
   }
@@ -164,7 +171,7 @@ export class SignalAdapter implements ChannelAdapter {
     });
 
     ws.on('error', (err) => {
-      console.error(`[Signal] WebSocket error: ${err.message}`);
+      _log.error({ err }, `[Signal] WebSocket error: ${err.message}`);
     });
 
     ws.on('close', () => {
@@ -184,7 +191,7 @@ export class SignalAdapter implements ChannelAdapter {
     if (this._pollTimer) return;
     this._pollTimer = setInterval(() => {
       this._poll().catch((err) => {
-        console.error(`[Signal] Poll error: ${err}`);
+        _log.error({ err }, `[Signal] Poll error: ${err}`);
       });
     }, this._pollInterval);
   }
@@ -242,11 +249,11 @@ export class SignalAdapter implements ChannelAdapter {
     }
 
     if (!text) {
-      console.log(`[Signal] Skipping empty envelope source=${source}`);
+      _log.debug({ source }, '[Signal] Skipping empty envelope');
       return;
     }
 
-    console.log(`[Signal] Received message peerId=${peerId} fromSelf=${fromSelf} len=${text.length}`);
+    _log.debug({ peerId, fromSelf, len: text.length }, '[Signal] Received message');
     this._bus?.publish(
       createIncomingMessage({
         channelType: 'signal',
@@ -280,6 +287,7 @@ export class SignalAdapter implements ChannelAdapter {
 
     this._status = 'disconnected';
     this._connectedAt = null;
+    try { emitEvent(getDb(), { type: 'channel_disconnected', severity: 13, payload: { channelType: 'signal', reason: 'stopped' } }).catch(() => {}); } catch { /* db not ready */ }
   }
 
   // ── Send ───────────────────────────────────────────────────────────────────

@@ -28,6 +28,22 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Pino as the single operational logger across all reeboot modules — 2026-05-07 (Request: observability-system)
+
+Pino replaces all `console.*` calls across `src/`. A singleton `getLogger()` is exported from `src/observability/logger.ts`, with stdout NDJSON transport and async file transport at `~/.reeboot/logs/`. Channels receive pino child loggers (`logger.child({ component: 'whatsapp' })`) at `warn` level to suppress Baileys protocol noise while surfacing real errors. Using pino as the single structured logger was the only serious option: it was already in the dependency tree via `@whiskeysockets/baileys`, has the lowest overhead of any Node.js logger, and native multistream support allows stdout + file + SSE in one instance. Winston and Bunyan were rejected on performance and API grounds.
+
+### Turn journal promoted to permanent audit record — 2026-05-07 (Request: observability-system)
+
+`TurnJournal.closeTurn()` previously deleted the row on success (leaving only crash evidence as open rows). It now performs `UPDATE turn_journal SET status = 'closed', closed_at = datetime('now')` instead. Closed rows are retained as permanent audit evidence and pruned after `retention_days` (default 30) by `pruneTurns()`. `getOpenJournals()` continues to filter by `status = 'open'` so crash recovery logic is unaffected. The existing `turn-journal.test.ts` test that asserted deletion was updated to assert `status = 'closed'` and `closed_at` is set.
+
+### OTEL-ready schema for events table — 2026-05-07 (Request: observability-system)
+
+All audit events written by `emitEvent()` include `trace_id` (32-char hex, 16 bytes), `span_id` (16-char hex, 8 bytes), `created_ns` (Unix epoch in nanoseconds), and `severity` (OTEL severity numbers: 9=INFO, 13=WARN, 17=ERROR, 21=FATAL). These fields map directly to OTEL `LogRecord` fields without schema migration when the OTEL exporter adapter is added in the next request (`observability-otel`). No OTEL SDK is added in this request — the exporter is a pure read-and-forward step over the existing `events` table.
+
+### SQLite datetime parsing requires UTC suffix when used with JavaScript Date — 2026-05-07 (Request: observability-system)
+
+SQLite's `datetime('now')` returns strings in `'YYYY-MM-DD HH:MM:SS'` format without timezone information. JavaScript's `new Date('2026-05-07 19:20:15')` parses this as local time (not UTC), causing time comparisons to fail when the server runs in a non-UTC timezone. The fix: when parsing SQLite datetime strings in JavaScript, replace the space with `T` and append `Z` before constructing a `Date`: `new Date(str.replace(' ', 'T') + 'Z')`. This is applied in `scheduler.ts`'s retry-after expiry check and should be used consistently anywhere SQLite datetime strings are compared to `Date.now()`.
+
 ### US-3 spec prescription (send_message tool) rejected — auto-routing retained — 2026-04-23 (Request: agent-continuity)
 
 The unified-scheduling spec (US-3) required the enriched scheduled-task prompt to instruct the agent to call a `send_message` tool for delivery. The implementation instead uses orchestrator auto-routing: when `channelType === 'scheduler'`, `_reply()` reads `origin_channel`/`origin_peer` from `msg.raw` and routes directly to the correct adapter. A `send_message` tool was rejected because it would create double-delivery (tool delivers AND `_reply` delivers), adds fragility (agent must remember to call the tool), and splits responsibility that belongs in the transport layer. The spec was written before the design settled on this approach. US-5 (delivery reaches correct adapter) is fully satisfied. The JSDoc on `buildScheduledPrompt` now reflects the actual mechanism.
@@ -203,3 +219,27 @@ For headless Docker deployments, `REEBOOT_*` env vars are translated to `--no-in
 ### Resilience startup split into DB-only phase and deferred channel phase — 2026-04-22 (Request: resilience)
 
 `server.ts` resilience startup is now two phases. Phase 1 (before channel init): `runResilienceMigration` and `applyScheduledCatchup` — these only need the DB. Phase 2 (after `_orchestrator.start()`): `notifyRestart` and `recoverCrashedTurns` — these need the populated channel adapters Map and a live bus for `requeueFn`. Previously both ran together before `initChannels`, passing the empty initial Map to the broadcast calls so all notifications were silently dropped. Moving phase 2 post-orchestrator also enables the requeueFn to call `bus.publish()` on a subscribed orchestrator. The `recovery` channel type is used for re-queued prompts; it routes to the default context (`main`) and has no adapter, so replies from the orchestrator during recovery are silently dropped (acceptable: the broadcast already notified the user).
+
+### Pino SSE transport uses in-process Writable stream parser, not pino.transport() — 2026-05-07 (Request: observability-system)
+
+To fan pino log records into the SSE stream, `createLogger()` was extended with a third `pino.multistream` destination: a custom `Writable` stream that receives pino's raw NDJSON output, parses each line as JSON, and calls `emitLogRecord(record)` via a lazy `import()` to avoid circular dependency. `pino.transport({ target: './sse-transport' })` (worker thread approach) was considered but rejected: it requires a separate file path resolvable in both source and compiled contexts, adds worker thread complexity, and the in-process writable stream achieves the same result with zero overhead for a single-process server.
+
+### patchDb monkey-patches prepare() in-place rather than wrapping Database type — 2026-05-07 (Request: observability-system)
+
+The original `wrapDb()` returned a `WrappedDatabase` interface — a limited type that doesn't satisfy `Database.Database`. This made wiring into `openDatabase()` difficult since callers expect the full database type. The fix introduces `patchDb(db)` which monkey-patches `db.prepare` directly on the `Database.Database` instance and returns the same object. The original `wrapDb()` is retained for backward compatibility with its tests. `patchDb()` is called inside `openDatabase()` after all migrations, so every query in production goes through the debug wrapper transparently.
+
+### Channel event emissions use getDb() singleton with graceful degradation — 2026-05-07 (Request: observability-system)
+
+`channel_connected` and `channel_disconnected` events are emitted from `whatsapp.ts` and `signal.ts` using `getDb()` from the db index. Since channels may connect before or during server startup before the DB is fully initialised, all `emitEvent(getDb(), ...)` calls are wrapped in `try { } catch { /* db not ready */ }`. This avoids crashes on early connect events while ensuring that once the DB is open, all subsequent channel status changes are recorded.
+
+### operational_logs wired via createLogger(config, db) second argument — 2026-05-07 (Request: observability-system)
+
+The pino logger's `createLogger` function was extended to accept an optional `Database` second argument. When provided, a fourth `pino.multistream` destination is added: an in-process `Writable` stream that parses each NDJSON line and inserts records with `level >= 40` (warn+) into `operational_logs`. The server calls `initLogger({ level }, db)` after migrations complete, re-initialising the singleton with the DB attached. This avoids a circular startup dependency (logger needed before DB, DB needed for logger persistence) by separating creation (boot) from DB attachment (post-migration). The approach is consistent with the existing SSE Writable stream pattern already used in the logger.
+
+### Signal channel uses module-level child logger, not per-call getLogger() — 2026-05-07 (Request: observability-system)
+
+`src/channels/signal.ts` previously called `getLogger().warn({ component: 'signal' }, ...)` on every log call site. This works but doesn't satisfy the spec's explicit requirement for `logger.child({ component: 'signal' })`. Changed to `const _log = getLogger().child({ component: 'signal' })` at module level. The child logger binds the `component` field once, reducing per-call overhead and satisfying the contract. The test was strengthened from checking string presence to asserting `.child(...)` is used and that no per-call `getLogger().xxx(...)` pattern remains.
+
+### rate_limits.provider sourced from config, not pi event field — 2026-05-07 (Request: observability-system)
+
+The `provider` field stored in `rate_limits` rows now comes from `opts.configProvider` (passed to `makeObservabilityExtension` by the loader as `config.agent.model.provider`) rather than `event.provider`. This ensures the scheduler can find the recorded row: both sides agree on the same key. The scheduler is also now constructed with `{ provider: appConfig?.agent?.model?.provider }` in `server.ts` so its `getLatestRateLimit` lookup uses the same string. If pi's `after_provider_response` event carries a different provider identifier, it is now ignored in favour of the config value. The fallback is `'unknown'` on both sides, keeping them consistent in minimal deployments.

@@ -16,6 +16,7 @@ import { Type } from 'typebox';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createRequire } from 'module';
 import { parseHTML } from 'linkedom';
+import { getLogger } from '../observability/logger.js';
 
 // CJS require for @mozilla/readability (it's a CommonJS module)
 const _require = createRequire(import.meta.url);
@@ -135,7 +136,7 @@ export async function searchDuckDuckGo(
 
     return results;
   } catch (err) {
-    console.warn('[web-search] DDG backend error:', err);
+    getLogger().warn({ component: 'web-search', err }, '[web-search] DDG backend error');
     return [];
   }
 }
@@ -157,7 +158,7 @@ export async function searchBrave(
     });
 
     if (!res.ok) {
-      console.warn(`[web-search] Brave API error: HTTP ${res.status}`);
+      getLogger().warn({ component: 'web-search', status: res.status }, `[web-search] Brave API error: HTTP ${res.status}`);
       return [];
     }
 
@@ -170,7 +171,7 @@ export async function searchBrave(
       snippet: r.description ?? '',
     }));
   } catch (err) {
-    console.warn('[web-search] Brave backend error:', err);
+    getLogger().warn({ component: 'web-search', err }, '[web-search] Brave backend error');
     return [];
   }
 }
@@ -190,7 +191,7 @@ export async function searchTavily(
     });
 
     if (!res.ok) {
-      console.warn(`[web-search] Tavily API error: HTTP ${res.status}`);
+      getLogger().warn({ component: 'web-search', status: res.status }, `[web-search] Tavily API error: HTTP ${res.status}`);
       return [];
     }
 
@@ -203,7 +204,7 @@ export async function searchTavily(
       snippet: r.content ?? '',
     }));
   } catch (err) {
-    console.warn('[web-search] Tavily backend error:', err);
+    getLogger().warn({ component: 'web-search', err }, '[web-search] Tavily backend error');
     return [];
   }
 }
@@ -226,7 +227,7 @@ export async function searchSerper(
     });
 
     if (!res.ok) {
-      console.warn(`[web-search] Serper API error: HTTP ${res.status}`);
+      getLogger().warn({ component: 'web-search', status: res.status }, `[web-search] Serper API error: HTTP ${res.status}`);
       return [];
     }
 
@@ -239,7 +240,7 @@ export async function searchSerper(
       snippet: r.snippet ?? '',
     }));
   } catch (err) {
-    console.warn('[web-search] Serper backend error:', err);
+    getLogger().warn({ component: 'web-search', err }, '[web-search] Serper backend error');
     return [];
   }
 }
@@ -262,7 +263,7 @@ export async function searchExa(
     });
 
     if (!res.ok) {
-      console.warn(`[web-search] Exa API error: HTTP ${res.status}`);
+      getLogger().warn({ component: 'web-search', status: res.status }, `[web-search] Exa API error: HTTP ${res.status}`);
       return [];
     }
 
@@ -278,7 +279,7 @@ export async function searchExa(
       };
     });
   } catch (err) {
-    console.warn('[web-search] Exa backend error:', err);
+    getLogger().warn({ component: 'web-search', err }, '[web-search] Exa backend error');
     return [];
   }
 }
@@ -295,7 +296,7 @@ export async function searchSearXNG(
     const res = await fetch(url);
 
     if (!res.ok) {
-      console.warn(`[web-search] SearXNG API error: HTTP ${res.status}`);
+      getLogger().warn({ component: 'web-search', status: res.status }, `[web-search] SearXNG API error: HTTP ${res.status}`);
       return [];
     }
 
@@ -308,7 +309,7 @@ export async function searchSearXNG(
       snippet: r.content ?? '',
     }));
   } catch (err) {
-    console.warn('[web-search] SearXNG backend error:', err);
+    getLogger().warn({ component: 'web-search', err }, '[web-search] SearXNG backend error');
     return [];
   }
 }
@@ -322,9 +323,7 @@ export async function checkSearXNGHealth(baseUrl: string): Promise<string> {
     });
     return 'searxng';
   } catch {
-    console.warn(
-      `[web-search] SearXNG unreachable at ${baseUrl}, falling back to DuckDuckGo`
-    );
+    getLogger().warn({ component: 'web-search', baseUrl }, `[web-search] SearXNG unreachable at ${baseUrl}, falling back to DuckDuckGo`);
     return 'duckduckgo';
   }
 }
@@ -369,9 +368,7 @@ export async function searchBackend(
   if (needsKey.includes(provider)) {
     const apiKey = resolveApiKey(config);
     if (!apiKey) {
-      console.warn(
-        `[web-search] No API key configured for ${provider} search`
-      );
+      getLogger().warn({ component: 'web-search', provider }, `[web-search] No API key configured for ${provider} search`);
       return [];
     }
 
@@ -386,7 +383,7 @@ export async function searchBackend(
     return searchSearXNG(query, baseUrl, limit);
   }
 
-  console.warn(`[web-search] Unknown provider: ${provider}`);
+  getLogger().warn({ component: 'web-search', provider }, `[web-search] Unknown provider: ${provider}`);
   return [];
 }
 
@@ -459,7 +456,7 @@ export default async function webSearchExtension(pi: ExtensionAPI, reebotConfig?
           details: undefined,
         };
       } catch (err) {
-        console.warn('[web-search] web_search error:', err);
+        getLogger().warn({ component: 'web-search', err }, '[web-search] web_search error');
         return {
           content: [{ type: 'text' as const, text: JSON.stringify([]) }],
           details: undefined,

@@ -13,6 +13,7 @@ import type { MessageBus } from '../channels/interface.js';
 import { createIncomingMessage } from '../channels/interface.js';
 import { parseHumanInterval } from './parse.js';
 import { getTasksDue, formatTasksDue } from '../scheduler.js';
+import { getLogger } from '../observability/logger.js';
 
 // ─── renderHeartbeatPrompt ────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ export function startHeartbeat(
         })
       );
     } catch (err) {
-      console.warn(`[Heartbeat] tick failed: ${err}`);
+      getLogger().warn({ component: 'heartbeat', err }, `[Heartbeat] tick failed: ${err}`);
     }
     _heartbeatTimer = setTimeout(tick, intervalMs);
   };

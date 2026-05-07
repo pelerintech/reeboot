@@ -165,6 +165,24 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
     if (mod?.default) await (mod.default as any)(pi, config);
   });
 
+  // Observability extension — always loaded (no feature flag).
+  // Registers session_shutdown and after_provider_response hooks.
+  // Uses getDb() singleton to access the database.
+  factories.push(async (pi) => {
+    const mod = await importExt('observability');
+    if (mod?.makeObservabilityExtension) {
+      const { getDb } = await import('../db/index.js');
+      try {
+        const db = getDb();
+        const threshold = (config as any)?.logging?.rate_limit_warn_threshold ?? 5000;
+        const configProvider: string = (config as any)?.agent?.model?.provider ?? 'unknown';
+        mod.makeObservabilityExtension(pi, db, { rateLimitWarnThreshold: threshold, configProvider });
+      } catch {
+        // DB not available yet — skip observability hooks silently
+      }
+    }
+  });
+
   // Knowledge manager — loaded when knowledge.enabled=true (default false).
   // Registers knowledge_search, knowledge_ingest, and optionally wiki tools.
   if (knowledgeEnabled) {

@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { Type } from 'typebox';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { Config, McpPermissions } from '../config.js';
+import { getLogger } from '../observability/logger.js';
 
 // ─── Sandbox helpers ──────────────────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ export async function defaultSandboxWrapper(
   const sandboxTool = await resolveSandboxTool();
 
   if (!sandboxTool) {
-    console.warn(`sandbox unavailable for MCP server "${serverName}" — spawning without restrictions`);
+    getLogger().warn({ component: 'mcp-manager', serverName }, `sandbox unavailable for MCP server "${serverName}" — spawning without restrictions`);
     return { command, args };
   }
 
@@ -264,13 +265,14 @@ Usage:
           const permissions = serverCfg?.permissions ?? { network: false, filesystem: false };
 
           if (isViolationError(message) && config?.permissions?.violations?.log !== false) {
-            console.warn(JSON.stringify({
+            getLogger().warn({
+              component: 'mcp-manager',
               event: 'mcp_permission_violation',
               server: params.server,
               tool: params.tool,
               error: message,
               permissions,
-            }));
+            }, 'mcp_permission_violation');
           }
 
           return {

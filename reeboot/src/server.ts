@@ -35,6 +35,9 @@ import type { ChannelAdapter } from './channels/interface.js';
 import type { Orchestrator } from './orchestrator.js';
 import { broadcastToAllChannels } from './utils/broadcast.js';
 import type { Scheduler } from './scheduler.js';
+import { streamSSE } from 'hono/streaming';
+import { getLogger, initLogger } from './observability/logger.js';
+import { sseEmitter } from './observability/sse-emitter.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -148,6 +151,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
     applyScheduledCatchup(db, resConfig as any);
   }
 
+  // ── Observability retention pruning ──────────────────────────────────────
+  {
+    const { pruneObservabilityData } = await import('./observability/retention.js');
+    const retentionDays = (opts.config as any)?.logging?.retention_days ?? 30;
+    pruneObservabilityData(db, retentionDays);
+  }
+
+  // ── Re-initialise logger with DB so warn+ records persist to operational_logs ──
+  {
+    const loggingConfig = (opts.config as any)?.logging ?? {};
+    initLogger({ level: loggingConfig.level ?? 'info' }, db);
+  }
+
   // ── Channel & Orchestrator init ─────────────────────────────────────────
 
   const appConfig = opts.config;
@@ -224,7 +240,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           }
         );
       } catch (err) {
-        console.error('[server] Deferred resilience startup failed:', err);
+        getLogger().error({ component: 'server', err }, '[server] Deferred resilience startup failed');
       }
 
       // ── Credential proxy init ──────────────────────────────────────────
@@ -234,10 +250,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           const proxyServer = await startProxy(appConfig as any);
           if (proxyServer) {
             _credProxy = proxyServer;
-            console.log('[server] Credential proxy started on 127.0.0.1:3001');
+            getLogger().info({ component: 'server' }, '[server] Credential proxy started on 127.0.0.1:3001');
           }
         } catch (err) {
-          console.error('[server] Credential proxy init failed:', err);
+          getLogger().error({ component: 'server', err }, '[server] Credential proxy init failed');
         }
       }
 
@@ -266,24 +282,25 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           },
         };
 
-        const schedulerInstance = new Scheduler(db, schedulerOrchestrator);
+        const schedulerProvider: string = (appConfig as any)?.agent?.model?.provider ?? 'unknown';
+        const schedulerInstance = new Scheduler(db, schedulerOrchestrator, { provider: schedulerProvider });
         await schedulerInstance.start();
         setGlobalScheduler(schedulerInstance);
         _scheduler = schedulerInstance;
-        console.log('[server] Scheduler started');
+        getLogger().info({ component: 'server' }, '[server] Scheduler started');
 
         // ── Heartbeat init ───────────────────────────────────────────
         if (appConfig.heartbeat) {
           startHeartbeat(appConfig.heartbeat, db, bus);
           if (appConfig.heartbeat.enabled) {
-            console.log('[server] System heartbeat started');
+            getLogger().info({ component: 'server' }, '[server] System heartbeat started');
           }
         }
       } catch (err) {
-        console.error('[server] Scheduler init failed:', err);
+        getLogger().error({ component: 'server', err }, '[server] Scheduler init failed');
       }
     } catch (err) {
-      console.error('[server] Channel/orchestrator init failed:', err);
+      getLogger().error({ component: 'server', err }, '[server] Channel/orchestrator init failed');
     }
   }
 
@@ -306,6 +323,31 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
       status: 'ok',
       uptime: Math.floor((Date.now() - startTime) / 1000),
       version: getVersion(),
+    });
+  });
+
+  // GET /api/logs/stream — SSE live log stream
+  app.get('/api/logs/stream', (c) => {
+    const levelParam = c.req.query('level') ?? 'info';
+    const levelNum = _pinoLevelToNumber(levelParam);
+
+    return streamSSE(c, async (stream) => {
+      const listener = (record: unknown) => {
+        const r = record as any;
+        // Apply level filter
+        if (typeof r?.level === 'number' && r.level < levelNum) return;
+        stream.writeSSE({ data: JSON.stringify(record) }).catch(() => {});
+      };
+
+      sseEmitter.on('log', listener);
+
+      // Keep the stream alive until client disconnects
+      await new Promise<void>((resolve) => {
+        stream.onAbort(() => {
+          sseEmitter.off('log', listener);
+          resolve();
+        });
+      });
     });
   });
 
@@ -334,7 +376,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
     if (!adapter) {
       return c.json({ error: `Unknown channel type: ${type}` }, 404);
     }
-    adapter.start().catch((err: any) => console.error(`[channels] login error for ${type}:`, err));
+    adapter.start().catch((err: any) => getLogger().error({ component: 'server', err }, `[channels] login error for ${type}`));
     return c.json({ message: 'Login initiated. Check terminal for QR code.' }, 202);
   });
 
@@ -660,5 +702,19 @@ export async function stopServer(): Promise<void> {
       _server!.close(() => resolve());
     });
     _server = null;
+  }
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+function _pinoLevelToNumber(level: string): number {
+  switch (level.toLowerCase()) {
+    case 'trace': return 10;
+    case 'debug': return 20;
+    case 'info':  return 30;
+    case 'warn':  return 40;
+    case 'error': return 50;
+    case 'fatal': return 60;
+    default:      return 30; // default to info
   }
 }
