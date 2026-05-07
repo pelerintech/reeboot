@@ -14,6 +14,7 @@ import { registerChannel } from './registry.js';
 
 const CHUNK_SIZE = 4096;
 const CHUNK_DELAY_MS = 100;
+const noop = () => { };
 
 export class WhatsAppAdapter implements ChannelAdapter {
   private _authDir: string;
@@ -69,7 +70,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
     // Baileys requires a pino-compatible logger. We pass a no-op so its
     // internal Signal Protocol noise never reaches the console. Real errors
     // are surfaced via connection.update / our own console.* calls.
-    const noop = () => {};
     const baileysLogger: any = {
       trace: noop, debug: noop, info: noop, warn: noop, error: noop, fatal: noop,
       child: () => baileysLogger,
@@ -91,7 +91,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
       if (qr) {
         console.log('\n📱 Scan this QR code with WhatsApp (Settings → Linked Devices → Link a Device):\n');
         (qrTerminal as any).default.generate(qr, { small: true });
-        console.log('');
       }
 
       if (connection === 'open') {
@@ -283,9 +282,8 @@ export async function linkWhatsAppDevice(opts: {
   }, timeoutMs)
 
   async function connect(): Promise<void> {
-    const noop2 = () => {};
     const wizardLogger: any = {
-      trace: noop2, debug: noop2, info: noop2, warn: noop2, error: noop2, fatal: noop2,
+      trace: noop, debug: noop, info: noop, warn: noop, error: noop, fatal: noop,
       child: () => wizardLogger,
     };
     const sock = makeWASocket({
