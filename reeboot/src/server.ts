@@ -535,6 +535,69 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
     return c.json(sessions);
   });
 
+  // ── REST: Budget settings ─────────────────────────────────────────────────
+
+  // Mutable config reference for budget settings (updated by PUT)
+  let _mutableConfig = appConfig ? { ...(appConfig as any) } : {} as any;
+
+  app.get('/api/settings/budget', (c) => {
+    const budget = _mutableConfig.budget ?? {};
+
+    // Query today's spend and session spend from usage table.
+    // Session spend = rows created since server start (not just today).
+    const sessionStartTs = new Date(startTime).toISOString().replace('T', ' ').slice(0, 19);
+    let spend = { today_cost_usd: 0, today_tokens: 0, session_cost_usd: 0, session_tokens: 0 };
+    try {
+      const todayRow = db.prepare(`
+        SELECT
+          COALESCE(SUM(cost_usd), 0) as cost,
+          COALESCE(SUM(input_tokens + output_tokens), 0) as tokens
+        FROM usage
+        WHERE created_at >= date('now', 'start of day')
+      `).get() as { cost: number; tokens: number };
+      spend.today_cost_usd = todayRow.cost;
+      spend.today_tokens = todayRow.tokens;
+
+      // Session = rows created since server start
+      const sessionRow = db.prepare(`
+        SELECT
+          COALESCE(SUM(cost_usd), 0) as cost,
+          COALESCE(SUM(input_tokens + output_tokens), 0) as tokens
+        FROM usage
+        WHERE created_at >= ?
+      `).get(sessionStartTs) as { cost: number; tokens: number };
+      spend.session_cost_usd = sessionRow.cost;
+      spend.session_tokens = sessionRow.tokens;
+    } catch { /* table may not have cost_usd column yet */ }
+
+    return c.json({ limits: budget, spend });
+  });
+
+  app.put('/api/settings/budget', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+
+    // Merge partial budget config into mutable config
+    _mutableConfig = {
+      ..._mutableConfig,
+      budget: { ...(_mutableConfig.budget ?? {}), ...body },
+    };
+
+    // Persist to config.json
+    try {
+      const { loadConfig, saveConfig } = await import('./config.js');
+      const saved = loadConfig(configPath);
+      (saved as any).budget = { ...((saved as any).budget ?? {}), ...body };
+      saveConfig(saved, configPath);
+    } catch { /* non-fatal if config file doesn't exist */ }
+
+    // Update the live orchestrator's BudgetGuard so new limits take effect immediately
+    if (_orchestrator && typeof (_orchestrator as any).updateBudgetConfig === 'function') {
+      (_orchestrator as any).updateBudgetConfig(body);
+    }
+
+    return c.json({ ok: true, budget: _mutableConfig.budget });
+  });
+
   // ── WebSocket: /ws/chat/:contextId ──────────────────────────────────────
 
   const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });

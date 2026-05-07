@@ -351,6 +351,28 @@ export function runObservabilityMigration(db: import('better-sqlite3').Database)
 }
 
 /**
+ * Runs an idempotent migration to add cost_usd and operation_type columns
+ * to the usage table. Safe to call multiple times.
+ */
+export function runBudgetMigration(db: import('better-sqlite3').Database): void {
+  const usageExists = (db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='usage'`
+  ).get() as { name: string } | undefined);
+  if (!usageExists) return;
+
+  const usageCols = new Set(
+    (db.pragma('table_info(usage)') as Array<{ name: string }>).map(c => c.name)
+  );
+
+  if (!usageCols.has('cost_usd')) {
+    db.exec(`ALTER TABLE usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`);
+  }
+  if (!usageCols.has('operation_type')) {
+    db.exec(`ALTER TABLE usage ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'user_message'`);
+  }
+}
+
+/**
  * Runs an idempotent migration to add new columns to the tasks table and
  * create the task_runs table. Safe to call multiple times.
  */

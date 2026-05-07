@@ -165,6 +165,27 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
     if (mod?.default) await (mod.default as any)(pi, config);
   });
 
+  // Budget manager — always loaded (no feature flag).
+  // Registers set_budget, check_budget, budget_status tools and turn_end/agent_end hooks.
+  // Workspace path derived from ctx.cwd at registration time.
+  factories.push(async (pi) => {
+    const mod = await importExt('budget-manager');
+    if (mod?.makeBudgetManagerExtension) {
+      const { getDb } = await import('../db/index.js');
+      try {
+        const db = getDb();
+        // Use the DB to get the workspace path; cwd is passed via pi context
+        // The factory uses process.cwd() as the workspacePath (same as default export)
+        mod.makeBudgetManagerExtension(pi, { workspacePath: process.cwd(), config });
+      } catch {
+        // If DB not available, fall back to default export
+        if (mod?.default) mod.default(pi);
+      }
+    } else if (mod?.default) {
+      await (mod.default as any)(pi, config);
+    }
+  });
+
   // Observability extension — always loaded (no feature flag).
   // Registers session_shutdown and after_provider_response hooks.
   // Uses getDb() singleton to access the database.

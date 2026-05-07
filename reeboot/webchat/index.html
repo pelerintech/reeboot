@@ -274,6 +274,7 @@
     Logs
     <span id="logs-error-badge" class="tab-badge" hidden>0</span>
   </button>
+  <button class="tab-btn" data-tab="settings" id="settings-tab-btn">Settings</button>
 </nav>
 
 <!-- Chat panel -->
@@ -281,6 +282,71 @@
   <div id="messages"></div>
 
 </div><!-- end #tab-chat -->
+
+<!-- Settings panel -->
+<div id="tab-settings-panel" style="display:none; flex-direction:column; gap:16px; padding:20px; overflow-y:auto; flex:1;">
+  <h2 style="font-size:1rem; font-weight:600; color:var(--text);">Settings</h2>
+
+  <section id="budget-section">
+    <h3 style="font-size:0.9rem; font-weight:600; margin-bottom:12px; color:var(--accent);">Budget Limits</h3>
+
+    <!-- Daily spend progress bar -->
+    <div id="budget-progress-wrap" style="margin-bottom:14px; display:none;">
+      <div style="display:flex; justify-content:space-between; font-size:0.78rem; color:var(--text-muted); margin-bottom:4px;">
+        <span>Daily spend</span>
+        <span id="budget-progress-label">$0.00 / $0.00</span>
+      </div>
+      <progress id="budget-progress-bar"
+        value="0" max="100"
+        style="width:100%; height:8px; border-radius:4px; accent-color:var(--accent);"
+      ></progress>
+    </div>
+
+    <div id="budget-spend-summary" style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;"></div>
+    <form id="budget-form" style="display:flex; flex-direction:column; gap:10px; max-width:420px;">
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem;">
+        Daily cost limit (USD)
+        <input id="budget-daily-cost" type="number" step="0.01" min="0" placeholder="e.g. 10.00"
+          style="background:#111; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:0.85rem;">
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem;">
+        Daily token limit
+        <input id="budget-daily-tokens" type="number" step="1000" min="0" placeholder="e.g. 500000"
+          style="background:#111; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:0.85rem;">
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem;">
+        Session cost limit (USD)
+        <input id="budget-session-cost" type="number" step="0.01" min="0" placeholder="e.g. 5.00"
+          style="background:#111; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:0.85rem;">
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem;">
+        Session token limit
+        <input id="budget-session-tokens" type="number" step="1000" min="0" placeholder="e.g. 200000"
+          style="background:#111; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:0.85rem;">
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem;">
+        Per-turn cost limit (USD)
+        <input id="budget-turn-cost" type="number" step="0.01" min="0" placeholder="e.g. 1.00"
+          style="background:#111; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:0.85rem;">
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem;">
+        Per-turn token limit
+        <input id="budget-turn-tokens" type="number" step="1000" min="0" placeholder="e.g. 10000"
+          style="background:#111; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:0.85rem;">
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem;">
+        Warn threshold (0.0 – 1.0)
+        <input id="budget-warn-threshold" type="number" step="0.05" min="0" max="1" placeholder="0.8"
+          style="background:#111; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px; font-size:0.85rem;">
+      </label>
+      <button type="submit"
+        style="background:var(--accent); color:#fff; font-weight:600; padding:10px 16px; border-radius:6px; align-self:flex-start;">
+        Save Budget Settings
+      </button>
+      <div id="budget-save-msg" style="font-size:0.8rem; color:#4caf50; display:none;">Budget settings saved</div>
+    </form>
+  </section>
+</div>
 
 <!-- Logs panel -->
 <div id="tab-logs-panel">
@@ -510,5 +576,6 @@
 })();
 </script>
 <script src="logs.js"></script>
+<script src="settings.js"></script>
 </body>
 </html>

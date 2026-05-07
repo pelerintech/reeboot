@@ -243,3 +243,27 @@ The pino logger's `createLogger` function was extended to accept an optional `Da
 ### rate_limits.provider sourced from config, not pi event field — 2026-05-07 (Request: observability-system)
 
 The `provider` field stored in `rate_limits` rows now comes from `opts.configProvider` (passed to `makeObservabilityExtension` by the loader as `config.agent.model.provider`) rather than `event.provider`. This ensures the scheduler can find the recorded row: both sides agree on the same key. The scheduler is also now constructed with `{ provider: appConfig?.agent?.model?.provider }` in `server.ts` so its `getLatestRateLimit` lookup uses the same string. If pi's `after_provider_response` event carries a different provider identifier, it is now ignored in favour of the config value. The fallback is `'unknown'` on both sides, keeping them consistent in minimal deployments.
+
+### operation_type propagated via workspace meta file — 2026-05-07 (Request: token-budget)
+
+The orchestrator knows the `channelType` of each message (scheduler, heartbeat, memory, recovery, user_message), but the `token-meter.ts` extension knows only `ctx.cwd`. Rather than adding cross-boundary communication (IPC, shared state, event fields), the bridge uses a tiny JSON file written by the orchestrator before each `runner.prompt()` call: `~/.reeboot/contexts/<contextId>/workspace/.reeboot_turn_meta.json` with `{ operationType, turnId }`. The token-meter reads this file during `agent_end` and defaults to `'user_message'` if absent. This pattern follows existing reeboot conventions (`ctx.cwd` → `contextId`) and requires zero new infrastructure.
+
+### Per-task budget is extension-scoped, not orchestrator-scoped — 2026-05-07 (Request: token-budget)
+
+Per-task budgets (set via `set_budget()`) live entirely within the `budget-manager.ts` extension closure. The extension accumulates cost on every `turn_end` event, injects a wrap-up instruction on the next `turn_start` when the budget is exhausted, and clears state on `agent_end`. This keeps the orchestrator clean of agentic budget logic and aligns with the agentic self-management philosophy — the agent is instructed to stop, not forcibly killed. Global limits (Layer 1, via BudgetGuard in the orchestrator) remain the true hard stop. The extension writes `.task_budget.json` to the workspace for observability; this file is deleted on `agent_end`.
+
+### Pi's ModelRegistry is the authoritative pricing source — no custom table — 2026-05-07 (Request: token-budget)
+
+`AssistantMessage.usage.cost.total` (calculated by pi from its built-in ModelRegistry) is persisted as `cost_usd` in the usage table. No custom pricing table is maintained in reeboot. Pi already prices all major providers (Anthropic, OpenAI, Google, Groq) with per-token input/output/cacheRead/cacheWrite costs. For models without pricing (local/Ollama), `cost.total` returns 0 — this is detected by checking whether all usage rows have `cost_usd = 0` and surfaced to the user as "cost unavailable for this model" rather than falsely showing $0.00.
+
+### budget_status vs check_budget serve different audiences — 2026-05-07 (Request: token-budget)
+
+Two distinct tools exist with different purposes. `check_budget()` is for the agent itself — returns structured data about the active per-task budget (spend within the current session task), returns "No active task budget" if none is set. `budget_status({ period, operationType })` is for the owner — returns a human-readable summary answering questions like "how much did you spend today?" or "how much did the last memory run cost?" by querying the `usage` table with date and operation_type filters. Both tools are registered by `makeBudgetManagerExtension` and are always available regardless of whether a task budget is active.
+
+### before_agent_start is the correct pi hook for system prompt injection — 2026-05-07 (Request: token-budget)
+
+The initial implementation used `pi.on('turn_start', ...)` with a non-existent `ctx.injectSystemPrompt()` call for the budget exhaustion wrap-up instruction. Pi's `turn_start` ExtensionHandler returns `void` — there is no mechanism to inject content there. The correct hook is `pi.on('before_agent_start', handler)` which returns `BeforeAgentStartEventResult { systemPrompt?: string }`. Returning `{ systemPrompt: existing + instruction }` from this handler prepends content into the system prompt for the next LLM call. This pattern is also used by the memory-manager extension. Any future feature that needs to inject text into the agent's context must use `before_agent_start` returning `{ systemPrompt }`, not `turn_start`.
+
+### Daily budget limits are per-context, not instance-wide — 2026-05-07 (Request: token-budget)
+
+The initial BudgetGuard daily token/cost queries summed usage across ALL contexts, meaning ctx2's spend could block ctx1. The evaluator correctly flagged this as diverging from spec intent ("tokens consumed today for this context"). The queries were updated to add `context_id = ?`. This means `daily_tokens` and `daily_cost_usd` in config.json are per-context per-day limits. A deployment with N active contexts has N independent daily buckets. This is the least surprising semantics for a single-owner agent and is consistent with how session limits already worked (session limits were already per-context).

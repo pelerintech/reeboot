@@ -10,7 +10,7 @@
  * Queue depth: max 5 messages per context; overflow gets "queue full" reply.
  */
 
-import { statfsSync } from 'fs';
+import { statfsSync, mkdirSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
@@ -24,6 +24,7 @@ import type { Database } from 'better-sqlite3';
 import { randomUUID as _randomUUID2 } from 'crypto';
 import { getLogger } from './observability/logger.js';
 import { emitEvent } from './observability/events.js';
+import { BudgetGuard } from './budget/guard.js';
 
 // ─── Config types ─────────────────────────────────────────────────────────────
 
@@ -47,6 +48,8 @@ export interface OrchestratorConfig {
   };
   /** Channel trust config — optional; absent means all channels default to 'owner' */
   channels?: Record<string, { trust?: string; trusted_senders?: string[] }>;
+  /** Override for the reeboot data directory (default: ~/.reeboot). Used in tests. */
+  reebootDir?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -58,6 +61,19 @@ const DEFAULT_RATE_LIMIT_RETRIES = 3;
 const DISK_SPACE_MIN_BYTES = 100 * 1024 * 1024; // 100MB
 const BUSY_REPLY = "I'm still working on your last request. Please wait.";
 const QUEUE_FULL_REPLY = "Queue full. Please wait for the current messages to be processed.";
+
+// ─── Channel type → operation type mapping ───────────────────────────────────
+
+const CHANNEL_OP_TYPE_MAP: Record<string, string> = {
+  scheduler: 'scheduler',
+  heartbeat: 'heartbeat',
+  recovery: 'recovery',
+  memory: 'memory',
+};
+
+function _channelTypeToOperationType(channelType: string): string {
+  return CHANNEL_OP_TYPE_MAP[channelType] ?? 'user_message';
+}
 
 // ─── Disk space check ─────────────────────────────────────────────────────────
 
@@ -103,6 +119,7 @@ export class Orchestrator {
   private _db: Database | null = null;
   private _consecutiveFailures = new Map<string, number>();
   private _activeOutage = false;
+  private _budgetGuard = new BudgetGuard();
 
   constructor(
     config: OrchestratorConfig,
@@ -216,6 +233,37 @@ export class Orchestrator {
       return;
     }
 
+    // Budget pre-check
+    if (this._db && (this._config as any).budget) {
+      const budgetResult = this._budgetGuard.check(this._db, contextId, this._config);
+      if (!budgetResult.ok) {
+        this._reply(msg, `⚠️ Budget limit: ${budgetResult.reason}`);
+        if (this._db) {
+          emitEvent(this._db, {
+            type: 'budget_breached',
+            contextId,
+            channel: msg.channelType,
+            severity: 17,
+            payload: { reason: budgetResult.reason },
+          }).catch(() => {});
+        }
+        return;
+      }
+      if (budgetResult.warning) {
+        if (this._db) {
+          emitEvent(this._db, {
+            type: 'budget_warning',
+            contextId,
+            channel: msg.channelType,
+            severity: 13,
+            payload: { warning: budgetResult.warning },
+          }).catch(() => {});
+        }
+        // Notify owner via channel — warning doesn't block, turn still dispatches
+        this._reply(msg, `⚠️ Budget warning: ${budgetResult.warning}`);
+      }
+    }
+
     const runner = this._runners.get(contextId);
     if (!runner) {
       this._reply(msg, `No runner found for context "${contextId}".`);
@@ -225,6 +273,18 @@ export class Orchestrator {
     const turnId = randomUUID();
     const sessionPath = runner?.getSessionPath?.() ?? undefined;
     this._journal?.openTurn(turnId, contextId, msg.content, sessionPath);
+
+    // Write turn meta file for token-meter to read operation_type
+    const operationType = _channelTypeToOperationType(msg.channelType);
+    const reebootDir = (this._config as any).reebootDir ?? join(homedir(), '.reeboot');
+    const workspaceDir = join(reebootDir, 'contexts', contextId, 'workspace');
+    try {
+      mkdirSync(workspaceDir, { recursive: true });
+      writeFileSync(
+        join(workspaceDir, '.reeboot_turn_meta.json'),
+        JSON.stringify({ operationType, turnId })
+      );
+    } catch { /* non-critical; skip silently */ }
     const turnStartMs = Date.now();
     if (this._db) {
       emitEvent(this._db, {
@@ -764,5 +824,15 @@ export class Orchestrator {
   /** Expose adapters for restart */
   get adapters(): Map<string, ChannelAdapter> {
     return this._adapters;
+  }
+
+  /**
+   * Update the budget section of the in-memory config without restarting.
+   * Called by PUT /api/settings/budget so the live BudgetGuard picks up new limits.
+   */
+  updateBudgetConfig(budget: Record<string, unknown>): void {
+    (this._config as any).budget = { ...((this._config as any).budget ?? {}), ...budget };
+    // Reset warned-keys so updated thresholds can fire fresh warnings
+    this._budgetGuard = new BudgetGuard();
   }
 }

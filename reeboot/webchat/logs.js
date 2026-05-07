@@ -45,10 +45,20 @@
       tabChat.style.display = 'none';
       chatFooter.style.display = 'none';
       tabLogsPanel.classList.add('active');
+      const settingsPanel = document.getElementById('tab-settings-panel');
+      if (settingsPanel) settingsPanel.style.display = 'none';
       // Reset badge when Logs tab is focused
       errorBadgeCount = 0;
       badgeEl.hidden = true;
       badgeEl.textContent = '0';
+    } else if (tab === 'settings') {
+      tabChat.style.display = 'none';
+      chatFooter.style.display = 'none';
+      tabLogsPanel.classList.remove('active');
+      const settingsPanel = document.getElementById('tab-settings-panel');
+      if (settingsPanel) settingsPanel.style.display = 'flex';
+      // Trigger settings load
+      if (window._reebotSettings) window._reebotSettings.load();
     }
   });
 
