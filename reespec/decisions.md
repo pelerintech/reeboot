@@ -28,6 +28,74 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### US-3 spec prescription (send_message tool) rejected — auto-routing retained — 2026-04-23 (Request: agent-continuity)
+
+The unified-scheduling spec (US-3) required the enriched scheduled-task prompt to instruct the agent to call a `send_message` tool for delivery. The implementation instead uses orchestrator auto-routing: when `channelType === 'scheduler'`, `_reply()` reads `origin_channel`/`origin_peer` from `msg.raw` and routes directly to the correct adapter. A `send_message` tool was rejected because it would create double-delivery (tool delivers AND `_reply` delivers), adds fragility (agent must remember to call the tool), and splits responsibility that belongs in the transport layer. The spec was written before the design settled on this approach. US-5 (delivery reaches correct adapter) is fully satisfied. The JSDoc on `buildScheduledPrompt` now reflects the actual mechanism.
+
+### User message persisted before turn loop, not after success — 2026-04-23 (Request: agent-continuity)
+
+MP-1 requires the user message row to be written on all turn outcomes (success, error, timeout). The initial implementation placed the INSERT after the success `break`, so error and timeout paths returned without writing. Fixed by moving the user-message INSERT to immediately before the `while` retry loop — it fires once, unconditionally (for non-synthetic channels), regardless of how the turn ends. The assistant message INSERT stays in the success path only (MP-3: no assistant row on failed turns).
+
+### Session resume uses .jsonl filter matching pi's actual SessionManager output — 2026-04-23 (Request: agent-continuity)
+
+`getResumedSessionPath` previously filtered for `session-*.json` files. Pi's `SessionManager` creates files named `<ISO-timestamp>_<uuid>.jsonl`. The filter was updated to `f.endsWith('.jsonl')`. The `listSessions` function retains its old `session-*.json` filter — it is used for the REST API session listing, not for resume, and is a separate concern.
+
+### memory-manager and knowledge-manager moved to src/extensions/ — 2026-04-23 (Request: agent-continuity)
+
+Both extensions were in `reeboot/extensions/` which is outside `tsconfig.json`'s `rootDir: "./src"`. They were never compiled into `dist/`. Both moved to `src/extensions/` so they compile alongside all other bundled extensions. The outer `extensions/` directory now only contains the sandbox extension (which has its own build path). Import paths in `knowledge-manager.ts` were corrected from `../src/config.js` to `../config.js`.
+
+### memory-manager receives config as second argument, uses require() for DB and scheduler — 2026-04-23 (Request: agent-continuity)
+
+`makeMemoryExtension` previously called `(pi as any).getConfig?.()`, `(pi as any).getDb?.()`, and `(pi as any).getScheduler?.()` — none of which exist on pi's `ExtensionAPI`. Fixed: config is passed as a second argument from the loader (same pattern as `web-search` and `mcp-manager`); DB is accessed via `require('../db/index.js').getDb()`; scheduler via `require('../scheduler-registry.js').globalScheduler` — same pattern as `scheduler-tool.ts`.
+
+### session_search is always-on — loader always pushes memory-manager factory — 2026-04-23 (Request: agent-continuity)
+
+The loader previously gated the entire memory-manager factory on `memoryEnabled`. Since `session_search` must be always available (per the personal-memory spec), the guard was removed. The factory is now always pushed. `makeMemoryExtension` gates the `memory` tool and `before_agent_start` injection internally based on `config.memory.enabled`.
+
+### Orchestrator writes user+assistant messages to DB after each non-synthetic turn — 2026-04-23 (Request: agent-continuity)
+
+After each successful turn, the orchestrator inserts two rows into the `messages` table: one for the user message, one for the assistant response. Scheduler (`channelType: 'scheduler'`) and recovery turns are excluded — they carry synthetic peer IDs that would pollute the session search index. The write is wrapped in a try/catch so minimal deployments without the messages table are unaffected.
+
+### Channel context header prepended to every non-synthetic prompt — 2026-04-23 (Request: agent-continuity)
+
+Before dispatching to `runner.prompt()`, the orchestrator prepends `[channel: X | peer: Y]\n` to the content for all real channel messages. Scheduler and recovery channel types are excluded (they carry synthetic metadata or already have enriched content). This gives the agent reliable channel and peer identity without requiring a separate tool call.
+
+### timer tool removed — all time-based actions through schedule_task — 2026-04-23 (Request: agent-continuity)
+
+The `timer` tool was removed from `scheduler-tool.ts`. It used an in-memory `setTimeout` that bypassed the orchestrator, survived only for the process lifetime, and had no channel routing. All time-based agent actions now go through `schedule_task` (DB-persisted, survives restart). The `TimerManager` class is retained for the `heartbeat` tool. The sleep interceptor bash hook is retained.
+
+### Scheduler-fired tasks routed via origin_channel/origin_peer in raw field — 2026-04-23 (Request: agent-continuity)
+
+`schedule_task` now accepts and persists `origin_channel` and `origin_peer`. When a task fires, the scheduler passes these fields in `ScheduledTaskRef`, `buildScheduledPrompt` embeds them as routing instructions, and the orchestrator's `_reply` reads them from `msg.raw` when `channelType === 'scheduler'`. If origin is set, reply goes to `_adapters.get(origin_channel)` targeting `origin_peer`. If absent, broadcast to all adapters via `__system__`.
+
+### Channel contract test stubs intentionally fail — 2026-04-23 (Request: channel-policy)
+
+The contract validation stubs (`tests/channels/contract/tier1.contract.test.ts` and `tier2.contract.test.ts`) are designed to fail permanently. They run the shared contract suites against deliberately broken adapter stubs and confirm that every contract clause is exercised. These 10 failures are load-bearing: if they started passing it would mean the contract suite is no longer catching violations. Do not fix them.
+
+### ChannelPolicyLayer wrapping happens in registry, not server.ts — 2026-04-23 (Request: channel-policy)
+
+Tier 1 channel adapters are wrapped in `ChannelPolicyLayer` inside `ChannelRegistry.initChannels()`, before `adapter.init()` is called. This ensures the policy layer intercepts the bus from the moment the channel initialises — wrapping after init would be too late since the inner adapter would already hold a reference to the unwrapped bus. The `TIER1_CHANNEL_TYPES` set in `registry.ts` is the canonical declaration of which channels are Tier 1.
+
+### Contract suite uses setup() hook for adapters requiring transport start — 2026-04-23 (Request: channel-policy)
+
+The Tier 1 contract suite's `Tier1FactoryResult` includes an optional `setup?: () => Promise<void>` function called after `init()` and before inbound/echo tests. This accommodates adapters (like WhatsApp) whose message handlers are only registered after `start()` is called. Signal bypasses this by having `simulateInbound` call `_handleIncomingMessage` directly — the factory is explicitly adapter-aware by design.
+
+### Signal echo dedup uses content-key with 10s TTL, not message ID — 2026-04-23 (Request: channel-policy)
+
+Signal's REST API does not return a stable message ID on send (unlike Baileys which returns `key.id`). Echo deduplication uses a composite key of `${peerId}::${text.slice(0, 64)}` stored in a `_sentKeys` Set with a 10-second TTL via `setTimeout`. The key is deleted on first match (one dedup per send) or after TTL expiry. This is sufficient for the agent-reply → syncMessage echo loop which typically arrives within milliseconds.
+
+### Lost-jobs accumulation checked before outage threshold — 2026-04-22 (Request: resilience)
+
+When a turn fails with a provider error, the check order matters: if an outage is already active (`_activeOutage === true`), the failed turn is recorded as a lost job immediately rather than incrementing the consecutive-failure counter. This avoids double-counting the first few failures after outage declaration and keeps the counter semantics clean: counter is only meaningful pre-outage. The counter is never incremented during an active outage.
+
+### Restart notification uses DB marker, not session file presence — 2026-04-22 (Request: resilience)
+
+`notifyRestart` detects a previous run via a `reeboot_state` SQLite table with a `last_started_at` key, rather than checking for existing session files. The DB marker approach is simpler and avoids false positives (session files could exist from manual copies or partial setups). On first startup the marker is absent — no notification sent. On every subsequent startup the notification fires. The marker is always updated to `now` during startup regardless of whether a notification was sent.
+
+### Session continuity is opt-in via sessionsDir on ContextConfig — 2026-04-22 (Request: resilience)
+
+The pi-runner defaults to `SessionManager.inMemory()` when `context.sessionsDir` is absent. File-based session persistence (required for session continuity across restarts) is activated by providing `sessionsDir` on the `ContextConfig`. This keeps tests and minimal deployments unaffected — they continue using in-memory sessions. Production server.ts passes `sessionsDir = ~/.reeboot/sessions/<contextId>/` and `sessionPath` (from `getResumedSessionPath`) to each runner context, enabling both persistence and session resume.
+
 ### LLM-assigned confidence at ingest deferred to v2 — 2026-04-15 (Request: domain-knowledge)
 
 The brief specifies that `confidence` (content quality judgement) is "LLM-assigned at ingest". In v1, `ingestDocument` accepts confidence as a caller-supplied parameter and `knowledge_ingest` defaults it to `'medium'` — no LLM call is made to assess document quality. Making an LLM call inside the ingest pipeline was rejected for v1: it couples a pure, testable pipeline function to the LLM, adds latency for every document (including background/silent ingest), and complicates error handling. The caller-supplied model still allows the agent to pass a reasoned value during interactive ingest. A dedicated v2 task should add an optional `assessConfidence(text, config)` step in `ingestDocument` that makes a brief structured LLM call ("rate this document: high / medium / low, one sentence reason") and uses the result when no caller-supplied value is given. Tracked in agent-roadmap.md.
@@ -131,3 +199,7 @@ Pi (`@mariozechner/pi-coding-agent`) is listed in reeboot's `package.json` depen
 ### Docker headless config via env vars, existing config wins — 2026-03-21 (Request: agent-isolation)
 
 For headless Docker deployments, `REEBOOT_*` env vars are translated to `--no-interactive` flags by `entrypoint.sh` only when no `config.json` exists. If a config.json is already present (volume mount from host setup), it is used as-is and env vars are ignored. `REEBOOT_AGENTS_MD` is an exception — it writes directly to `~/.reeboot/agent/AGENTS.md` before start, enabling persona injection without a wizard. A future platform can implement richer config bundle injection (URL fetch, base64 decode) as an entrypoint wrapper outside reeboot core.
+
+### Resilience startup split into DB-only phase and deferred channel phase — 2026-04-22 (Request: resilience)
+
+`server.ts` resilience startup is now two phases. Phase 1 (before channel init): `runResilienceMigration` and `applyScheduledCatchup` — these only need the DB. Phase 2 (after `_orchestrator.start()`): `notifyRestart` and `recoverCrashedTurns` — these need the populated channel adapters Map and a live bus for `requeueFn`. Previously both ran together before `initChannels`, passing the empty initial Map to the broadcast calls so all notifications were silently dropped. Moving phase 2 post-orchestrator also enables the requeueFn to call `bus.publish()` on a subscribed orchestrator. The `recovery` channel type is used for re-queued prompts; it routes to the default context (`main`) and has no adapter, so replies from the orchestrator during recovery are silently dropped (acceptable: the broadcast already notified the user).

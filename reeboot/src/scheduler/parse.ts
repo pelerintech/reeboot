@@ -104,6 +104,17 @@ export function detectScheduleType(value: string): ScheduleDescriptor {
     return { type: 'once' };
   }
 
+  // "in N unit" — one-shot offset from now (e.g. "in 5 minutes", "in 2h")
+  const inMatch = trimmed.toLowerCase().match(/^in\s+(\d+(?:\.\d+)?)\s*([a-z]+)$/);
+  if (inMatch) {
+    const n = parseFloat(inMatch[1]);
+    const unit = inMatch[2];
+    const ms = UNIT_MS[unit];
+    if (ms !== undefined && n > 0) {
+      return { type: 'once', normalizedMs: Math.round(n * ms) };
+    }
+  }
+
   // Human interval
   const ms = parseHumanInterval(trimmed);
   if (ms !== null) {

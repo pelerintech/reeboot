@@ -201,7 +201,7 @@ export function getResumedSessionPath(
   if (!existsSync(sessionsDir)) return null;
 
   const files = readdirSync(sessionsDir)
-    .filter(f => f.startsWith('session-') && f.endsWith('.json'))
+    .filter(f => f.endsWith('.jsonl'))
     .sort()
     .reverse(); // most recent first
 

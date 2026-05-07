@@ -7,6 +7,10 @@
  */
 
 import type { ChannelAdapter, ChannelConfig, MessageBus } from './interface.js';
+import { ChannelPolicyLayer } from './policy.js';
+
+/** Channel types that must be wrapped in ChannelPolicyLayer (Tier 1: external messaging). */
+const TIER1_CHANNEL_TYPES = new Set(['whatsapp', 'signal', 'telegram', 'slack', 'discord']);
 
 type AdapterFactory = () => ChannelAdapter;
 
@@ -63,7 +67,12 @@ export class ChannelRegistry {
           continue;
         }
 
-        const adapter = factory();
+        let adapter: ChannelAdapter = factory();
+
+        // Tier 1 channels get wrapped in ChannelPolicyLayer before init/start.
+        if (TIER1_CHANNEL_TYPES.has(type)) {
+          adapter = new ChannelPolicyLayer(adapter);
+        }
 
         if (channelCfg.enabled) {
           await adapter.init(channelCfg, bus);

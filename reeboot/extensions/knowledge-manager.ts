@@ -18,7 +18,7 @@
  *   - session_shutdown   — stops file watcher
  */
 
-import { Type } from '@sinclair/typebox';
+import { Type } from 'typebox';
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, readdirSync } from 'fs';
 import { join, basename } from 'path';

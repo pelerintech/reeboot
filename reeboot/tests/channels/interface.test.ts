@@ -33,4 +33,31 @@ describe('ChannelAdapter interface types', () => {
     expect(msg.timestamp).toBeTypeOf('number');
     expect(msg.raw).toBeDefined();
   });
+
+  it('IncomingMessage accepts optional fromSelf field', async () => {
+    const { createIncomingMessage } = await import('@src/channels/interface.js');
+    const withFromSelf = createIncomingMessage({
+      channelType: 'whatsapp',
+      peerId: '1234@s.whatsapp.net',
+      content: 'Hi',
+      raw: {},
+      fromSelf: true,
+    });
+    expect(withFromSelf.fromSelf).toBe(true);
+
+    const withoutFromSelf = createIncomingMessage({
+      channelType: 'whatsapp',
+      peerId: '1234@s.whatsapp.net',
+      content: 'Hi',
+      raw: {},
+    });
+    expect(withoutFromSelf.fromSelf).toBeUndefined();
+  });
+
+  it('ChannelAdapter interface includes selfAddress method', async () => {
+    // Verify WebAdapter (a real implementation) exposes selfAddress()
+    const { webAdapter } = await import('@src/channels/web.js');
+    expect(typeof webAdapter.selfAddress).toBe('function');
+    expect(webAdapter.selfAddress()).toBeNull();
+  });
 });

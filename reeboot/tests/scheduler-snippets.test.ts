@@ -9,7 +9,6 @@ import { describe, it, expect } from 'vitest';
 import type { ToolDefinition } from '@mariozechner/pi-coding-agent';
 
 const EXPECTED_TOOLS = [
-  'timer',
   'heartbeat',
   'schedule_task',
   'list_tasks',

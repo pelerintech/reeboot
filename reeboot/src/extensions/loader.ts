@@ -157,15 +157,13 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
     });
   }
 
-  // Memory manager — loaded based on memory.enabled (defaults true).
-  // The extension itself always registers session_search (always-on capability),
-  // and gates the memory tool and system prompt injection on config.memory.enabled.
-  if (memoryEnabled) {
-    factories.push(async (pi) => {
-      const mod = await importExt('memory-manager');
-      if (mod?.default) await (mod.default as any)(pi);
-    });
-  }
+  // Memory manager — always loaded so session_search is always available.
+  // The extension itself gates the memory tool and system prompt injection
+  // on config.memory.enabled internally.
+  factories.push(async (pi) => {
+    const mod = await importExt('memory-manager');
+    if (mod?.default) await (mod.default as any)(pi, config);
+  });
 
   // Knowledge manager — loaded when knowledge.enabled=true (default false).
   // Registers knowledge_search, knowledge_ingest, and optionally wiki tools.

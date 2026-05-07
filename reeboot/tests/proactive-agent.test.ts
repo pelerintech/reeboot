@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { runMigration } from '../src/db/schema.js';
+import { MessageBus } from '@src/channels/interface.js';
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
@@ -56,61 +57,60 @@ describe('System heartbeat', () => {
     db.close();
   });
 
+  function makeBus() {
+    return new MessageBus();
+  }
+
   it('disabled by default — no heartbeat loop started when enabled=false', async () => {
     const { startHeartbeat, stopHeartbeat } = await import('../src/scheduler/heartbeat.js');
-    const orchestrator = {
-      handleHeartbeatTick: vi.fn().mockResolvedValue('IDLE'),
-      sendToDefaultChannel: vi.fn(),
-    };
+    const bus = makeBus();
+    const publishSpy = vi.spyOn(bus, 'publish');
 
-    startHeartbeat({ enabled: false, interval: 'every 5m', contextId: 'main' }, db, orchestrator);
+    startHeartbeat({ enabled: false, interval: 'every 5m', contextId: 'main' }, db, bus);
 
-    // Advance past the interval — nothing should fire
     await vi.advanceTimersByTimeAsync(400_000);
-    expect(orchestrator.handleHeartbeatTick).not.toHaveBeenCalled();
+    expect(publishSpy).not.toHaveBeenCalled();
     stopHeartbeat();
   });
 
   it('fires at configured interval when enabled', async () => {
     const { startHeartbeat, stopHeartbeat } = await import('../src/scheduler/heartbeat.js');
-    const orchestrator = {
-      handleHeartbeatTick: vi.fn().mockResolvedValue('IDLE'),
-      sendToDefaultChannel: vi.fn(),
-    };
+    const bus = makeBus();
+    const publishSpy = vi.spyOn(bus, 'publish');
 
-    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, orchestrator);
+    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, bus);
 
     await vi.advanceTimersByTimeAsync(65_000);
-    expect(orchestrator.handleHeartbeatTick).toHaveBeenCalledTimes(1);
+    expect(publishSpy).toHaveBeenCalledTimes(1);
     stopHeartbeat();
   });
 
   it('fires multiple times across multiple intervals', async () => {
     const { startHeartbeat, stopHeartbeat } = await import('../src/scheduler/heartbeat.js');
-    const orchestrator = {
-      handleHeartbeatTick: vi.fn().mockResolvedValue('IDLE'),
-      sendToDefaultChannel: vi.fn(),
-    };
+    const bus = makeBus();
+    const publishSpy = vi.spyOn(bus, 'publish');
 
-    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, orchestrator);
+    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, bus);
 
     await vi.advanceTimersByTimeAsync(130_000);
-    expect(orchestrator.handleHeartbeatTick).toHaveBeenCalledTimes(2);
+    expect(publishSpy).toHaveBeenCalledTimes(2);
     stopHeartbeat();
   });
 
-  it('passes contextId to handleHeartbeatTick', async () => {
+  it('published message has correct channelType, peerId, and content', async () => {
     const { startHeartbeat, stopHeartbeat } = await import('../src/scheduler/heartbeat.js');
-    const orchestrator = {
-      handleHeartbeatTick: vi.fn().mockResolvedValue('IDLE'),
-      sendToDefaultChannel: vi.fn(),
-    };
+    const bus = makeBus();
+    const publishSpy = vi.spyOn(bus, 'publish');
 
-    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, orchestrator);
+    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, bus);
 
     await vi.advanceTimersByTimeAsync(65_000);
-    expect(orchestrator.handleHeartbeatTick).toHaveBeenCalledWith(
-      expect.objectContaining({ contextId: 'main' })
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: 'heartbeat',
+        peerId: 'main',
+        content: expect.stringContaining('System heartbeat'),
+      })
     );
     stopHeartbeat();
   });
@@ -122,7 +122,6 @@ describe('System heartbeat', () => {
   });
 
   it('prompt contains overdue task when one exists', async () => {
-    // Insert an overdue task
     const pastTime = new Date(Date.now() - 3_600_000).toISOString();
     db.prepare(
       `INSERT INTO tasks (id, context_id, schedule, prompt, enabled, schedule_type, schedule_value, status, next_run)
@@ -136,7 +135,6 @@ describe('System heartbeat', () => {
   });
 
   it('prompt contains upcoming task (next 24h)', async () => {
-    // Insert a task due in 3 hours
     const futureTime = new Date(Date.now() + 3 * 3_600_000).toISOString();
     db.prepare(
       `INSERT INTO tasks (id, context_id, schedule, prompt, enabled, schedule_type, schedule_value, status, next_run)
@@ -149,67 +147,18 @@ describe('System heartbeat', () => {
     expect(prompt).toContain('Deploy check');
   });
 
-  it('IDLE response suppressed — sendToDefaultChannel not called', async () => {
-    const { startHeartbeat, stopHeartbeat } = await import('../src/scheduler/heartbeat.js');
-    const orchestrator = {
-      handleHeartbeatTick: vi.fn().mockResolvedValue('IDLE'),
-      sendToDefaultChannel: vi.fn(),
-    };
-
-    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, orchestrator);
-    await vi.advanceTimersByTimeAsync(65_000);
-    expect(orchestrator.sendToDefaultChannel).not.toHaveBeenCalled();
-    stopHeartbeat();
-  });
-
-  it('non-IDLE response sent to default channel', async () => {
-    const { startHeartbeat, stopHeartbeat } = await import('../src/scheduler/heartbeat.js');
-    const orchestrator = {
-      handleHeartbeatTick: vi.fn().mockResolvedValue('I found 2 emails that need attention.'),
-      sendToDefaultChannel: vi.fn(),
-    };
-
-    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, orchestrator);
-    await vi.advanceTimersByTimeAsync(65_000);
-    expect(orchestrator.sendToDefaultChannel).toHaveBeenCalledWith(
-      'main',
-      'I found 2 emails that need attention.'
-    );
-    stopHeartbeat();
-  });
-
-  it('IDLE detection is case-insensitive', async () => {
-    const { startHeartbeat, stopHeartbeat } = await import('../src/scheduler/heartbeat.js');
-    const sendSpy = vi.fn();
-
-    for (const response of ['idle', 'IDLE', '  IDLE  ', 'IDLE\n']) {
-      sendSpy.mockClear();
-      const orchestrator = {
-        handleHeartbeatTick: vi.fn().mockResolvedValue(response),
-        sendToDefaultChannel: sendSpy,
-      };
-      startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, orchestrator);
-      await vi.advanceTimersByTimeAsync(65_000);
-      expect(sendSpy).not.toHaveBeenCalled();
-      stopHeartbeat();
-    }
-  });
-
   it('stopHeartbeat prevents further ticks', async () => {
     const { startHeartbeat, stopHeartbeat } = await import('../src/scheduler/heartbeat.js');
-    const orchestrator = {
-      handleHeartbeatTick: vi.fn().mockResolvedValue('IDLE'),
-      sendToDefaultChannel: vi.fn(),
-    };
+    const bus = makeBus();
+    const publishSpy = vi.spyOn(bus, 'publish');
 
-    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, orchestrator);
+    startHeartbeat({ enabled: true, interval: 'every 1m', contextId: 'main' }, db, bus);
     await vi.advanceTimersByTimeAsync(65_000);
-    expect(orchestrator.handleHeartbeatTick).toHaveBeenCalledTimes(1);
+    expect(publishSpy).toHaveBeenCalledTimes(1);
 
     stopHeartbeat();
     await vi.advanceTimersByTimeAsync(65_000);
-    // Still only 1 call
-    expect(orchestrator.handleHeartbeatTick).toHaveBeenCalledTimes(1);
+    expect(publishSpy).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -17,6 +17,7 @@ afterEach(() => {
   delete process.env.REEBOOT_PORT;
   delete process.env.REEBOOT_LOG_LEVEL;
   delete process.env.REEBOOT_API_TOKEN;
+  delete process.env.REEBOOT_AUTH_MODE;
 });
 
 describe('loadConfig()', () => {

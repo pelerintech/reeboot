@@ -85,6 +85,42 @@ describe('ChannelRegistry', () => {
     expect(startGood).toHaveBeenCalled();
   });
 
+  it('Tier 1 channels (whatsapp, signal) are wrapped in ChannelPolicyLayer', async () => {
+    const { ChannelRegistry } = await import('@src/channels/registry.js');
+    const { ChannelPolicyLayer } = await import('@src/channels/policy.js');
+    const registry = new ChannelRegistry();
+    const { MessageBus } = await import('@src/channels/interface.js');
+    const bus = new MessageBus();
+
+    const makeAdapter = () => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn(),
+      send: vi.fn(),
+      status: () => 'disconnected' as const,
+      connectedAt: () => null,
+      selfAddress: () => null,
+    });
+
+    registry.register('whatsapp', makeAdapter);
+    registry.register('signal', makeAdapter);
+    registry.register('web', makeAdapter);
+
+    const config = {
+      channels: {
+        whatsapp: { enabled: true },
+        signal: { enabled: true },
+        web: { enabled: true },
+      },
+    } as any;
+
+    const result = await registry.initChannels(config, bus);
+
+    expect(result.get('whatsapp')).toBeInstanceOf(ChannelPolicyLayer);
+    expect(result.get('signal')).toBeInstanceOf(ChannelPolicyLayer);
+    expect(result.get('web')).not.toBeInstanceOf(ChannelPolicyLayer);
+  });
+
   it('initChannels returns map of running adapters', async () => {
     const { ChannelRegistry } = await import('@src/channels/registry.js');
     const registry = new ChannelRegistry();

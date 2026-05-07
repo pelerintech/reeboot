@@ -38,6 +38,13 @@ export interface IncomingMessage {
   raw: unknown;
   /** Resolved trust level for this message. Absent means 'owner' (no restriction). */
   trust?: MessageTrust;
+  /**
+   * True when the message originated from the agent's own account on this channel
+   * (e.g. WhatsApp fromMe=true self-chat, Signal syncMessage note-to-self).
+   * Used by ChannelPolicyLayer for Mode 1 owner resolution.
+   * Web and CLI leave this undefined — all their messages are implicitly from the owner.
+   */
+  fromSelf?: boolean;
 }
 
 /**
@@ -80,6 +87,16 @@ export interface ChannelConfig {
 
 // ─── ChannelAdapter ───────────────────────────────────────────────────────────
 
+/**
+ * See src/channels/CHANNEL_CONTRACT.md for the full behavioural contract
+ * that every ChannelAdapter implementation must satisfy.
+ *
+ * Tier 1 (External Messaging: WhatsApp, Signal, Telegram, Slack, Discord):
+ *   Full contract — fromSelf resolution, echo deduplication, lifecycle, send guard.
+ *
+ * Tier 2 (Local Interface: Web, CLI):
+ *   Lite contract — lifecycle, send guard, __system__ broadcasts to all peers.
+ */
 export interface ChannelAdapter {
   /** Initialize the adapter: register with bus, set up internals */
   init(config: ChannelConfig, bus: MessageBus): Promise<void>;
@@ -93,4 +110,10 @@ export interface ChannelAdapter {
   status(): ChannelStatus;
   /** ISO timestamp when status last became 'connected', or null */
   connectedAt(): string | null;
+  /**
+   * The adapter's own address on this channel — used by ChannelPolicyLayer
+   * for Mode 1 (self-chat) __system__ resolution.
+   * Returns null when not connected or not applicable (Web, CLI).
+   */
+  selfAddress(): string | null;
 }

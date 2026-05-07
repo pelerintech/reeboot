@@ -47,6 +47,12 @@ export async function handleDefaultAction(opts: {
       const { loadConfig } = await import('./config.js');
       const { startServer } = await import('./server.js');
       const config = loadConfig(configPath);
+      const authMode = config.agent.model.authMode ?? 'own';
+      if (authMode === 'pi') {
+        console.log('[reeboot] auth: using pi\'s provider, model and auth');
+      } else {
+        console.log(`[reeboot] auth: own (provider=${config.agent.model.provider})`);
+      }
       await startServer({
         port: config.channels.web.port,
         host: process.env.REEBOOT_HOST ?? '127.0.0.1',

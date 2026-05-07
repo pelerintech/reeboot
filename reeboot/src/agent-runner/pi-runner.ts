@@ -219,10 +219,35 @@ export class PiAgentRunner implements AgentRunner {
     this._session = null;
   }
 
+  /**
+   * Reset for reuse: clear the current session (it will be recreated lazily on
+   * the next prompt) without permanently disabling the runner.
+   */
+  async reset(): Promise<void> {
+    this.abort();
+    this._session = null;
+    this.disposed = false;
+    this._toolCallHookRegistered = false; // re-register guard on next session
+  }
+
   // ── reload ─────────────────────────────────────────────────────────────────
 
   async reload(): Promise<void> {
     await this.loader.reload();
+  }
+
+  /**
+   * Returns the active pi session file path if file-based sessions are in use.
+   * Available after the first `prompt()` call (session is created lazily).
+   */
+  getSessionPath(): string | undefined {
+    if (!this._session) return undefined;
+    try {
+      const sm = (this._session as any).sessionManager;
+      return sm?.getSessionFile?.() ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   // ── internal ───────────────────────────────────────────────────────────────
@@ -249,6 +274,17 @@ export class PiAgentRunner implements AgentRunner {
 
     let sessionOpts: any;
 
+    // Build a SessionManager: use file-based if sessionsDir provided, else in-memory
+    const buildSessionManager = () => {
+      if (this.context.sessionsDir) {
+        if (this.context.sessionPath) {
+          return SessionManager.open(this.context.sessionPath, this.context.sessionsDir);
+        }
+        return SessionManager.create(this.context.workspacePath, this.context.sessionsDir);
+      }
+      return SessionManager.inMemory();
+    };
+
     if (authMode === 'pi') {
       const settingsManager = SettingsManager.create(this.context.workspacePath, piAgentDir);
       const authStorage = AuthStorage.create(join(piAgentDir, 'auth.json'));
@@ -257,7 +293,7 @@ export class PiAgentRunner implements AgentRunner {
       sessionOpts = {
         cwd: this.context.workspacePath,
         resourceLoader: this.loader,
-        sessionManager: SessionManager.inMemory(),
+        sessionManager: buildSessionManager(),
         settingsManager,
         authStorage,
         modelRegistry,
@@ -291,7 +327,7 @@ export class PiAgentRunner implements AgentRunner {
       sessionOpts = {
         cwd: this.context.workspacePath,
         resourceLoader: this.loader,
-        sessionManager: SessionManager.inMemory(),
+        sessionManager: buildSessionManager(),
         settingsManager,
         authStorage,
         modelRegistry,

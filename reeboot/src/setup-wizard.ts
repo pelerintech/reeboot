@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { saveConfig, loadConfig, defaultConfig, type Config } from './config.js';
+import { fb } from './utils/fallback.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +28,7 @@ export interface WizardOptions {
  * In interactive mode, delegates to the new modular wizard (src/wizard/index.ts).
  * In non-interactive mode, builds config directly from provided opts.
  */
+
 export async function runWizard(opts: WizardOptions = {}): Promise<void> {
   const configDir = opts.configDir ?? join(homedir(), '.reeboot');
   const configPath = join(configDir, 'config.json');
@@ -39,7 +41,7 @@ export async function runWizard(opts: WizardOptions = {}): Promise<void> {
     return;
   }
 
-  // Non-interactive: build config from provided flags directly
+  // Non-interactive: build config from provided flags directly (defensively merge with existing)
   const answers = {
     provider: opts.provider ?? '',
     apiKey: opts.apiKey ?? '',
@@ -48,46 +50,63 @@ export async function runWizard(opts: WizardOptions = {}): Promise<void> {
     name: opts.name ?? 'Reeboot',
   };
 
-  // Build config from answers
+  let rawExisting: unknown = null;
+  try {
+    rawExisting = loadConfig(configPath);
+  } catch {
+    // No existing config — use defaults
+  }
+
+  const existing = (rawExisting && typeof rawExisting === 'object') ? (rawExisting as Config) : null;
+
   const config: Config = {
-    ...defaultConfig,
+    ...fb(existing, defaultConfig),
     agent: {
+      ...fb(existing?.agent, defaultConfig.agent),
       name: answers.name,
-      runner: defaultConfig.agent.runner,
+      runner: fb(existing?.agent, defaultConfig.agent).runner,
       model: {
         authMode: (opts.authMode ?? 'own') as 'pi' | 'own',
         provider: opts.authMode === 'pi' ? '' : answers.provider,
         id: opts.authMode === 'pi' ? '' : answers.model,
         apiKey: opts.authMode === 'pi' ? '' : answers.apiKey,
       },
-      turnTimeout: defaultConfig.agent.turnTimeout,
+      turnTimeout: fb(existing?.agent, defaultConfig.agent).turnTimeout,
     },
     channels: {
       web: {
-        ...defaultConfig.channels.web,
+        ...fb(existing?.channels?.web, defaultConfig.channels.web),
         enabled: answers.channels.includes('web'),
       },
       whatsapp: {
-        ...defaultConfig.channels.whatsapp,
+        ...fb(existing?.channels?.whatsapp, defaultConfig.channels.whatsapp),
         enabled: answers.channels.includes('whatsapp'),
       },
       signal: {
-        ...defaultConfig.channels.signal,
+        ...fb(existing?.channels?.signal, defaultConfig.channels.signal),
         enabled: answers.channels.includes('signal'),
-        phoneNumber: defaultConfig.channels.signal.phoneNumber,
-        apiPort: defaultConfig.channels.signal.apiPort,
-        pollInterval: defaultConfig.channels.signal.pollInterval,
+        phoneNumber: fb(existing?.channels?.signal, defaultConfig.channels.signal).phoneNumber,
+        apiPort: fb(existing?.channels?.signal, defaultConfig.channels.signal).apiPort,
+        pollInterval: fb(existing?.channels?.signal, defaultConfig.channels.signal).pollInterval,
       },
     },
-    sandbox: defaultConfig.sandbox,
-    logging: defaultConfig.logging,
-    server: defaultConfig.server,
-    extensions: defaultConfig.extensions,
-    routing: defaultConfig.routing,
-    session: defaultConfig.session,
-    credentialProxy: defaultConfig.credentialProxy,
-    search: defaultConfig.search,
-    heartbeat: defaultConfig.heartbeat,
+    sandbox: fb(existing?.sandbox, defaultConfig.sandbox),
+    logging: fb(existing?.logging, defaultConfig.logging),
+    server: fb(existing?.server, defaultConfig.server),
+    extensions: fb(existing?.extensions, defaultConfig.extensions),
+    routing: fb(existing?.routing, defaultConfig.routing),
+    session: fb(existing?.session, defaultConfig.session),
+    credentialProxy: fb(existing?.credentialProxy, defaultConfig.credentialProxy),
+    search: fb(existing?.search, defaultConfig.search),
+    heartbeat: fb(existing?.heartbeat, defaultConfig.heartbeat),
+    skills: fb(existing?.skills, defaultConfig.skills),
+    mcp: fb(existing?.mcp, defaultConfig.mcp),
+    permissions: fb(existing?.permissions, defaultConfig.permissions),
+    security: fb(existing?.security, defaultConfig.security),
+    contexts: existing?.contexts ?? defaultConfig.contexts,
+    memory: fb(existing?.memory, defaultConfig.memory),
+    knowledge: fb(existing?.knowledge, defaultConfig.knowledge),
+    resilience: fb(existing?.resilience, defaultConfig.resilience),
   };
 
   // Write config

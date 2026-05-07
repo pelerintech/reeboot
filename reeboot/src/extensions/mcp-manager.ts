@@ -15,7 +15,7 @@
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Type } from '@sinclair/typebox';
+import { Type } from 'typebox';
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import type { Config, McpPermissions } from '../config.js';
 

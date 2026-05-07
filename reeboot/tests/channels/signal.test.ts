@@ -397,6 +397,204 @@ describe('SignalAdapter — send', () => {
   });
 });
 
+// ─── syncMessage self-destination filter ────────────────────────────────────
+
+describe('SignalAdapter — syncMessage self-destination filter', () => {
+  let SignalAdapter: any;
+  let adapter: any;
+  let bus: MessageBus;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    MockWebSocket.lastInstance = null;
+    mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
+    mockFetch.mockResolvedValue(aboutResponse('json-rpc'));
+    const mod = await import('@src/channels/signal.js');
+    SignalAdapter = mod.SignalAdapter;
+    bus = new MessageBus();
+    adapter = new SignalAdapter({ phoneNumber: '+1234567890', apiPort: 8080 });
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+  });
+
+  afterEach(async () => { await adapter?.stop?.(); });
+
+  it('syncMessage to own number (note-to-self) is published to bus', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeSyncMessage('+1234567890', '+1234567890', 'note to self')
+    );
+    expect(received).toHaveLength(1);
+    expect(received[0].content).toBe('note to self');
+  });
+
+  it('syncMessage to a third party is NOT published to bus', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeSyncMessage('+1234567890', '+1987654321', 'message to someone else')
+    );
+    expect(received).toHaveLength(0);
+  });
+});
+
+// ─── echo deduplication ───────────────────────────────────────────────────────────
+
+describe('SignalAdapter — echo deduplication', () => {
+  let SignalAdapter: any;
+  let adapter: any;
+  let bus: MessageBus;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    MockWebSocket.lastInstance = null;
+    mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
+    mockFetch
+      .mockResolvedValueOnce(aboutResponse('json-rpc'))
+      .mockResolvedValue(makeSendResponse());
+    const mod = await import('@src/channels/signal.js');
+    SignalAdapter = mod.SignalAdapter;
+    bus = new MessageBus();
+    adapter = new SignalAdapter({ phoneNumber: '+1234567890', apiPort: 8080 });
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await adapter?.stop?.();
+  });
+
+  it('syncMessage echo of a sent message is suppressed', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    // Adapter sends a message
+    await adapter.send('+1234567890', { type: 'text', text: 'agent reply' });
+
+    // Transport echoes it back as a syncMessage (note-to-self)
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeSyncMessage('+1234567890', '+1234567890', 'agent reply')
+    );
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('genuine note-to-self (no prior send) is NOT suppressed', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    // No send — just an incoming note-to-self typed by the user
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeSyncMessage('+1234567890', '+1234567890', 'user typed this')
+    );
+
+    expect(received).toHaveLength(1);
+    expect(received[0].content).toBe('user typed this');
+  });
+
+  it('dedup token expires after TTL and message is accepted again', async () => {
+    const received: any[] = [];
+    bus.onMessage((m) => received.push(m));
+
+    await adapter.send('+1234567890', { type: 'text', text: 'agent reply' });
+
+    // Advance past 10s TTL
+    await vi.advanceTimersByTimeAsync(11_000);
+
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeSyncMessage('+1234567890', '+1234567890', 'agent reply')
+    );
+
+    // After TTL expired, same text from same peer is accepted
+    expect(received).toHaveLength(1);
+  });
+});
+
+// ─── send() status guard ────────────────────────────────────────────────────
+
+describe('SignalAdapter — send() status guard', () => {
+  let SignalAdapter: any;
+  let adapter: any;
+  let bus: MessageBus;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
+    mockFetch.mockResolvedValue(aboutResponse('normal'));
+    const mod = await import('@src/channels/signal.js');
+    SignalAdapter = mod.SignalAdapter;
+    bus = new MessageBus();
+    adapter = new SignalAdapter({ phoneNumber: '+1234567890', apiPort: 8080 });
+  });
+
+  it('send() returns without throwing when adapter is not started', async () => {
+    await adapter.init({ enabled: true }, bus);
+    // NOT started — status is still 'disconnected'
+    mockFetch.mockClear();
+    await expect(adapter.send('+1987654321', { type: 'text', text: 'hello' })).resolves.toBeUndefined();
+    // No HTTP call should have been made
+    const sendCalls = mockFetch.mock.calls.filter(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('/v2/send')
+    );
+    expect(sendCalls).toHaveLength(0);
+  });
+});
+
+// ─── observability logging ───────────────────────────────────────────────────
+
+describe('SignalAdapter — observability logging', () => {
+  let SignalAdapter: any;
+  let adapter: any;
+  let bus: MessageBus;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    MockWebSocket.lastInstance = null;
+    mockExecSync.mockReturnValue(Buffer.from('signal-cli-rest-api'));
+    mockFetch.mockResolvedValue(aboutResponse('json-rpc'));
+    const mod = await import('@src/channels/signal.js');
+    SignalAdapter = mod.SignalAdapter;
+    bus = new MessageBus();
+    adapter = new SignalAdapter({ phoneNumber: '+1234567890', apiPort: 8080 });
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+  });
+
+  afterEach(async () => { await adapter?.stop?.(); });
+
+  it('logs [Signal] Received message when a valid message is processed', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeDataMessage('+1987654321', 'Hello')
+    );
+    expect(logSpy.mock.calls.some((args: any[]) =>
+      String(args[0]).includes('[Signal] Received message')
+    )).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it('logs [Signal] Skipping empty when envelope has no text', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    MockWebSocket.lastInstance!.simulateMessage({
+      envelope: {
+        source: '+1987654321',
+        sourceNumber: '+1987654321',
+        dataMessage: { message: '' }, // empty text
+      },
+    });
+    expect(logSpy.mock.calls.some((args: any[]) =>
+      String(args[0]).includes('[Signal] Skipping empty')
+    )).toBe(true);
+    logSpy.mockRestore();
+  });
+});
+
 // ─── detectSignalContainer ────────────────────────────────────────────────────
 
 describe('detectSignalContainer', () => {

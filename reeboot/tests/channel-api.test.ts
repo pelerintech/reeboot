@@ -1,5 +1,5 @@
 /**
- * Channel REST API tests (task 7.1) — TDD red
+ * Channel REST API tests (Hono version)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -37,14 +37,14 @@ vi.mock('./channels/web.js', () => ({
     getBus() { return null; }
   },
   webAdapter: {
-    async init() {},
-    async start() {},
-    async stop() {},
-    async send() {},
-    status() { return 'connected'; },
-    registerPeer() {},
-    unregisterPeer() {},
-    getBus() { return null; },
+    init: async () => {},
+    start: async () => {},
+    stop: async () => {},
+    send: async () => {},
+    status: () => 'connected',
+    registerPeer: () => {},
+    unregisterPeer: () => {},
+    getBus: () => null,
   },
   default: undefined,
 }));
@@ -65,10 +65,8 @@ afterEach(async () => {
 });
 
 async function startTestServer() {
-  const server = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-  const address = server.addresses()[0];
-  const base = `http://localhost:${address.port}`;
-  return { server, base };
+  const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
+  return { port, base: `http://localhost:${port}` };
 }
 
 describe('GET /api/channels', () => {

@@ -23,6 +23,7 @@ function makeRunner() {
     }),
     abort: vi.fn(),
     dispose: vi.fn().mockResolvedValue(undefined),
+    reset: vi.fn().mockResolvedValue(undefined),
     reload: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -69,14 +70,14 @@ describe('Session lifecycle — inactivity timer', () => {
     bus.publish(makeMsg('Second'));
     await Promise.resolve();
 
-    // Advance another 500ms — timer was reset, still no dispose
+    // Advance another 500ms — timer was reset, still no reset
     vi.advanceTimersByTime(500);
-    expect(runner.dispose).not.toHaveBeenCalled();
+    expect(runner.reset).not.toHaveBeenCalled();
 
     // Now advance past full timeout from the second message
     vi.advanceTimersByTime(600);
     await Promise.resolve();
-    expect(runner.dispose).toHaveBeenCalled();
+    expect(runner.reset).toHaveBeenCalled();
 
     orc.stop();
   });
@@ -99,7 +100,7 @@ describe('Session lifecycle — inactivity timer', () => {
     vi.advanceTimersByTime(600);
     await vi.runAllTimersAsync();
 
-    expect(runner.dispose).toHaveBeenCalledTimes(1);
+    expect(runner.reset).toHaveBeenCalledTimes(1);
     orc.stop();
   });
 });
@@ -118,6 +119,7 @@ describe('Session lifecycle — reload and restart', () => {
       }),
       abort: vi.fn(),
       dispose: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn().mockResolvedValue(undefined),
       reload: vi.fn().mockResolvedValue(undefined),
     };
     const adapter = makeAdapter();
@@ -161,6 +163,7 @@ describe('Session lifecycle — reload and restart', () => {
       }),
       abort: vi.fn(),
       dispose: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn().mockResolvedValue(undefined),
       reload: vi.fn().mockResolvedValue(undefined),
     };
     const adapter = makeAdapter();

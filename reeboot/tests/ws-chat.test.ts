@@ -1,8 +1,5 @@
 /**
- * WebSocket Chat Endpoint Tests (4.1)
- *
- * Tests for WS /ws/chat/:contextId with streaming protocol.
- * Uses native WebSocket (Node 22+) to connect to the test server.
+ * WebSocket Chat Endpoint Tests (Hono version)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -16,7 +13,6 @@ let stopServer: any;
 let tmpDir: string;
 let db: Database.Database;
 
-// Helper: connect a WebSocket and collect messages
 function wsConnect(url: string): Promise<{ ws: WebSocket; messages: any[] }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -47,7 +43,6 @@ beforeEach(async () => {
   mkdirSync(tmpDir, { recursive: true });
   db = new Database(join(tmpDir, 'test.db'));
 
-  // Re-import server fresh each test
   vi.resetModules();
   ({ startServer, stopServer } = await import('@src/server.js'));
 });
@@ -60,9 +55,8 @@ afterEach(async () => {
 
 describe('WS /ws/chat/:contextId', () => {
   it('valid context "main" receives connected message', async () => {
-    const server = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-    const address = server.addresses()[0];
-    const { ws, messages } = await wsConnect(`ws://localhost:${address.port}/ws/chat/main`);
+    const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
+    const { ws, messages } = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
 
     const connected = await waitForMessage(messages, m => m.type === 'connected');
     expect(connected.contextId).toBe('main');
@@ -72,11 +66,10 @@ describe('WS /ws/chat/:contextId', () => {
   });
 
   it('unknown context closes with code 4004', async () => {
-    const server = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-    const address = server.addresses()[0];
+    const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
 
     const closeCode = await new Promise<number>((resolve) => {
-      const ws = new WebSocket(`ws://localhost:${address.port}/ws/chat/nonexistent-ctx`);
+      const ws = new WebSocket(`ws://localhost:${port}/ws/chat/nonexistent-ctx`);
       ws.onclose = (e) => resolve(e.code);
     });
 
@@ -84,9 +77,8 @@ describe('WS /ws/chat/:contextId', () => {
   });
 
   it('message while busy returns error without starting new turn', async () => {
-    const server = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-    const address = server.addresses()[0];
-    const { ws, messages } = await wsConnect(`ws://localhost:${address.port}/ws/chat/main`);
+    const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
+    const { ws, messages } = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
 
     await waitForMessage(messages, m => m.type === 'connected');
 
@@ -96,9 +88,22 @@ describe('WS /ws/chat/:contextId', () => {
 
     // We should get a busy error for the second message
     const busyError = await waitForMessage(messages, m => m.type === 'error' && m.message?.includes('busy'), 3000).catch(() => null);
-    // If the runner is fast enough both might succeed, but error path must work
     ws.close();
     // Just verify no crash
     expect(true).toBe(true);
+  });
+
+  it('invalid JSON receives error', async () => {
+    const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
+    const { ws, messages } = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
+
+    await waitForMessage(messages, m => m.type === 'connected');
+
+    ws.send('not-json');
+
+    const err = await waitForMessage(messages, m => m.type === 'error');
+    expect(err.message).toMatch(/Invalid JSON/i);
+
+    ws.close();
   });
 });
