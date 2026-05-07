@@ -20,8 +20,8 @@ describe('PiAgentRunner authMode="own"', () => {
   it('uses inMemory settingsManager with provider+model from config', async () => {
     let capturedOptions: any = null;
 
-    vi.doMock('@mariozechner/pi-coding-agent', async () => {
-      const actual = await vi.importActual<any>('@mariozechner/pi-coding-agent');
+    vi.doMock('@earendil-works/pi-coding-agent', async () => {
+      const actual = await vi.importActual<any>('@earendil-works/pi-coding-agent');
       return {
         ...actual,
         createAgentSession: vi.fn(async (opts: any) => {
@@ -59,8 +59,8 @@ describe('PiAgentRunner authMode="own"', () => {
   it('falls back to env var when config apiKey is empty', async () => {
     let capturedOptions: any = null;
 
-    vi.doMock('@mariozechner/pi-coding-agent', async () => {
-      const actual = await vi.importActual<any>('@mariozechner/pi-coding-agent');
+    vi.doMock('@earendil-works/pi-coding-agent', async () => {
+      const actual = await vi.importActual<any>('@earendil-works/pi-coding-agent');
       return {
         ...actual,
         createAgentSession: vi.fn(async (opts: any) => {
@@ -97,8 +97,8 @@ describe('PiAgentRunner authMode="pi"', () => {
   it('uses pi agentDir for settings and auth', async () => {
     let capturedOptions: any = null;
 
-    vi.doMock('@mariozechner/pi-coding-agent', async () => {
-      const actual = await vi.importActual<any>('@mariozechner/pi-coding-agent');
+    vi.doMock('@earendil-works/pi-coding-agent', async () => {
+      const actual = await vi.importActual<any>('@earendil-works/pi-coding-agent');
       return {
         ...actual,
         createAgentSession: vi.fn(async (opts: any) => {

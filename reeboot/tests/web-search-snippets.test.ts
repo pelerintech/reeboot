@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { ToolDefinition } from '@mariozechner/pi-coding-agent';
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
 // Spy on registerTool to collect definitions without running the extension
 async function collectWebSearchTools(): Promise<Map<string, ToolDefinition>> {

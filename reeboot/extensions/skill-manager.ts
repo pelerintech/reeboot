@@ -14,7 +14,7 @@ import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { Type } from 'typebox';
-import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { Config } from '../src/config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

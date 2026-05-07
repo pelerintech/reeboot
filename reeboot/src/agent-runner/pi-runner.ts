@@ -28,7 +28,7 @@ import { nanoid } from 'nanoid';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { AgentRunner, ContextConfig, RunnerEvent, MessageTrust } from './interface.js';
-import type { ResourceLoader } from '@mariozechner/pi-coding-agent';
+import type { ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { Config } from '../config.js';
 
 // ─── wrapUntrustedMessage ────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ export class PiAgentRunner implements AgentRunner {
   private _toolCallHookRegistered = false;
 
   // Lazily created on first prompt
-  private _session: import('@mariozechner/pi-coding-agent').AgentSession | null = null;
+  private _session: import('@earendil-works/pi-coding-agent').AgentSession | null = null;
 
   constructor(context: ContextConfig, loader: ResourceLoader, config?: Config) {
     this.context = context;
@@ -252,7 +252,7 @@ export class PiAgentRunner implements AgentRunner {
 
   // ── internal ───────────────────────────────────────────────────────────────
 
-  private async _getOrCreateSession(): Promise<import('@mariozechner/pi-coding-agent').AgentSession> {
+  private async _getOrCreateSession(): Promise<import('@earendil-works/pi-coding-agent').AgentSession> {
     if (this._session) return this._session;
 
     // Reload the resource loader so it picks up AGENTS.md and extensions.
@@ -266,7 +266,7 @@ export class PiAgentRunner implements AgentRunner {
       AuthStorage,
       ModelRegistry,
       SettingsManager,
-    } = await import('@mariozechner/pi-coding-agent');
+    } = await import('@earendil-works/pi-coding-agent');
     void AuthStorage; // used only in authMode="own"
 
     const authMode = (this.config?.agent?.model as any)?.authMode ?? 'own';

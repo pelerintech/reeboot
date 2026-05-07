@@ -11,8 +11,8 @@
  * The loader resolves them relative to this source file's compiled location.
  */
 
-import { DefaultResourceLoader, type ResourceLoader } from '@mariozechner/pi-coding-agent';
-import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
+import { DefaultResourceLoader, type ResourceLoader } from '@earendil-works/pi-coding-agent';
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { homedir } from 'os';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';

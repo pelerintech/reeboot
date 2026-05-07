@@ -33,7 +33,7 @@ const MockSettingsManager = {
   })),
 };
 
-vi.mock('@mariozechner/pi-coding-agent', () => ({
+vi.mock('@earendil-works/pi-coding-agent', () => ({
   DefaultPackageManager: MockDefaultPackageManager,
   SettingsManager: MockSettingsManager,
 }));

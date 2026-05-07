@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.1.0",
-    "@mariozechner/pi-coding-agent": "0.70.6",
+    "@earendil-works/pi-coding-agent": "0.74.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
     "@types/ws": "^8.18.1",

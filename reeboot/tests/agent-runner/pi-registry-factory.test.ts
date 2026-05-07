@@ -2,11 +2,11 @@
  * pi-registry-factory.test.ts
  *
  * Verifies that ModelRegistry exposes a static .create() factory and that
- * the constructor is not directly callable (as of @mariozechner/pi-coding-agent 0.64+).
+ * the constructor is not directly callable (as of @earendil-works/pi-coding-agent 0.64+).
  */
 
 import { describe, it, expect } from 'vitest';
-import { ModelRegistry, AuthStorage } from '@mariozechner/pi-coding-agent';
+import { ModelRegistry, AuthStorage } from '@earendil-works/pi-coding-agent';
 
 describe('ModelRegistry API shape (0.64+)', () => {
   it('exposes a static create() factory function', () => {
