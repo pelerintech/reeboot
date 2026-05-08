@@ -28,6 +28,10 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Two READMEs and docs/ are the single source of documentation — 2026-05-08 (Request: docs-overhaul)
+
+All user-facing documentation lives in exactly three places: `/README.md` (marketing/presentation), `/reeboot/README.md` (install + usage essentials), and `/docs/` (full reference, feeds the Astro docs site). Any other markdown file that attempts to document user-facing behaviour is redundant and should be removed or migrated. The one exception is `reeboot/src/channels/CHANNEL_CONTRACT.md` — a developer contract spec tightly coupled to the channel test suite. It is mirrored into `docs/extending/channel-adapters.md` but the canonical source remains in `src/channels/` next to the code it governs. Both READMEs and all pages under `docs/` must be kept current as features are added or changed — documentation updates are part of the definition of done for every future request that changes user-facing behaviour.
+
 ### Pino as the single operational logger across all reeboot modules — 2026-05-07 (Request: observability-system)
 
 Pino replaces all `console.*` calls across `src/`. A singleton `getLogger()` is exported from `src/observability/logger.ts`, with stdout NDJSON transport and async file transport at `~/.reeboot/logs/`. Channels receive pino child loggers (`logger.child({ component: 'whatsapp' })`) at `warn` level to suppress Baileys protocol noise while surfacing real errors. Using pino as the single structured logger was the only serious option: it was already in the dependency tree via `@whiskeysockets/baileys`, has the lowest overhead of any Node.js logger, and native multistream support allows stdout + file + SSE in one instance. Winston and Bunyan were rejected on performance and API grounds.
