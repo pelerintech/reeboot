@@ -131,9 +131,9 @@ export function createLogger(config: LoggerConfig = {}, db?: Database): pino.Log
   const sseStream = createSseStream();
 
   const streams: pino.StreamEntry[] = [
-    { stream: pino.destination(1), level },             // stdout (all levels)
-    { stream: pino.destination(logFile), level: 'warn' }, // file (warn+)
-    { stream: sseStream, level },                       // SSE fan-out (all levels)
+    { stream: pino.destination(1), level: level as pino.Level },             // stdout (all levels)
+    { stream: pino.destination(logFile), level: 'warn' as pino.Level }, // file (warn+)
+    { stream: sseStream, level: level as pino.Level },                       // SSE fan-out (all levels)
   ];
 
   // Add DB persist stream when a database is provided

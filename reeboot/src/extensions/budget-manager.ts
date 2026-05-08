@@ -12,10 +12,10 @@
  * injects a wrap-up instruction on turn_start when the budget is exhausted.
  */
 
+import { Type } from 'typebox';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
-import { z } from 'zod';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,14 +44,15 @@ export function makeBudgetManagerExtension(pi: ExtensionAPI, ctx: ExtensionConte
 
   // ── set_budget tool ──────────────────────────────────────────────────────
 
-  pi.tool(
-    'set_budget',
-    'Set a spending budget for the current task. Call this when the owner specifies a budget constraint (e.g. "don\'t spend more than $5"). IMPORTANT: After setting the budget, you MUST immediately assess whether it is feasible for the planned task. If it is clearly insufficient (e.g. $0.30 for a multi-source research task), warn the owner before starting and offer to proceed or abort.',
-    z.object({
-      amount: z.number().positive().describe('Budget amount'),
-      unit: z.enum(['usd', 'tokens']).describe('Budget unit: "usd" for dollars, "tokens" for token count'),
+  pi.registerTool({
+    name: 'set_budget',
+    label: 'Set Budget',
+    description: 'Set a spending budget for the current task. Call this when the owner specifies a budget constraint (e.g. "don\'t spend more than $5"). IMPORTANT: After setting the budget, you MUST immediately assess whether it is feasible for the planned task. If it is clearly insufficient (e.g. $0.30 for a multi-source research task), warn the owner before starting and offer to proceed or abort.',
+    parameters: Type.Object({
+      amount: Type.Number({ description: 'Budget amount', minimum: 0 }),
+      unit: Type.Union([Type.Literal('usd'), Type.Literal('tokens')], { description: 'Budget unit: "usd" for dollars, "tokens" for token count' }),
     }),
-    async ({ amount, unit }: { amount: number; unit: 'usd' | 'tokens' }) => {
+    execute: async (_id, { amount, unit }) => {
       _taskBudget = { amount, unit, spent: 0, exhausted: false };
       _exhausted = false;
 
@@ -62,56 +63,65 @@ export function makeBudgetManagerExtension(pi: ExtensionAPI, ctx: ExtensionConte
         ? `$${amount.toFixed(2)}`
         : `${_formatTokens(amount)} tokens`;
 
-      return `Budget set: ${displayAmount} for this task. Before proceeding, assess whether this budget is sufficient and realistic for what you are planning to do. If it is clearly insufficient, warn the owner and offer to proceed or abort.`;
-    }
-  );
+      const text = `Budget set: ${displayAmount} for this task. Before proceeding, assess whether this budget is sufficient and realistic for what you are planning to do. If it is clearly insufficient, warn the owner and offer to proceed or abort.`;
+      return { content: [{ type: 'text' as const, text }], details: undefined };
+    },
+  });
 
   // ── check_budget tool ────────────────────────────────────────────────────
 
-  pi.tool(
-    'check_budget',
-    'Check your current spending versus the active task budget and global limits.',
-    z.object({}),
-    async (_args: {}) => {
+  pi.registerTool({
+    name: 'check_budget',
+    label: 'Check Budget',
+    description: 'Check your current spending versus the active task budget and global limits.',
+    parameters: Type.Object({}),
+    execute: async () => {
       const globalSection = await _buildGlobalSection(config);
+      let text: string;
       if (!_taskBudget) {
-        return `No active task budget.\n${globalSection}`;
-      }
-
-      const { amount, unit, spent } = _taskBudget;
-      const remaining = Math.max(0, amount - spent);
-      const pct = amount > 0 ? Math.round((spent / amount) * 100) : 0;
-
-      let taskLine: string;
-      if (unit === 'usd') {
-        taskLine = `Task budget: $${spent.toFixed(2)} spent of $${amount.toFixed(2)} (${pct}% used, $${remaining.toFixed(2)} remaining)`;
+        text = `No active task budget.\n${globalSection}`;
       } else {
-        taskLine = `Task budget: ${_formatTokens(spent)} spent of ${_formatTokens(amount)} tokens (${pct}% used, ${_formatTokens(remaining)} remaining)`;
-      }
+        const { amount, unit, spent } = _taskBudget;
+        const remaining = Math.max(0, amount - spent);
+        const pct = amount > 0 ? Math.round((spent / amount) * 100) : 0;
 
-      return `${taskLine}\n${globalSection}`;
-    }
-  );
+        let taskLine: string;
+        if (unit === 'usd') {
+          taskLine = `Task budget: $${spent.toFixed(2)} spent of $${amount.toFixed(2)} (${pct}% used, $${remaining.toFixed(2)} remaining)`;
+        } else {
+          taskLine = `Task budget: ${_formatTokens(spent)} spent of ${_formatTokens(amount)} tokens (${pct}% used, ${_formatTokens(remaining)} remaining)`;
+        }
+        text = `${taskLine}\n${globalSection}`;
+      }
+      return { content: [{ type: 'text' as const, text }], details: undefined };
+    },
+  });
 
   // ── budget_status tool ───────────────────────────────────────────────────
 
-  pi.tool(
-    'budget_status',
-    'Get a human-readable summary of spending for the owner. Use this to answer questions like "how much did you spend today?" or "how much did the last memory run cost?".',
-    z.object({
-      period: z.enum(['today', 'last', 'week']).optional().describe('Time period: "today", "last" (most recent matching), or "week"'),
-      operationType: z.enum(['user_message', 'scheduler', 'memory', 'heartbeat', 'recovery']).optional().describe('Filter by operation type'),
+  pi.registerTool({
+    name: 'budget_status',
+    label: 'Budget Status',
+    description: 'Get a human-readable summary of spending for the owner. Use this to answer questions like "how much did you spend today?" or "how much did the last memory run cost?".',
+    parameters: Type.Object({
+      period: Type.Optional(Type.Union([Type.Literal('today'), Type.Literal('last'), Type.Literal('week')], { description: 'Time period: "today", "last" (most recent matching), or "week"' })),
+      operationType: Type.Optional(Type.Union([
+        Type.Literal('user_message'), Type.Literal('scheduler'), Type.Literal('memory'),
+        Type.Literal('heartbeat'), Type.Literal('recovery'),
+      ], { description: 'Filter by operation type' })),
     }),
-    async ({ period = 'today', operationType }: { period?: string; operationType?: string }) => {
+    execute: async (_id, { period = 'today', operationType }) => {
+      let text: string;
       try {
         const { getDb } = await import('../db/index.js');
         const db = getDb();
-        return _buildStatusSummary(db, config, period, operationType);
+        text = _buildStatusSummary(db, config, period, operationType);
       } catch {
-        return 'Unable to query spend data — database not available.';
+        text = 'Unable to query spend data — database not available.';
       }
-    }
-  );
+      return { content: [{ type: 'text' as const, text }], details: undefined };
+    },
+  });
 
   // ── turn_end: accumulate cost against task budget ─────────────────────────
 

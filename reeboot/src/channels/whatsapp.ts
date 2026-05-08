@@ -26,6 +26,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private _config: ChannelConfig | null = null;
   private _socket: any = null;
   private _reconnecting = false;
+  private _reconnectAttempt = 0;
   /** IDs of messages we sent — used to skip our own echoes in multi-device mode. */
   private _sentIds = new Set<string>();
 
@@ -79,6 +80,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
       auth: state,
       browser: Browsers.ubuntu('Chrome'),
       logger: baileysLogger,
+      // fetchProps times out on every connect (WA server doesn't respond to
+      // this query for our client fingerprint). Messaging works without it.
+      fireInitQueries: false,
     });
 
     this._socket = sock;
@@ -97,6 +101,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         this._status = 'connected';
         this._connectedAt = new Date().toISOString();
         this._reconnecting = false;
+        this._reconnectAttempt = 0;
         const user = sock.user as any;
         getLogger().info({ component: 'whatsapp', userId: user?.id, lid: user?.lid }, '[WhatsApp] Connected ✓ — ready to receive messages');
         try { emitEvent(getDb(), { type: 'channel_connected', severity: 9, payload: { channelType: 'whatsapp' } }).catch(() => {}); } catch { /* db not ready */ }
@@ -111,7 +116,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
           this._status = 'error';
         } else if (!this._reconnecting) {
           this._reconnecting = true;
-          await this._connect();
+          this._reconnectAttempt++;
+          // Exponential backoff: 2s, 4s, 8s … capped at 60s
+          const delayMs = Math.min(2000 * Math.pow(2, this._reconnectAttempt - 1), 60_000);
+          getLogger().info({ component: 'whatsapp', attempt: this._reconnectAttempt, delayMs }, `[WhatsApp] Reconnecting in ${delayMs / 1000}s…`);
+          await new Promise(res => setTimeout(res, delayMs));
+          try {
+            await this._connect();
+          } catch (err) {
+            getLogger().error({ component: 'whatsapp', err }, '[WhatsApp] Reconnect attempt failed');
+            this._reconnecting = false;
+          }
         }
       }
     });
