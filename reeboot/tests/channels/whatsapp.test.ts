@@ -264,8 +264,8 @@ describe('WhatsAppAdapter', () => {
     error.output = { statusCode: 428 }; // not loggedOut
     mockEv.emit('connection.update', { connection: 'close', lastDisconnect: { error } });
 
-    // Small delay for async reconnect
-    await new Promise(r => setTimeout(r, 10));
+    // Wait longer than the first backoff delay (2s) for the reconnect to fire
+    await new Promise(r => setTimeout(r, 2100));
 
     expect(mockMakeWASocket.mock.calls.length).toBeGreaterThan(callsBefore);
   });

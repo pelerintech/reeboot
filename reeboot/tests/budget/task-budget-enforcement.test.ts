@@ -40,8 +40,11 @@ function makeMockPi(handlers: Record<string, Function[]> = {}, tools: Record<str
       if (!handlers[event]) handlers[event] = [];
       handlers[event].push(handler);
     },
-    tool(name: string, _desc: string, _schema: any, handler: Function) {
-      tools[name] = handler;
+    registerTool(toolDef: any) {
+      tools[toolDef.name] = async (params: any) => {
+        const result = await toolDef.execute('', params, undefined, undefined, {});
+        return result.content[0].text;
+      };
     },
     handlers,
     tools,

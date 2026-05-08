@@ -25,8 +25,14 @@ function makeMockPi(
       if (!handlers[event]) handlers[event] = [];
       handlers[event].push(handler);
     },
-    tool(name: string, description: string, _schema: any, handler: Function) {
-      tools[name] = { description, handler };
+    registerTool(toolDef: any) {
+      tools[toolDef.name] = {
+        description: toolDef.description,
+        handler: async (params: any) => {
+          const result = await toolDef.execute('', params, undefined, undefined, {});
+          return result.content[0].text;
+        },
+      };
     },
     handlers,
     tools,

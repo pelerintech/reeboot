@@ -30,7 +30,7 @@ describe('budget-manager wired into getBundledFactories', () => {
     // checking it's invocable. We create a minimal mock pi and run all factories.
     const registeredTools: string[] = [];
     const mockPi = {
-      tool: (name: string) => { registeredTools.push(name); },
+      registerTool: (toolDef: any) => { registeredTools.push(toolDef.name); },
       on: () => {},
     };
 
