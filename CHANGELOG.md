@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [2.0.0] - 2026-05-08
+
 ### Fixed
 
 - **Config reset on wizard re-run** — the setup wizard (`reeboot setup`, `reeboot config wizard`) was building a brand-new config from `defaultConfig` on every run, silently discarding existing custom settings such as `authMode: 'pi'`, custom tool whitelists, channel trust rules, and user preferences. Both the interactive launch step (`src/wizard/steps/launch.ts`) and the non-interactive wizard (`src/setup-wizard.ts`) now **merge with any existing config**, preserving all user edits while only updating the fields being configured. Uses a shared defensive `fb()` fallback helper (`src/utils/fallback.ts`) so every section defaults safely when the existing file is missing or incomplete.
@@ -84,7 +88,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`reeboot doctor` reports context files** — the pre-flight diagnostic now includes a "Context files" check using `loadProjectContextFiles()` (newly exported in pi 0.68). Shows which `AGENTS.md` and context files would be injected into the agent session for the current workspace. Reports `pass` with file paths when found, `warn` with a fix hint when none are present.
 
+### Added (continued)
+
+- **Structured observability** — full audit and log pipeline built on [pino](https://getpino.io) with three output streams:
+  - **stdout** — NDJSON (newline-delimited JSON) at the configured log level; machine-readable, pipe-friendly
+  - **File** — warn+ records written to `~/.reeboot/logs/reeboot-YYYY-MM-DD.log`; rotated daily, pruned after `logging.retention_days` (default 30)
+  - **SSE live stream** — all log records forwarded in real time to `GET /api/logs/stream`; consumed by `reeboot logs --follow`
+  - **`reeboot logs`** CLI command — tails the current log file; `--follow` switches to SSE streaming; `--level` filters by minimum severity
+  - **`events` table** — structured audit log in SQLite with OTEL-compatible schema: `trace_id` (32-char hex), `span_id` (16-char hex), `created_ns` (Unix epoch nanoseconds), `severity` (OTEL integer). Captures channel connect/disconnect, turn open/close, rate limit warnings, budget events, permission violations
+  - **`operational_logs` table** — warn+ pino records persisted to SQLite for queryable post-mortem analysis; pruned on the same `retention_days` schedule as the file log
+  - **`session_events` table** — per-session lifecycle events (start, compaction, shutdown) indexed by session ID
+  - **`rate_limit_warn_threshold`** config field — emits a `rate_limit_warning` event when remaining tokens fall below the threshold (default 5000); visible in both the events table and the SSE stream
+  - **New `logging` config section**: `level` (trace/debug/info/warn/error/fatal, default `info`), `retention_days` (default 30), `rate_limit_warn_threshold` (default 5000)
+
+- **Token budget management** — per-context spending controls with three enforcement layers:
+  - **Daily limit** — `budget.daily_tokens` and `budget.daily_cost_usd`; resets at midnight; enforced at turn start
+  - **Session limit** — `budget.session_tokens` and `budget.session_cost_usd`; resets when the session is replaced
+  - **Turn limit** — `budget.turn_tokens` and `budget.turn_cost_usd`; enforced per-turn; hard-stops the agent mid-task if exceeded
+  - **Warn threshold** — `budget.warn_threshold` (default `0.8`); agent receives a budget warning when 80% of any limit is consumed
+  - **Cost tracking** — via pi's built-in `ModelRegistry`; per-token pricing for Anthropic, OpenAI, Google, Groq, and other major providers; local models (Ollama) report "cost unavailable" rather than $0.00 to avoid misleading spend reporting
+  - **Agent budget tools** — three tools registered when `extensions.core.token_meter` is enabled:
+    - `set_budget(amount, unit)` — agent declares a per-task spending ceiling; triggers a feasibility self-assessment before starting work
+    - `check_budget()` — agent checks task spend vs. budget and global daily limits mid-task
+    - `budget_status(period, operationType)` — owner queries historical spend by period (`today`, `week`, `last`) and operation type (`user_message`, `scheduler`, `memory`, `heartbeat`, `recovery`)
+  - **Budget exhaustion enforcement** — when a task budget is exceeded the agent receives a hard stop instruction on the next `before_agent_start` event; all further tool calls are blocked and the agent delivers whatever it completed
+  - **`usage` table** — per-turn cost and token records with `cost_usd`, `input_tokens`, `output_tokens`, `operation_type`, and `context_id`; provides the data source for `budget_status` queries
+  - **New `budget` config section**: `daily_tokens`, `daily_cost_usd`, `session_tokens`, `session_cost_usd`, `turn_tokens`, `turn_cost_usd`, `warn_threshold` (all nullable/optional, default no limits)
+
+### Fixed
+
+- **WhatsApp `fetchProps` timeout logged as error on every connect** — Baileys fires `executeInitQueries` on every `connection.update: open` event, which includes a `fetchProps` IQ query that WhatsApp's servers never answer for unofficial clients. After the hardcoded 60-second timeout Baileys logged `"unexpected error in 'init queries'"` at ERROR level on every single startup. Fixed by setting `fireInitQueries: false` in `makeWASocket` — the query is skipped entirely. Basic messaging is unaffected; `fetchProps` only retrieved server-side feature flags not used by reeboot.
+
+- **WhatsApp reconnect could crash the process** — the `connection.update` close handler called `await this._connect()` with no surrounding try/catch. If the reconnect attempt itself threw (e.g. `fetchLatestWaWebVersion` failing on a flaky network), the async event handler produced an unhandled promise rejection which exited the Node process. Added a try/catch around the reconnect call and reset `_reconnecting` to `false` on failure so the adapter can retry on the next disconnect event.
+
+- **WhatsApp reconnect had no backoff** — on any non-logout disconnect reeboot reconnected immediately in a tight loop, hammering WhatsApp's servers and making transient failures self-reinforcing. Reconnects now use exponential backoff starting at 2 s, doubling per attempt up to a 60 s cap. The attempt counter resets to 0 on each successful `connection: open` event.
+
 ### Breaking changes
+
+- **HTTP server migrated from Fastify to Hono** — the internal HTTP server has been rewritten using [Hono](https://hono.dev) (`hono ^4.12`, `@hono/node-server ^1.14`, `@hono/node-ws ^1.1`). Fastify is no longer a dependency. **Impact**: the external API surface (`/api/health`, `/api/status`, `/api/logs/stream`, `/ws`, static webchat assets) is unchanged. However, any custom extensions or scripts that import internal Fastify types or rely on Fastify plugin behaviour will break — update them to use Hono's request/response API.
 
 - **`sqlite-vec` native extension loaded unconditionally at database open** — `openDatabase()` now loads the `sqlite-vec` native extension on every startup, regardless of `knowledge.enabled`. `sqlite-vec` ships pre-compiled binaries for `darwin-x64`, `darwin-arm64`, `linux-x64`, `linux-arm64`, and `win32-x64`. **The official reeboot Docker image (`node:22-slim`, Debian glibc) is unaffected.** However, if you are running a custom Docker image based on Alpine Linux (`node:alpine`, `node:XX-alpine`), startup will fail with an "Unsupported platform" error because Alpine uses musl libc. Switch to a glibc-based image (`node:XX`, `node:XX-slim`, `node:XX-bookworm-slim`) before upgrading.
 
