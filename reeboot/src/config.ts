@@ -127,6 +127,9 @@ const SandboxConfigSchema = z.object({
 
 const LoggingConfigSchema = z.object({
   level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+  /** Remaining tokens below which a rate_limit_warning is emitted. Default: 5000. */
+  rate_limit_warn_threshold: z.number().int().min(0).default(5000),
+  retention_days: z.number().int().min(1).default(30),
 });
 
 const ServerConfigSchema = z.object({
@@ -228,6 +231,18 @@ const ResilienceSchema = z.object({
 
 export type ResilienceConfig = z.infer<typeof ResilienceSchema>;
 
+const BudgetConfigSchema = z.object({
+  daily_tokens: z.number().int().nullable().default(null),
+  daily_cost_usd: z.number().nullable().default(null),
+  session_tokens: z.number().int().nullable().default(null),
+  session_cost_usd: z.number().nullable().default(null),
+  turn_tokens: z.number().int().nullable().default(null),
+  turn_cost_usd: z.number().nullable().default(null),
+  warn_threshold: z.number().default(0.8),
+});
+
+export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
+
 export const ConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   channels: ChannelsConfigSchema.default({}),
@@ -248,6 +263,7 @@ export const ConfigSchema = z.object({
   memory: MemoryConfigSchema.default({}),
   knowledge: KnowledgeConfigSchema.default({}),
   resilience: ResilienceSchema.default({}),
+  budget: BudgetConfigSchema.default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

@@ -11,8 +11,8 @@
  * The loader resolves them relative to this source file's compiled location.
  */
 
-import { DefaultResourceLoader, type ResourceLoader } from '@mariozechner/pi-coding-agent';
-import type { ExtensionFactory } from '@mariozechner/pi-coding-agent';
+import { DefaultResourceLoader, type ResourceLoader } from '@earendil-works/pi-coding-agent';
+import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { homedir } from 'os';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -163,6 +163,45 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   factories.push(async (pi) => {
     const mod = await importExt('memory-manager');
     if (mod?.default) await (mod.default as any)(pi, config);
+  });
+
+  // Budget manager — always loaded (no feature flag).
+  // Registers set_budget, check_budget, budget_status tools and turn_end/agent_end hooks.
+  // Workspace path derived from ctx.cwd at registration time.
+  factories.push(async (pi) => {
+    const mod = await importExt('budget-manager');
+    if (mod?.makeBudgetManagerExtension) {
+      const { getDb } = await import('../db/index.js');
+      try {
+        const db = getDb();
+        // Use the DB to get the workspace path; cwd is passed via pi context
+        // The factory uses process.cwd() as the workspacePath (same as default export)
+        mod.makeBudgetManagerExtension(pi, { workspacePath: process.cwd(), config });
+      } catch {
+        // If DB not available, fall back to default export
+        if (mod?.default) mod.default(pi);
+      }
+    } else if (mod?.default) {
+      await (mod.default as any)(pi, config);
+    }
+  });
+
+  // Observability extension — always loaded (no feature flag).
+  // Registers session_shutdown and after_provider_response hooks.
+  // Uses getDb() singleton to access the database.
+  factories.push(async (pi) => {
+    const mod = await importExt('observability');
+    if (mod?.makeObservabilityExtension) {
+      const { getDb } = await import('../db/index.js');
+      try {
+        const db = getDb();
+        const threshold = (config as any)?.logging?.rate_limit_warn_threshold ?? 5000;
+        const configProvider: string = (config as any)?.agent?.model?.provider ?? 'unknown';
+        mod.makeObservabilityExtension(pi, db, { rateLimitWarnThreshold: threshold, configProvider });
+      } catch {
+        // DB not available yet — skip observability hooks silently
+      }
+    }
   });
 
   // Knowledge manager — loaded when knowledge.enabled=true (default false).

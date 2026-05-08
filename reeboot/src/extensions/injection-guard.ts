@@ -9,7 +9,7 @@
  *     results from declared external-source tools as data only.
  */
 
-import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { Config } from '../config.js';
 
 export default function injectionGuardExtension(pi: ExtensionAPI, config: Config): void {

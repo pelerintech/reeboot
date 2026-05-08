@@ -75,10 +75,13 @@ export class TurnJournal {
       );
   }
 
-  /** Deletes the journal row and cascades to steps on successful turn completion. */
+  /**
+   * Marks the journal row as closed (permanent audit record).
+   * Does NOT delete the row — closed rows are retained for audit and pruned on schedule.
+   */
   closeTurn(turnId: string): void {
     this._db
-      .prepare('DELETE FROM turn_journal WHERE turn_id = ?')
+      .prepare(`UPDATE turn_journal SET status = 'closed', closed_at = datetime('now') WHERE turn_id = ?`)
       .run(turnId);
   }
 }
@@ -100,4 +103,40 @@ export function getOpenJournals(db: Database): OpenJournal[] {
       .all(j.turn_id) as OpenJournal['steps'];
     return { ...j, steps };
   });
+}
+
+// ─── getClosedTurns ───────────────────────────────────────────────────────────
+
+/**
+ * Returns the most recent closed turns, ordered by closed_at DESC.
+ */
+export function getClosedTurns(
+  db: Database,
+  options: { limit?: number } = {}
+): OpenJournal[] {
+  const limit = options.limit ?? 20;
+  const journals = db
+    .prepare(`SELECT * FROM turn_journal WHERE status = 'closed' ORDER BY closed_at DESC LIMIT ?`)
+    .all(limit) as Omit<OpenJournal, 'steps'>[];
+
+  return journals.map((j) => {
+    const steps = db
+      .prepare(`SELECT * FROM turn_journal_steps WHERE turn_id = ? ORDER BY seq ASC`)
+      .all(j.turn_id) as OpenJournal['steps'];
+    return { ...j, steps };
+  });
+}
+
+// ─── pruneTurns ───────────────────────────────────────────────────────────────
+
+/**
+ * Deletes closed turn_journal rows (and their steps via CASCADE) older than
+ * retentionDays. Open rows are never deleted by this function.
+ */
+export function pruneTurns(db: Database, retentionDays: number): void {
+  db.prepare(
+    `DELETE FROM turn_journal
+     WHERE status = 'closed'
+       AND closed_at < datetime('now', ? || ' days')`
+  ).run(`-${retentionDays}`);
 }

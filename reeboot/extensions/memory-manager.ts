@@ -12,7 +12,7 @@
  *   - before_agent_start — injects frozen memory snapshot into system prompt
  */
 
-import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import {
   mkdirSync,

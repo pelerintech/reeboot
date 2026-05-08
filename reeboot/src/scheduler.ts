@@ -13,6 +13,9 @@ import type Database from 'better-sqlite3';
 import { nanoid } from 'nanoid';
 import { runMigration } from './db/schema.js';
 import { detectScheduleType, computeNextRun } from './scheduler/parse.js';
+import { getLogger } from './observability/logger.js';
+import { getLatestRateLimit } from './extensions/observability.js';
+import { emitEvent } from './observability/events.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +33,7 @@ export interface SchedulerOrchestrator {
 
 export interface SchedulerOptions {
   intervalMs?: number;
+  provider?: string;  // LLM provider string for rate limit checks
 }
 
 export interface ToolResult {
@@ -67,6 +71,7 @@ export class Scheduler {
   private _db: Database.Database;
   private _orchestrator: SchedulerOrchestrator;
   private _intervalMs: number;
+  private _provider: string;
   private _timer: ReturnType<typeof setTimeout> | null = null;
   private _inFlight = new Set<string>();
 
@@ -77,6 +82,7 @@ export class Scheduler {
   ) {
     this._db = db;
     this._orchestrator = orchestrator;
+    this._provider = options.provider ?? 'unknown';
     this._intervalMs =
       options.intervalMs ??
       (process.env.REEBOOT_SCHEDULER_INTERVAL_MS
@@ -104,6 +110,43 @@ export class Scheduler {
 
   private _poll = async (): Promise<void> => {
     try {
+      // Check if provider rate limit retry-after is still active
+      const rateLimit = getLatestRateLimit(this._db, this._provider);
+      if (rateLimit?.retry_after_ms && rateLimit.retry_after_ms > 0) {
+        // SQLite datetime('now') returns 'YYYY-MM-DD HH:MM:SS' (UTC, no timezone)
+        // Append 'Z' to ensure it's parsed as UTC, not local time
+        const recordedMs = new Date(rateLimit.recorded_at.replace(' ', 'T') + 'Z').getTime();
+        const expiresMs = recordedMs + rateLimit.retry_after_ms;
+        if (Date.now() < expiresMs) {
+          // Throttle: skip all tasks this tick
+          const nowIso = new Date().toISOString();
+          const due = this._db
+            .prepare("SELECT * FROM tasks WHERE status='active' AND next_run <= ?")
+            .all(nowIso) as TaskRow[];
+
+          for (const task of due) {
+            // Update next_run to retry-after expiry + 5s buffer
+            const newNextRun = new Date(expiresMs + 5000).toISOString();
+            this._db.prepare("UPDATE tasks SET next_run = ? WHERE id = ?").run(newNextRun, task.id);
+
+            getLogger().warn(
+              { component: 'scheduler', taskId: task.id, retryAfterMs: rateLimit.retry_after_ms },
+              'Scheduler task deferred: provider retry-after in effect'
+            );
+
+            emitEvent(this._db, {
+              type: 'scheduler_throttled',
+              contextId: task.context_id,
+              severity: 13,
+              payload: { task_id: task.id, retry_after_ms: rateLimit.retry_after_ms },
+            }).catch(() => {});
+          }
+
+          this._timer = setTimeout(this._poll, this._intervalMs);
+          return;
+        }
+      }
+
       const nowIso = new Date().toISOString();
       const due = this._db
         .prepare(
@@ -117,7 +160,7 @@ export class Scheduler {
         )
       );
     } catch (err) {
-      console.error('[Scheduler] poll error:', err);
+      getLogger().error({ component: 'scheduler', err }, '[Scheduler] poll error');
     }
 
     this._timer = setTimeout(this._poll, this._intervalMs);
@@ -131,6 +174,14 @@ export class Scheduler {
     let result: string | void = undefined;
     let status: 'success' | 'error' = 'success';
     let errorMsg: string | null = null;
+
+    // Emit scheduler_fired audit event before dispatching
+    emitEvent(this._db, {
+      type: 'scheduler_fired',
+      contextId: task.context_id,
+      severity: 9,
+      payload: { taskId: task.id, contextId: task.context_id },
+    }).catch(() => {});
 
     try {
       result = await this._orchestrator.handleScheduledTask({
@@ -162,7 +213,7 @@ export class Scheduler {
           )
           .run(runId, task.id, durationMs, status, resultStr, errorMsg);
       } catch (dbErr) {
-        console.error('[Scheduler] failed to insert task_run:', dbErr);
+        getLogger().error({ component: 'scheduler', err: dbErr }, '[Scheduler] failed to insert task_run');
       }
 
       // Update tasks row
@@ -187,13 +238,13 @@ export class Scheduler {
             .run(nextRun, lastResult, task.id);
         }
       } catch (dbErr) {
-        console.error('[Scheduler] failed to update task:', dbErr);
+        getLogger().error({ component: 'scheduler', err: dbErr }, '[Scheduler] failed to update task');
       }
     }
   }
 
   private _logError(task: TaskRow, err: any, durationMs: number): void {
-    console.error(`[Scheduler] Task ${task.id} failed: ${err}`);
+    getLogger().error({ component: 'scheduler', taskId: task.id, err }, `[Scheduler] Task ${task.id} failed`);
     // task_runs insert already done in _runTask finally block
   }
 

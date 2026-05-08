@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { runResilienceMigration } from '../src/db/schema.js';
+import { runResilienceMigration, runObservabilityMigration } from '../src/db/schema.js';
 import { createContextsTable } from '../src/context.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { MessageBus, createIncomingMessage } from '../src/channels/interface.js';
@@ -82,6 +82,7 @@ function makeOrchestratorWithRunner(runner: AgentRunner) {
     next_run TEXT
   )`);
   runResilienceMigration(db);
+  runObservabilityMigration(db);
 
   const bus = new MessageBus();
   const adapters = new Map<string, any>();

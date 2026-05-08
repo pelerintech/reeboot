@@ -5,10 +5,11 @@ describe('TurnJournal', () => {
   let db: InstanceType<typeof Database>;
 
   beforeEach(async () => {
-    const { runResilienceMigration } = await import('@src/db/schema.js');
+    const { runResilienceMigration, runObservabilityMigration } = await import('@src/db/schema.js');
     db = new Database(':memory:');
     db.exec(`CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, context_id TEXT NOT NULL, schedule TEXT NOT NULL, prompt TEXT NOT NULL)`);
     runResilienceMigration(db);
+    runObservabilityMigration(db); // adds closed_at column
   });
 
   it('openTurn inserts a row with status=open', async () => {
@@ -42,17 +43,21 @@ describe('TurnJournal', () => {
     expect(step.seq).toBe(1);
   });
 
-  it('closeTurn deletes the journal row and cascades steps', async () => {
+  it('closeTurn marks the journal row as closed (permanent record)', async () => {
     const { TurnJournal } = await import('@src/resilience/turn-journal.js');
     db.pragma('foreign_keys = ON');
     const journal = new TurnJournal(db);
     journal.openTurn('turn1', 'ctx1', 'hello');
     journal.appendStep('turn1', { seq: 1, toolName: 'search', toolInput: '{}', toolOutput: 'r', isError: false });
     journal.closeTurn('turn1');
-    const row = db.prepare('SELECT * FROM turn_journal WHERE turn_id = ?').get('turn1');
-    expect(row).toBeUndefined();
+    // Row is kept (permanent audit record)
+    const row = db.prepare('SELECT * FROM turn_journal WHERE turn_id = ?').get('turn1') as any;
+    expect(row).toBeDefined();
+    expect(row.status).toBe('closed');
+    expect(row.closed_at).toBeTruthy();
+    // Steps are also kept (cascade only happens on DELETE)
     const steps = db.prepare('SELECT * FROM turn_journal_steps WHERE turn_id = ?').all('turn1');
-    expect(steps).toHaveLength(0);
+    expect(steps).toHaveLength(1);
   });
 
   it('getOpenJournals returns open journals with their steps', async () => {

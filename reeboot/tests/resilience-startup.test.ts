@@ -28,15 +28,19 @@ describe('stale cleanup', () => {
   it('logs a warning with the turn_id when a stale row is discarded', async () => {
     vi.resetModules();
     const { cleanStaleJournals } = await import('@src/resilience/startup.js');
+    const { getLogger } = await import('@src/observability/logger.js');
     const db = await makeDb();
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(getLogger(), 'warn').mockImplementation((() => {}) as any);
 
     db.exec(`INSERT INTO turn_journal (turn_id, context_id, started_at)
              VALUES ('stale-warn-1', 'ctx1', datetime('now', '-25 hours'))`);
 
     cleanStaleJournals(db);
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('stale-warn-1'));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ turnId: 'stale-warn-1' }),
+      expect.stringContaining('stale-warn-1')
+    );
     warnSpy.mockRestore();
   });
 

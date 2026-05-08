@@ -1,4 +1,5 @@
 import type { ChannelAdapter } from '../channels/interface.js';
+import { getLogger } from '../observability/logger.js';
 
 /**
  * Broadcasts a text message to all active channel adapters.
@@ -18,10 +19,10 @@ export function broadcastToAllChannels(
       adapter
         .send('__system__', { type: 'text', text })
         .catch((err) => {
-          console.error(`[broadcast] Failed to send via ${name}: ${err}`);
+          getLogger().error({ component: 'broadcast', name, err }, `[broadcast] Failed to send via ${name}`);
         });
     } catch (err) {
-      console.error(`[broadcast] Synchronous error via ${name}: ${err}`);
+      getLogger().error({ component: 'broadcast', name, err }, `[broadcast] Synchronous error via ${name}`);
     }
   }
 }

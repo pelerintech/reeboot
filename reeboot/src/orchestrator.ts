@@ -10,7 +10,7 @@
  * Queue depth: max 5 messages per context; overflow gets "queue full" reply.
  */
 
-import { statfsSync } from 'fs';
+import { statfsSync, mkdirSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
@@ -22,6 +22,9 @@ import { broadcastToAllChannels } from './utils/broadcast.js';
 import { parseHumanInterval } from './scheduler/parse.js';
 import type { Database } from 'better-sqlite3';
 import { randomUUID as _randomUUID2 } from 'crypto';
+import { getLogger } from './observability/logger.js';
+import { emitEvent } from './observability/events.js';
+import { BudgetGuard } from './budget/guard.js';
 
 // ─── Config types ─────────────────────────────────────────────────────────────
 
@@ -45,6 +48,8 @@ export interface OrchestratorConfig {
   };
   /** Channel trust config — optional; absent means all channels default to 'owner' */
   channels?: Record<string, { trust?: string; trusted_senders?: string[] }>;
+  /** Override for the reeboot data directory (default: ~/.reeboot). Used in tests. */
+  reebootDir?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -56,6 +61,19 @@ const DEFAULT_RATE_LIMIT_RETRIES = 3;
 const DISK_SPACE_MIN_BYTES = 100 * 1024 * 1024; // 100MB
 const BUSY_REPLY = "I'm still working on your last request. Please wait.";
 const QUEUE_FULL_REPLY = "Queue full. Please wait for the current messages to be processed.";
+
+// ─── Channel type → operation type mapping ───────────────────────────────────
+
+const CHANNEL_OP_TYPE_MAP: Record<string, string> = {
+  scheduler: 'scheduler',
+  heartbeat: 'heartbeat',
+  recovery: 'recovery',
+  memory: 'memory',
+};
+
+function _channelTypeToOperationType(channelType: string): string {
+  return CHANNEL_OP_TYPE_MAP[channelType] ?? 'user_message';
+}
 
 // ─── Disk space check ─────────────────────────────────────────────────────────
 
@@ -101,6 +119,7 @@ export class Orchestrator {
   private _db: Database | null = null;
   private _consecutiveFailures = new Map<string, number>();
   private _activeOutage = false;
+  private _budgetGuard = new BudgetGuard();
 
   constructor(
     config: OrchestratorConfig,
@@ -214,6 +233,37 @@ export class Orchestrator {
       return;
     }
 
+    // Budget pre-check
+    if (this._db && (this._config as any).budget) {
+      const budgetResult = this._budgetGuard.check(this._db, contextId, this._config);
+      if (!budgetResult.ok) {
+        this._reply(msg, `⚠️ Budget limit: ${budgetResult.reason}`);
+        if (this._db) {
+          emitEvent(this._db, {
+            type: 'budget_breached',
+            contextId,
+            channel: msg.channelType,
+            severity: 17,
+            payload: { reason: budgetResult.reason },
+          }).catch(() => {});
+        }
+        return;
+      }
+      if (budgetResult.warning) {
+        if (this._db) {
+          emitEvent(this._db, {
+            type: 'budget_warning',
+            contextId,
+            channel: msg.channelType,
+            severity: 13,
+            payload: { warning: budgetResult.warning },
+          }).catch(() => {});
+        }
+        // Notify owner via channel — warning doesn't block, turn still dispatches
+        this._reply(msg, `⚠️ Budget warning: ${budgetResult.warning}`);
+      }
+    }
+
     const runner = this._runners.get(contextId);
     if (!runner) {
       this._reply(msg, `No runner found for context "${contextId}".`);
@@ -223,6 +273,28 @@ export class Orchestrator {
     const turnId = randomUUID();
     const sessionPath = runner?.getSessionPath?.() ?? undefined;
     this._journal?.openTurn(turnId, contextId, msg.content, sessionPath);
+
+    // Write turn meta file for token-meter to read operation_type
+    const operationType = _channelTypeToOperationType(msg.channelType);
+    const reebootDir = (this._config as any).reebootDir ?? join(homedir(), '.reeboot');
+    const workspaceDir = join(reebootDir, 'contexts', contextId, 'workspace');
+    try {
+      mkdirSync(workspaceDir, { recursive: true });
+      writeFileSync(
+        join(workspaceDir, '.reeboot_turn_meta.json'),
+        JSON.stringify({ operationType, turnId })
+      );
+    } catch { /* non-critical; skip silently */ }
+    const turnStartMs = Date.now();
+    if (this._db) {
+      emitEvent(this._db, {
+        type: 'turn_started',
+        contextId,
+        channel: msg.channelType,
+        severity: 9,
+        payload: { turnId, peerId: msg.peerId },
+      }).catch(() => {});
+    }
 
     const turnTimeoutMs = this._config.agent?.turnTimeout ?? DEFAULT_TURN_TIMEOUT_MS;
     const maxRetries = this._config.agent?.rateLimitRetries ?? DEFAULT_RATE_LIMIT_RETRIES;
@@ -306,6 +378,15 @@ export class Orchestrator {
 
       if (result === 'timeout') {
         // Leave journal open — this counts as a crashed turn
+        if (this._db) {
+          emitEvent(this._db, {
+            type: 'turn_failed',
+            contextId,
+            channel: msg.channelType,
+            severity: 17,
+            payload: { turnId, reason: 'timeout', durationMs: Date.now() - turnStartMs },
+          }).catch(() => {});
+        }
         this._reply(msg, 'Your request timed out. The agent took too long to respond.');
         return;
       }
@@ -354,6 +435,15 @@ export class Orchestrator {
         }
 
         // Non-retryable error — leave journal open (crash evidence)
+        if (this._db) {
+          emitEvent(this._db, {
+            type: 'turn_failed',
+            contextId,
+            channel: msg.channelType,
+            severity: 17,
+            payload: { turnId, reason: err?.message ?? String(err), durationMs: Date.now() - turnStartMs },
+          }).catch(() => {});
+        }
         this._reply(msg, `Error: ${err?.message ?? String(err)}`);
         return;
       }
@@ -362,9 +452,18 @@ export class Orchestrator {
       break;
     }
 
-    // Clean turn — delete the journal row and reset failure counter
+    // Clean turn — close the journal row and reset failure counter
     this._journal?.closeTurn(turnId);
     this._consecutiveFailures.set(contextId, 0);
+    if (this._db) {
+      emitEvent(this._db, {
+        type: 'turn_completed',
+        contextId,
+        channel: msg.channelType,
+        severity: 9,
+        payload: { turnId, durationMs: Date.now() - turnStartMs },
+      }).catch(() => {});
+    }
 
     // Persist assistant message on successful turn (user row was written before the loop)
     if (!skipPersist && this._db && responseText) {
@@ -458,7 +557,7 @@ export class Orchestrator {
   async handleHeartbeatTick(params: { contextId: string; prompt: string }): Promise<string> {
     const runner = this._runners.get(params.contextId);
     if (!runner) {
-      console.warn(`[Heartbeat] No runner for context "${params.contextId}"`);
+      getLogger().warn({ component: 'orchestrator', contextId: params.contextId }, `[Heartbeat] No runner for context "${params.contextId}"`);
       return 'IDLE';
     }
     let response = '';
@@ -467,7 +566,7 @@ export class Orchestrator {
         if (event.type === 'text_delta') response += event.delta;
       });
     } catch (err) {
-      console.warn(`[Heartbeat] Runner error: ${err}`);
+      getLogger().warn({ component: 'orchestrator', err }, `[Heartbeat] Runner error: ${err}`);
       return 'IDLE';
     }
     return response;
@@ -521,7 +620,17 @@ export class Orchestrator {
     // Heartbeat turns: only forward genuine agent responses, suppress everything else
     // (system errors, timeouts, disk warnings, busy messages must not reach users).
     if (msg.channelType === 'heartbeat') {
-      if (!isAgentResponse || text.trim().toUpperCase() === 'IDLE') return;
+      if (!isAgentResponse || text.trim().toUpperCase() === 'IDLE') {
+        // Emit swallowed_reply audit event so suppressed messages are observable
+        if (this._db) {
+          emitEvent(this._db, {
+            type: 'swallowed_reply',
+            severity: 13, // WARN
+            payload: { channelType: msg.channelType, reason: 'heartbeat_suppressed', text },
+          }).catch(() => {});
+        }
+        return;
+      }
       for (const adapter of this._adapters.values()) {
         adapter.send('__system__', { type: 'text', text }).catch(() => {/* ignore */});
       }
@@ -537,7 +646,7 @@ export class Orchestrator {
         const adapter = this._adapters.get(originChannel);
         if (adapter) {
           adapter.send(originPeer, { type: 'text', text }).catch((err) => {
-            console.error(`[Orchestrator] Failed to send scheduled reply: ${err}`);
+            getLogger().error({ component: 'orchestrator', err }, `[Orchestrator] Failed to send scheduled reply: ${err}`);
           });
         }
       } else {
@@ -552,7 +661,7 @@ export class Orchestrator {
     const adapter = this._adapters.get(msg.channelType);
     if (!adapter) return;
     adapter.send(msg.peerId, { type: 'text', text }).catch((err) => {
-      console.error(`[Orchestrator] Failed to send reply: ${err}`);
+      getLogger().error({ component: 'orchestrator', err }, `[Orchestrator] Failed to send reply: ${err}`);
     });
   }
 
@@ -715,5 +824,15 @@ export class Orchestrator {
   /** Expose adapters for restart */
   get adapters(): Map<string, ChannelAdapter> {
     return this._adapters;
+  }
+
+  /**
+   * Update the budget section of the in-memory config without restarting.
+   * Called by PUT /api/settings/budget so the live BudgetGuard picks up new limits.
+   */
+  updateBudgetConfig(budget: Record<string, unknown>): void {
+    (this._config as any).budget = { ...((this._config as any).budget ?? {}), ...budget };
+    // Reset warned-keys so updated thresholds can fire fresh warnings
+    this._budgetGuard = new BudgetGuard();
   }
 }

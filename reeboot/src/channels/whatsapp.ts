@@ -11,10 +11,12 @@ import { mkdirSync } from 'fs';
 import type { ChannelAdapter, ChannelConfig, MessageBus, MessageContent, ChannelStatus } from './interface.js';
 import { createIncomingMessage } from './interface.js';
 import { registerChannel } from './registry.js';
+import { getLogger } from '../observability/logger.js';
+import { emitEvent } from '../observability/events.js';
+import { getDb } from '../db/index.js';
 
 const CHUNK_SIZE = 4096;
 const CHUNK_DELAY_MS = 100;
-const noop = () => { };
 
 export class WhatsAppAdapter implements ChannelAdapter {
   private _authDir: string;
@@ -24,6 +26,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private _config: ChannelConfig | null = null;
   private _socket: any = null;
   private _reconnecting = false;
+  private _reconnectAttempt = 0;
   /** IDs of messages we sent — used to skip our own echoes in multi-device mode. */
   private _sentIds = new Set<string>();
 
@@ -61,24 +64,25 @@ export class WhatsAppAdapter implements ChannelAdapter {
     try {
       const result = await fetchLatestWaWebVersion({});
       version = result.version;
-      console.log(`[WhatsApp] Using WA Web version: ${version.join('.')}`);
+      getLogger().info({ component: 'whatsapp' }, `[WhatsApp] Using WA Web version: ${version.join('.')}`);
     } catch (err) {
-      console.warn(`[WhatsApp] Could not fetch latest WA version, using default: ${err}`);
+      getLogger().warn({ component: 'whatsapp', err }, `[WhatsApp] Could not fetch latest WA version, using default`);
       version = [2, 3000, 1027934701];
     }
 
-    // Baileys requires a pino-compatible logger. We pass a no-op so its
-    // internal Signal Protocol noise never reaches the console. Real errors
-    // are surfaced via connection.update / our own console.* calls.
-    const baileysLogger: any = {
-      trace: noop, debug: noop, info: noop, warn: noop, error: noop, fatal: noop,
-      child: () => baileysLogger,
-    };
+    // Baileys requires a pino-compatible logger. We use a real pino child logger
+    // at 'warn' level so real errors surface while internal Signal Protocol noise
+    // (trace/debug/info) is suppressed.
+    const baileysLogger = getLogger().child({ component: 'whatsapp' });
+    baileysLogger.level = 'warn';
     const sock = makeWASocket({
       version,
       auth: state,
       browser: Browsers.ubuntu('Chrome'),
       logger: baileysLogger,
+      // fetchProps times out on every connect (WA server doesn't respond to
+      // this query for our client fingerprint). Messaging works without it.
+      fireInitQueries: false,
     });
 
     this._socket = sock;
@@ -89,7 +93,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        console.log('\n📱 Scan this QR code with WhatsApp (Settings → Linked Devices → Link a Device):\n');
+        getLogger().info({ component: 'whatsapp' }, '📱 Scan this QR code with WhatsApp (Settings → Linked Devices → Link a Device)');
         (qrTerminal as any).default.generate(qr, { small: true });
       }
 
@@ -97,19 +101,32 @@ export class WhatsAppAdapter implements ChannelAdapter {
         this._status = 'connected';
         this._connectedAt = new Date().toISOString();
         this._reconnecting = false;
+        this._reconnectAttempt = 0;
         const user = sock.user as any;
-        console.log(`[WhatsApp] Connected ✓ — ready to receive messages (id=${user?.id} lid=${user?.lid})`);
+        getLogger().info({ component: 'whatsapp', userId: user?.id, lid: user?.lid }, '[WhatsApp] Connected ✓ — ready to receive messages');
+        try { emitEvent(getDb(), { type: 'channel_connected', severity: 9, payload: { channelType: 'whatsapp' } }).catch(() => {}); } catch { /* db not ready */ }
       } else if (connection === 'close') {
         this._status = 'disconnected';
         this._connectedAt = null;
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = statusCode === DisconnectReason.loggedOut;
+        try { emitEvent(getDb(), { type: 'channel_disconnected', severity: 13, payload: { channelType: 'whatsapp', reason: loggedOut ? 'logged_out' : 'closed' } }).catch(() => {}); } catch { /* db not ready */ }
 
         if (loggedOut) {
           this._status = 'error';
         } else if (!this._reconnecting) {
           this._reconnecting = true;
-          await this._connect();
+          this._reconnectAttempt++;
+          // Exponential backoff: 2s, 4s, 8s … capped at 60s
+          const delayMs = Math.min(2000 * Math.pow(2, this._reconnectAttempt - 1), 60_000);
+          getLogger().info({ component: 'whatsapp', attempt: this._reconnectAttempt, delayMs }, `[WhatsApp] Reconnecting in ${delayMs / 1000}s…`);
+          await new Promise(res => setTimeout(res, delayMs));
+          try {
+            await this._connect();
+          } catch (err) {
+            getLogger().error({ component: 'whatsapp', err }, '[WhatsApp] Reconnect attempt failed');
+            this._reconnecting = false;
+          }
         }
       }
     });
@@ -154,11 +171,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
         if (!peerId) continue;
 
         if (!text) {
-          console.log(`[WhatsApp] Skipping empty text type=${type} fromMe=${fromMe} peerId=${peerId} keys=${Object.keys(msg.message ?? {}).join(',')}`);
+          getLogger().debug({ component: 'whatsapp', type, fromMe, peerId }, '[WhatsApp] Skipping empty text');
           continue;
         }
 
-        console.log(`[WhatsApp] Received message type=${type} fromMe=${fromMe} peerId=${peerId} len=${text.length}`);
+        getLogger().debug({ component: 'whatsapp', type, fromMe, peerId, len: text.length }, '[WhatsApp] Received message');
         this._bus?.publish(
           createIncomingMessage({
             channelType: 'whatsapp',
@@ -282,10 +299,8 @@ export async function linkWhatsAppDevice(opts: {
   }, timeoutMs)
 
   async function connect(): Promise<void> {
-    const wizardLogger: any = {
-      trace: noop, debug: noop, info: noop, warn: noop, error: noop, fatal: noop,
-      child: () => wizardLogger,
-    };
+    const wizardLogger = getLogger().child({ component: 'whatsapp-wizard' });
+    wizardLogger.level = 'warn';
     const sock = makeWASocket({
       version,
       auth: state,

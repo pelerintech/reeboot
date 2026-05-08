@@ -6,7 +6,7 @@
  * are tracked in ~/.reeboot/agent/settings.json and discovered by the loader.
  */
 
-import { DefaultPackageManager, SettingsManager, type PackageSource } from '@mariozechner/pi-coding-agent';
+import { DefaultPackageManager, SettingsManager, type PackageSource } from '@earendil-works/pi-coding-agent';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';

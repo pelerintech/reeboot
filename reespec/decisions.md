@@ -28,6 +28,26 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Two READMEs and docs/ are the single source of documentation — 2026-05-08 (Request: docs-overhaul)
+
+All user-facing documentation lives in exactly three places: `/README.md` (marketing/presentation), `/reeboot/README.md` (install + usage essentials), and `/docs/` (full reference, feeds the Astro docs site). Any other markdown file that attempts to document user-facing behaviour is redundant and should be removed or migrated. The one exception is `reeboot/src/channels/CHANNEL_CONTRACT.md` — a developer contract spec tightly coupled to the channel test suite. It is mirrored into `docs/extending/channel-adapters.md` but the canonical source remains in `src/channels/` next to the code it governs. Both READMEs and all pages under `docs/` must be kept current as features are added or changed — documentation updates are part of the definition of done for every future request that changes user-facing behaviour.
+
+### Pino as the single operational logger across all reeboot modules — 2026-05-07 (Request: observability-system)
+
+Pino replaces all `console.*` calls across `src/`. A singleton `getLogger()` is exported from `src/observability/logger.ts`, with stdout NDJSON transport and async file transport at `~/.reeboot/logs/`. Channels receive pino child loggers (`logger.child({ component: 'whatsapp' })`) at `warn` level to suppress Baileys protocol noise while surfacing real errors. Using pino as the single structured logger was the only serious option: it was already in the dependency tree via `@whiskeysockets/baileys`, has the lowest overhead of any Node.js logger, and native multistream support allows stdout + file + SSE in one instance. Winston and Bunyan were rejected on performance and API grounds.
+
+### Turn journal promoted to permanent audit record — 2026-05-07 (Request: observability-system)
+
+`TurnJournal.closeTurn()` previously deleted the row on success (leaving only crash evidence as open rows). It now performs `UPDATE turn_journal SET status = 'closed', closed_at = datetime('now')` instead. Closed rows are retained as permanent audit evidence and pruned after `retention_days` (default 30) by `pruneTurns()`. `getOpenJournals()` continues to filter by `status = 'open'` so crash recovery logic is unaffected. The existing `turn-journal.test.ts` test that asserted deletion was updated to assert `status = 'closed'` and `closed_at` is set.
+
+### OTEL-ready schema for events table — 2026-05-07 (Request: observability-system)
+
+All audit events written by `emitEvent()` include `trace_id` (32-char hex, 16 bytes), `span_id` (16-char hex, 8 bytes), `created_ns` (Unix epoch in nanoseconds), and `severity` (OTEL severity numbers: 9=INFO, 13=WARN, 17=ERROR, 21=FATAL). These fields map directly to OTEL `LogRecord` fields without schema migration when the OTEL exporter adapter is added in the next request (`observability-otel`). No OTEL SDK is added in this request — the exporter is a pure read-and-forward step over the existing `events` table.
+
+### SQLite datetime parsing requires UTC suffix when used with JavaScript Date — 2026-05-07 (Request: observability-system)
+
+SQLite's `datetime('now')` returns strings in `'YYYY-MM-DD HH:MM:SS'` format without timezone information. JavaScript's `new Date('2026-05-07 19:20:15')` parses this as local time (not UTC), causing time comparisons to fail when the server runs in a non-UTC timezone. The fix: when parsing SQLite datetime strings in JavaScript, replace the space with `T` and append `Z` before constructing a `Date`: `new Date(str.replace(' ', 'T') + 'Z')`. This is applied in `scheduler.ts`'s retry-after expiry check and should be used consistently anywhere SQLite datetime strings are compared to `Date.now()`.
+
 ### US-3 spec prescription (send_message tool) rejected — auto-routing retained — 2026-04-23 (Request: agent-continuity)
 
 The unified-scheduling spec (US-3) required the enriched scheduled-task prompt to instruct the agent to call a `send_message` tool for delivery. The implementation instead uses orchestrator auto-routing: when `channelType === 'scheduler'`, `_reply()` reads `origin_channel`/`origin_peer` from `msg.raw` and routes directly to the correct adapter. A `send_message` tool was rejected because it would create double-delivery (tool delivers AND `_reply` delivers), adds fragility (agent must remember to call the tool), and splits responsibility that belongs in the transport layer. The spec was written before the design settled on this approach. US-5 (delivery reaches correct adapter) is fully satisfied. The JSDoc on `buildScheduledPrompt` now reflects the actual mechanism.
@@ -203,3 +223,51 @@ For headless Docker deployments, `REEBOOT_*` env vars are translated to `--no-in
 ### Resilience startup split into DB-only phase and deferred channel phase — 2026-04-22 (Request: resilience)
 
 `server.ts` resilience startup is now two phases. Phase 1 (before channel init): `runResilienceMigration` and `applyScheduledCatchup` — these only need the DB. Phase 2 (after `_orchestrator.start()`): `notifyRestart` and `recoverCrashedTurns` — these need the populated channel adapters Map and a live bus for `requeueFn`. Previously both ran together before `initChannels`, passing the empty initial Map to the broadcast calls so all notifications were silently dropped. Moving phase 2 post-orchestrator also enables the requeueFn to call `bus.publish()` on a subscribed orchestrator. The `recovery` channel type is used for re-queued prompts; it routes to the default context (`main`) and has no adapter, so replies from the orchestrator during recovery are silently dropped (acceptable: the broadcast already notified the user).
+
+### Pino SSE transport uses in-process Writable stream parser, not pino.transport() — 2026-05-07 (Request: observability-system)
+
+To fan pino log records into the SSE stream, `createLogger()` was extended with a third `pino.multistream` destination: a custom `Writable` stream that receives pino's raw NDJSON output, parses each line as JSON, and calls `emitLogRecord(record)` via a lazy `import()` to avoid circular dependency. `pino.transport({ target: './sse-transport' })` (worker thread approach) was considered but rejected: it requires a separate file path resolvable in both source and compiled contexts, adds worker thread complexity, and the in-process writable stream achieves the same result with zero overhead for a single-process server.
+
+### patchDb monkey-patches prepare() in-place rather than wrapping Database type — 2026-05-07 (Request: observability-system)
+
+The original `wrapDb()` returned a `WrappedDatabase` interface — a limited type that doesn't satisfy `Database.Database`. This made wiring into `openDatabase()` difficult since callers expect the full database type. The fix introduces `patchDb(db)` which monkey-patches `db.prepare` directly on the `Database.Database` instance and returns the same object. The original `wrapDb()` is retained for backward compatibility with its tests. `patchDb()` is called inside `openDatabase()` after all migrations, so every query in production goes through the debug wrapper transparently.
+
+### Channel event emissions use getDb() singleton with graceful degradation — 2026-05-07 (Request: observability-system)
+
+`channel_connected` and `channel_disconnected` events are emitted from `whatsapp.ts` and `signal.ts` using `getDb()` from the db index. Since channels may connect before or during server startup before the DB is fully initialised, all `emitEvent(getDb(), ...)` calls are wrapped in `try { } catch { /* db not ready */ }`. This avoids crashes on early connect events while ensuring that once the DB is open, all subsequent channel status changes are recorded.
+
+### operational_logs wired via createLogger(config, db) second argument — 2026-05-07 (Request: observability-system)
+
+The pino logger's `createLogger` function was extended to accept an optional `Database` second argument. When provided, a fourth `pino.multistream` destination is added: an in-process `Writable` stream that parses each NDJSON line and inserts records with `level >= 40` (warn+) into `operational_logs`. The server calls `initLogger({ level }, db)` after migrations complete, re-initialising the singleton with the DB attached. This avoids a circular startup dependency (logger needed before DB, DB needed for logger persistence) by separating creation (boot) from DB attachment (post-migration). The approach is consistent with the existing SSE Writable stream pattern already used in the logger.
+
+### Signal channel uses module-level child logger, not per-call getLogger() — 2026-05-07 (Request: observability-system)
+
+`src/channels/signal.ts` previously called `getLogger().warn({ component: 'signal' }, ...)` on every log call site. This works but doesn't satisfy the spec's explicit requirement for `logger.child({ component: 'signal' })`. Changed to `const _log = getLogger().child({ component: 'signal' })` at module level. The child logger binds the `component` field once, reducing per-call overhead and satisfying the contract. The test was strengthened from checking string presence to asserting `.child(...)` is used and that no per-call `getLogger().xxx(...)` pattern remains.
+
+### rate_limits.provider sourced from config, not pi event field — 2026-05-07 (Request: observability-system)
+
+The `provider` field stored in `rate_limits` rows now comes from `opts.configProvider` (passed to `makeObservabilityExtension` by the loader as `config.agent.model.provider`) rather than `event.provider`. This ensures the scheduler can find the recorded row: both sides agree on the same key. The scheduler is also now constructed with `{ provider: appConfig?.agent?.model?.provider }` in `server.ts` so its `getLatestRateLimit` lookup uses the same string. If pi's `after_provider_response` event carries a different provider identifier, it is now ignored in favour of the config value. The fallback is `'unknown'` on both sides, keeping them consistent in minimal deployments.
+
+### operation_type propagated via workspace meta file — 2026-05-07 (Request: token-budget)
+
+The orchestrator knows the `channelType` of each message (scheduler, heartbeat, memory, recovery, user_message), but the `token-meter.ts` extension knows only `ctx.cwd`. Rather than adding cross-boundary communication (IPC, shared state, event fields), the bridge uses a tiny JSON file written by the orchestrator before each `runner.prompt()` call: `~/.reeboot/contexts/<contextId>/workspace/.reeboot_turn_meta.json` with `{ operationType, turnId }`. The token-meter reads this file during `agent_end` and defaults to `'user_message'` if absent. This pattern follows existing reeboot conventions (`ctx.cwd` → `contextId`) and requires zero new infrastructure.
+
+### Per-task budget is extension-scoped, not orchestrator-scoped — 2026-05-07 (Request: token-budget)
+
+Per-task budgets (set via `set_budget()`) live entirely within the `budget-manager.ts` extension closure. The extension accumulates cost on every `turn_end` event, injects a wrap-up instruction on the next `turn_start` when the budget is exhausted, and clears state on `agent_end`. This keeps the orchestrator clean of agentic budget logic and aligns with the agentic self-management philosophy — the agent is instructed to stop, not forcibly killed. Global limits (Layer 1, via BudgetGuard in the orchestrator) remain the true hard stop. The extension writes `.task_budget.json` to the workspace for observability; this file is deleted on `agent_end`.
+
+### Pi's ModelRegistry is the authoritative pricing source — no custom table — 2026-05-07 (Request: token-budget)
+
+`AssistantMessage.usage.cost.total` (calculated by pi from its built-in ModelRegistry) is persisted as `cost_usd` in the usage table. No custom pricing table is maintained in reeboot. Pi already prices all major providers (Anthropic, OpenAI, Google, Groq) with per-token input/output/cacheRead/cacheWrite costs. For models without pricing (local/Ollama), `cost.total` returns 0 — this is detected by checking whether all usage rows have `cost_usd = 0` and surfaced to the user as "cost unavailable for this model" rather than falsely showing $0.00.
+
+### budget_status vs check_budget serve different audiences — 2026-05-07 (Request: token-budget)
+
+Two distinct tools exist with different purposes. `check_budget()` is for the agent itself — returns structured data about the active per-task budget (spend within the current session task), returns "No active task budget" if none is set. `budget_status({ period, operationType })` is for the owner — returns a human-readable summary answering questions like "how much did you spend today?" or "how much did the last memory run cost?" by querying the `usage` table with date and operation_type filters. Both tools are registered by `makeBudgetManagerExtension` and are always available regardless of whether a task budget is active.
+
+### before_agent_start is the correct pi hook for system prompt injection — 2026-05-07 (Request: token-budget)
+
+The initial implementation used `pi.on('turn_start', ...)` with a non-existent `ctx.injectSystemPrompt()` call for the budget exhaustion wrap-up instruction. Pi's `turn_start` ExtensionHandler returns `void` — there is no mechanism to inject content there. The correct hook is `pi.on('before_agent_start', handler)` which returns `BeforeAgentStartEventResult { systemPrompt?: string }`. Returning `{ systemPrompt: existing + instruction }` from this handler prepends content into the system prompt for the next LLM call. This pattern is also used by the memory-manager extension. Any future feature that needs to inject text into the agent's context must use `before_agent_start` returning `{ systemPrompt }`, not `turn_start`.
+
+### Daily budget limits are per-context, not instance-wide — 2026-05-07 (Request: token-budget)
+
+The initial BudgetGuard daily token/cost queries summed usage across ALL contexts, meaning ctx2's spend could block ctx1. The evaluator correctly flagged this as diverging from spec intent ("tokens consumed today for this context"). The queries were updated to add `context_id = ?`. This means `daily_tokens` and `daily_cost_usd` in config.json are per-context per-day limits. A deployment with N active contexts has N independent daily buckets. This is the least surprising semantics for a single-owner agent and is consistent with how session limits already worked (session limits were already per-context).

@@ -9,7 +9,7 @@ import { execSync } from 'child_process';
 import { statfsSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { loadProjectContextFiles } from '@mariozechner/pi-coding-agent';
+import { loadProjectContextFiles } from '@earendil-works/pi-coding-agent';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

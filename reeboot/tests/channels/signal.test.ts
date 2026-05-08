@@ -569,18 +569,20 @@ describe('SignalAdapter — observability logging', () => {
   afterEach(async () => { await adapter?.stop?.(); });
 
   it('logs [Signal] Received message when a valid message is processed', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { getLogger } = await import('@src/observability/logger.js');
+    const debugSpy = vi.spyOn(getLogger(), 'debug').mockImplementation((() => {}) as any);
     MockWebSocket.lastInstance!.simulateMessage(
       makeDataMessage('+1987654321', 'Hello')
     );
-    expect(logSpy.mock.calls.some((args: any[]) =>
-      String(args[0]).includes('[Signal] Received message')
+    expect(debugSpy.mock.calls.some((args: any[]) =>
+      String(args[args.length - 1]).includes('[Signal] Received message')
     )).toBe(true);
-    logSpy.mockRestore();
+    debugSpy.mockRestore();
   });
 
   it('logs [Signal] Skipping empty when envelope has no text', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { getLogger } = await import('@src/observability/logger.js');
+    const debugSpy = vi.spyOn(getLogger(), 'debug').mockImplementation((() => {}) as any);
     MockWebSocket.lastInstance!.simulateMessage({
       envelope: {
         source: '+1987654321',
@@ -588,10 +590,10 @@ describe('SignalAdapter — observability logging', () => {
         dataMessage: { message: '' }, // empty text
       },
     });
-    expect(logSpy.mock.calls.some((args: any[]) =>
-      String(args[0]).includes('[Signal] Skipping empty')
+    expect(debugSpy.mock.calls.some((args: any[]) =>
+      String(args[args.length - 1]).includes('[Signal] Skipping empty')
     )).toBe(true);
-    logSpy.mockRestore();
+    debugSpy.mockRestore();
   });
 });
 

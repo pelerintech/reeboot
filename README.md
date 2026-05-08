@@ -1,17 +1,19 @@
 # reeboot
 
-> Your personal AI agent. One command to install. Runs locally. Talk to it from anywhere.
+> Your personal AI agent. Runs locally. Talks to you from anywhere.
+
+One command to install. One conversation to configure. Then it's yours — running on your machine, connected to your WhatsApp or Signal, available in your browser, remembering everything you tell it.
 
 ---
 
-## Quick Start
+## Quick Install
 
 ```bash
 npm install -g reeboot
 reeboot
 ```
 
-On first run, `reeboot` detects that no config exists and launches the guided setup wizard automatically. The wizard walks you through your AI provider, agent name, channels (WhatsApp / Signal), and web search backend. After setup it offers to start the agent immediately. On every subsequent run, `reeboot` starts directly.
+First run launches the setup wizard. Subsequent runs start the agent directly.
 
 ---
 
@@ -19,18 +21,24 @@ On first run, `reeboot` detects that no config exists and launches the guided se
 
 | Capability | Description |
 |---|---|
-| **WebChat** | Browser-based chat UI at `http://localhost:3000` — no install required |
+| **WebChat** | Browser-based chat at `http://localhost:3000` — no install required |
 | **WhatsApp** | Scan a QR code — your agent lives in your WhatsApp DMs |
-| **Signal** | Connect via a Signal Docker container (json-rpc or polling mode) |
+| **Signal** | Connect via Signal Docker container (json-rpc or polling mode) |
+| **Personal Memory** | Remembers facts, preferences, and corrections across sessions |
+| **Domain Knowledge** | Ingest your documents — the agent searches them with local vector embeddings |
+| **Scheduled Tasks** | Ask the agent to remind you or run jobs on a cron schedule |
+| **Proactive Agent** | Heartbeat + in-session timers — the agent can wake itself up |
+| **Web Search** | 7 backends: DuckDuckGo, Brave, Tavily, Serper, Exa, SearXNG, or none |
+| **MCP Tools** | Connect any MCP-compatible tool server via stdio |
+| **Token Budget** | Per-context daily, session, and turn spend limits |
+| **Observability** | Structured logs, audit event table, live SSE log stream |
+| **Resilience** | Crash recovery, outage detection, scheduler catchup on restart |
 | **Multi-context** | Separate conversation threads (work, personal, projects) |
-| **Scheduled tasks** | Ask the agent to remind you or run jobs on a cron-like schedule |
-| **Proactive agent** | System heartbeat + in-session timers — agent wakes itself up |
-| **Web search** | 7 search backends (DuckDuckGo, Brave, Tavily, Serper, Exa, SearXNG, none) |
-| **Extensions** | Pi-compatible TypeScript extensions — tools, compaction, custom prompts |
+| **Extensions** | Pi-compatible TypeScript extensions — tools, hooks, custom prompts |
 | **Skills** | 15 bundled Markdown skill files; load more on demand |
 | **Packages** | Install community tool packages: `reeboot install npm:reeboot-github-tools` |
+| **Sandbox** | OS-level confinement for bash tool execution (macOS + Linux) |
 | **Daemon mode** | Run as a background service (launchd on macOS, systemd on Linux) |
-| **Doctor** | `reeboot doctor` diagnoses your setup before you even start |
 
 ---
 
@@ -39,57 +47,78 @@ On first run, `reeboot` detects that no config exists and launches the guided se
 Reeboot is a single Node.js process. All channels connect to the same orchestrator, which routes messages to the AI agent and returns responses.
 
 ```
-                    ┌──────────────────────────────────┐
-                    │           reeboot process          │
-                    │                                    │
-  WhatsApp ────────►│  ChannelRegistry                  │
-  Signal   ────────►│       │                           │
-  WebChat  ────────►│   MessageBus ──► Orchestrator     │
-  HTTP API ────────►│                       │            │
-                    │               AgentRunner (pi)    │
-                    │                       │            │
-                    │                LLM Provider        │
-                    │           (Anthropic / OpenAI …)  │
-                    └──────────────────────────────────┘
-```
+  WhatsApp ──┐
+  Signal   ──┤                  ┌──────────────────────────────────┐
+  WebChat  ──┼─► ChannelRegistry│                                  │
+  HTTP API ──┘       │          │        reeboot process            │
+                     ▼          │                                  │
+               ChannelPolicy    │                                  │
+               Layer (Tier 1)   │                                  │
+                     │          │                                  │
+                     ▼          │                                  │
+               MessageBus ──────┼──► Orchestrator                 │
+                                │         │                        │
+                                │         ▼                        │
+                                │    AgentRunner (pi)              │
+                                │         │                        │
+                                │         ▼                        │
+                                │    LLM Provider                  │
+                                │  (Anthropic / OpenAI / …)        │
+                                └──────────────────────────────────┘
 
-Configuration lives in `~/.reeboot/config.json`. Sessions and conversation history are stored in `~/.reeboot/db/reeboot.db` (SQLite). Extensions are loaded from `~/.reeboot/extensions/` and `~/.reeboot/packages/`.
-
----
-
-## Repo Layout
-
-```
-reeboot/          # The npm package — source, tests, extensions, skills
-  src/            # Core TypeScript source
-  extensions/     # Built-in pi extensions (scheduler, web-search, skill-manager, …)
-  skills/         # 15 bundled Markdown skill files
-  container/      # Dockerfile + entrypoint
-openspec/         # Change proposals, design docs, specs (OpenSpec workflow)
-reespec/          # Request planning artifacts (reespec workflow)
+  Config:  ~/.reeboot/config.json
+  Data:    ~/.reeboot/db/reeboot.db  (SQLite)
+  Logs:    ~/.reeboot/logs/
+  Memory:  ~/.reeboot/agent/MEMORY.md + USER.md
 ```
 
 ---
 
-## Development
+## Providers
+
+Choose from 8 LLM providers during setup:
+
+| Provider | Models |
+|---|---|
+| **Anthropic** | claude-sonnet-4-5, claude-opus-4-5, claude-3-5-haiku |
+| **OpenAI** | gpt-4o, gpt-4o-mini, o3-mini |
+| **Google** | gemini-2.0-flash, gemini-2.5-pro-preview |
+| **Groq** | llama-3.3-70b-versatile |
+| **Mistral** | mistral-large-latest, mistral-small-latest |
+| **xAI** | grok-2-latest |
+| **OpenRouter** | Any model via openrouter.ai |
+| **Ollama** | Any locally-running model |
+
+Or set `authMode: "pi"` to reuse your existing pi provider credentials.
+
+---
+
+## Documentation
+
+Full documentation lives at **[docs.reeboot.dev](https://docs.reeboot.dev)** — or browse the [`docs/`](./docs/) folder in this repo.
+
+| Section | What's there |
+|---|---|
+| [Getting Started](./docs/getting-started/introduction.md) | Install, setup wizard, quick start |
+| [Channels](./docs/channels/webchat.md) | WebChat, WhatsApp, Signal, trust model |
+| [Configuration](./docs/configuration/reference.md) | Full config reference — every field |
+| [Capabilities](./docs/capabilities/memory.md) | Memory, knowledge, scheduling, budgets, MCP, and more |
+| [Security](./docs/security/sandbox.md) | Sandbox, injection guard, permission tiers |
+| [Observability](./docs/observability/logging.md) | Logs, events, audit trail |
+| [Deployment](./docs/deployment/daemon.md) | Daemon, Docker, resilience |
+| [Extending](./docs/extending/skills.md) | Skills, extensions, channel adapters, packages |
+
+---
+
+## Docker
 
 ```bash
-cd reeboot
-npm install
-npm test          # run full test suite (vitest)
-npm run build     # compile TypeScript
+docker run -d \
+  -v ~/.reeboot:/home/reeboot/.reeboot \
+  -p 3000:3000 \
+  --name reeboot \
+  reeboot/reeboot:latest
 ```
-
-The test suite uses [vitest](https://vitest.dev/). All core modules have unit tests in `reeboot/src/**/*.test.ts` and integration tests in `reeboot/tests/`.
-
----
-
-## Links
-
-- 📦 [npm package](https://www.npmjs.com/package/reeboot) — `npm install -g reeboot`
-- 🐳 [Docker Hub](https://hub.docker.com/r/reeboot/reeboot) — `docker pull reeboot/reeboot`
-- 📖 [Full usage docs](reeboot/README.md) — complete CLI reference, config, channels, extensions
-- 🗒️ [Changelog](CHANGELOG.md)
 
 ---
 

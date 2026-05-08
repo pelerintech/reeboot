@@ -5,6 +5,7 @@ import type { ResilienceConfig } from '../config.js';
 import { getOpenJournals } from './turn-journal.js';
 import { broadcastToAllChannels } from '../utils/broadcast.js';
 import { computeNextRun } from '../scheduler/parse.js';
+import { getLogger } from '../observability/logger.js';
 
 // ─── Config shape used here ───────────────────────────────────────────────────
 
@@ -81,7 +82,7 @@ export function cleanStaleJournals(db: Database): void {
     .all() as Array<{ turn_id: string }>;
 
   for (const row of stale) {
-    console.warn(`[resilience] Discarding stale crashed turn: ${row.turn_id}`);
+    getLogger().warn({ component: 'resilience', turnId: row.turn_id }, `[resilience] Discarding stale crashed turn: ${row.turn_id}`);
   }
 
   db.exec(

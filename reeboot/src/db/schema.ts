@@ -265,6 +265,114 @@ export function runKnowledgeMigration(db: import('better-sqlite3').Database): vo
 }
 
 /**
+ * Runs an idempotent migration for the observability system:
+ * creates events, session_events, rate_limits, operational_logs tables
+ * and adds closed_at column to turn_journal.
+ * Safe to call multiple times.
+ */
+export function runObservabilityMigration(db: import('better-sqlite3').Database): void {
+  // Domain events (audit, OTEL-ready)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS events (
+      id          TEXT PRIMARY KEY,
+      type        TEXT NOT NULL,
+      context_id  TEXT,
+      channel     TEXT,
+      peer_id     TEXT,
+      severity    INTEGER NOT NULL DEFAULT 9,
+      payload     TEXT NOT NULL DEFAULT '{}',
+      trace_id    TEXT,
+      span_id     TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      created_ns  INTEGER
+    )
+  `);
+
+  // Session lifecycle events
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_events (
+      id             TEXT PRIMARY KEY,
+      context_id     TEXT NOT NULL,
+      reason         TEXT NOT NULL,
+      session_path   TEXT,
+      linked_turn_id TEXT,
+      created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Rate limit headroom per LLM call
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      id                  TEXT PRIMARY KEY,
+      context_id          TEXT NOT NULL,
+      provider            TEXT NOT NULL,
+      remaining_tokens    INTEGER,
+      remaining_requests  INTEGER,
+      retry_after_ms      INTEGER,
+      recorded_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Persisted operational logs (warn+ only)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS operational_logs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      level       INTEGER NOT NULL,
+      msg         TEXT NOT NULL,
+      component   TEXT,
+      context_id  TEXT,
+      payload     TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Index for fast retention pruning on operational_logs
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_operational_logs_created_at
+    ON operational_logs (created_at)
+  `);
+
+  // Index for fast retention pruning on events
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_events_created_at
+    ON events (created_at)
+  `);
+
+  // Add closed_at column to turn_journal if the table exists and lacks the column
+  const tjExists = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='turn_journal'").get() as { name: string } | undefined) !== undefined;
+  if (tjExists) {
+    const tjCols = (db.pragma('table_info(turn_journal)') as Array<{ name: string }>).map(
+      (c) => c.name
+    );
+    if (!tjCols.includes('closed_at')) {
+      db.exec(`ALTER TABLE turn_journal ADD COLUMN closed_at TEXT`);
+    }
+  }
+}
+
+/**
+ * Runs an idempotent migration to add cost_usd and operation_type columns
+ * to the usage table. Safe to call multiple times.
+ */
+export function runBudgetMigration(db: import('better-sqlite3').Database): void {
+  const usageExists = (db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='usage'`
+  ).get() as { name: string } | undefined);
+  if (!usageExists) return;
+
+  const usageCols = new Set(
+    (db.pragma('table_info(usage)') as Array<{ name: string }>).map(c => c.name)
+  );
+
+  if (!usageCols.has('cost_usd')) {
+    db.exec(`ALTER TABLE usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`);
+  }
+  if (!usageCols.has('operation_type')) {
+    db.exec(`ALTER TABLE usage ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'user_message'`);
+  }
+}
+
+/**
  * Runs an idempotent migration to add new columns to the tasks table and
  * create the task_runs table. Safe to call multiple times.
  */

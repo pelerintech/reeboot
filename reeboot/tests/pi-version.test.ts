@@ -1,7 +1,7 @@
 /**
  * pi-version.test.ts
  *
- * Verifies that package.json pins @mariozechner/pi-coding-agent to exactly 0.69.0
+ * Verifies that package.json pins @earendil-works/pi-coding-agent to exactly 0.74.0
  * and that the installed node_modules version matches.
  */
 
@@ -16,17 +16,17 @@ const PACKAGE_ROOT = resolve(__dirname, '..');
 const pkg = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf-8'));
 const installed = JSON.parse(
   readFileSync(
-    resolve(PACKAGE_ROOT, 'node_modules/@mariozechner/pi-coding-agent/package.json'),
+    resolve(PACKAGE_ROOT, 'node_modules/@earendil-works/pi-coding-agent/package.json'),
     'utf-8'
   )
 );
 
 describe('pi version', () => {
-  it('package.json declares exact pin 0.70.6', () => {
-    expect(pkg.dependencies['@mariozechner/pi-coding-agent']).toBe('0.70.6');
+  it('package.json declares exact pin 0.74.0', () => {
+    expect(pkg.dependencies['@earendil-works/pi-coding-agent']).toBe('0.74.0');
   });
 
-  it('installed node_modules version is 0.70.6', () => {
-    expect(installed.version).toBe('0.70.6');
+  it('installed node_modules version is 0.74.0', () => {
+    expect(installed.version).toBe('0.74.0');
   });
 });

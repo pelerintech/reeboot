@@ -15,8 +15,9 @@ import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { Type } from 'typebox';
-import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { Config } from '../src/config.js';
+import { getLogger } from '../observability/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -183,7 +184,7 @@ function persistStore(store: ActiveSkillStore, path: string): void {
     const data = store.getActive();
     writeFileSync(path, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err) {
-    console.warn('[skill-manager] failed to persist active skills:', err);
+    getLogger().warn({ component: 'skill-manager', err }, '[skill-manager] failed to persist active skills');
   }
 }
 
@@ -200,7 +201,7 @@ function restoreStore(path: string, now: number): ActiveSkill[] {
     if (!Array.isArray(data)) return [];
     return data.filter((s) => s.expiresAt > now);
   } catch (err) {
-    console.warn('[skill-manager] failed to restore active skills from disk:', err);
+    getLogger().warn({ component: 'skill-manager', err }, '[skill-manager] failed to restore active skills from disk');
     return [];
   }
 }
@@ -245,7 +246,7 @@ export function skillManagerExtension(
       if (dir) {
         skillPaths.push(dir);
       } else {
-        console.warn(`[skill-manager] permanent skill not found in catalog: ${name}`);
+        getLogger().warn({ component: 'skill-manager', name }, `[skill-manager] permanent skill not found in catalog: ${name}`);
       }
     }
     return { skillPaths };

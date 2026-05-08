@@ -14,6 +14,8 @@
 
 import type { ChannelAdapter, ChannelConfig, MessageBus, MessageContent, ChannelStatus } from './interface.js';
 import { registerChannel } from './registry.js';
+import { emitEvent } from '../observability/events.js';
+import { getDb } from '../db/index.js';
 
 export class WebAdapter implements ChannelAdapter {
   private _status: ChannelStatus = 'disconnected';
@@ -31,12 +33,14 @@ export class WebAdapter implements ChannelAdapter {
     // WebSocket server lifecycle is managed by the HTTP server; we just mark connected
     this._status = 'connected';
     this._connectedAt = new Date().toISOString();
+    try { emitEvent(getDb(), { type: 'channel_connected', severity: 9, payload: { channelType: 'web' } }).catch(() => {}); } catch { /* db not ready */ }
   }
 
   async stop(): Promise<void> {
     this._status = 'disconnected';
     this._connectedAt = null;
     this._senders.clear();
+    try { emitEvent(getDb(), { type: 'channel_disconnected', severity: 13, payload: { channelType: 'web', reason: 'stopped' } }).catch(() => {}); } catch { /* db not ready */ }
   }
 
   async send(peerId: string, content: MessageContent): Promise<void> {
