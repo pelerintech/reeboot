@@ -32,7 +32,7 @@ export interface StopDaemonOptions {
 
 // ─── macOS plist ──────────────────────────────────────────────────────────────
 
-function generatePlist(reebotBin: string, reebotDir: string): string {
+function generatePlist(reebotBin: string, reebotDir: string, nodeBin: string): string {
   const logsDir = join(reebotDir, 'logs');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -43,6 +43,7 @@ function generatePlist(reebotBin: string, reebotDir: string): string {
 
   <key>ProgramArguments</key>
   <array>
+    <string>${nodeBin}</string>
     <string>${reebotBin}</string>
     <string>start</string>
   </array>
@@ -74,7 +75,7 @@ function generatePlist(reebotBin: string, reebotDir: string): string {
 
 // ─── Linux systemd unit ───────────────────────────────────────────────────────
 
-function generateSystemdUnit(reebotBin: string, reebotDir: string): string {
+function generateSystemdUnit(reebotBin: string, reebotDir: string, nodeBin: string): string {
   const logsDir = join(reebotDir, 'logs');
   return `[Unit]
 Description=Reeboot Personal AI Agent
@@ -82,7 +83,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${reebotBin} start
+ExecStart=${nodeBin} ${reebotBin} start
 Restart=on-failure
 RestartSec=5
 WorkingDirectory=${reebotDir}
@@ -100,7 +101,8 @@ WantedBy=default.target
 export async function startDaemon(opts: StartDaemonOptions = {}): Promise<void> {
   const platform = opts.platform ?? process.platform;
   const reebotDir = opts.reebotDir ?? join(homedir(), '.reeboot');
-  const reebotBin = opts.reebotBin ?? process.execPath.replace('node', 'reeboot');
+  const nodeBin = process.execPath;
+  const reebotBin = opts.reebotBin ?? nodeBin.replace(/node$/, 'reeboot');
   const logsDir = join(reebotDir, 'logs');
 
   // Ensure logs directory exists
@@ -111,7 +113,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<void> 
     mkdirSync(launchAgentsDir, { recursive: true });
 
     const plistPath = join(launchAgentsDir, 'com.reeboot.agent.plist');
-    const plist = generatePlist(reebotBin, reebotDir);
+    const plist = generatePlist(reebotBin, reebotDir, nodeBin);
     writeFileSync(plistPath, plist, 'utf-8');
 
     console.log(`[daemon] Wrote ${plistPath}`);
@@ -128,7 +130,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<void> 
     mkdirSync(systemdDir, { recursive: true });
 
     const unitPath = join(systemdDir, 'reeboot.service');
-    const unit = generateSystemdUnit(reebotBin, reebotDir);
+    const unit = generateSystemdUnit(reebotBin, reebotDir, nodeBin);
     writeFileSync(unitPath, unit, 'utf-8');
 
     console.log(`[daemon] Wrote ${unitPath}`);

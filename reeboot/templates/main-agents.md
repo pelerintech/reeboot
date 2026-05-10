@@ -1,6 +1,6 @@
-# Reeboot — Personal Assistant
+# {{AGENT_NAME}} — Personal Assistant
 
-You are Reeboot, a personal AI assistant running locally on this machine.
+You are {{AGENT_NAME}}, a personal AI assistant running locally on this machine.
 
 ## Persona
 

@@ -110,31 +110,8 @@ export async function runLaunchStep(opts: {
     resilience: fb(existing?.resilience, defaultConfig.resilience),
   }
 
-  // ── Ask to start now ──────────────────────────────────────────────────────
-  const startNow = await prompter.confirm({
-    message: 'Start your agent now?',
-    default: true,
-  })
-
-  // Write config atomically (always, whether starting now or not)
+  // Write config atomically
   const { saveConfigAtomic } = await import('../../utils/atomic-config.js')
   saveConfigAtomic(config as any, finalConfigPath)
-  console.log(`\n  ✓ Config written to ${finalConfigPath}`)
-
-  if (startNow) {
-    console.log('\n  🚀 Starting reeboot...\n')
-    const { loadConfig } = await import('../../config.js')
-    const { startServer } = await import('../../server.js')
-    const loaded = loadConfig(finalConfigPath)
-    console.log(`  ✓ WebChat ready at http://localhost:${loaded.channels.web.port}`)
-    await startServer({
-      port: loaded.channels.web.port,
-      host: process.env.REEBOOT_HOST ?? '127.0.0.1',
-      logLevel: loaded.logging.level,
-      token: loaded.server.token,
-      config: loaded,
-    })
-  } else {
-    console.log('\n  Run `reeboot start` when ready.\n')
-  }
+  console.log(`\n  ✓ Config saved.`)
 }

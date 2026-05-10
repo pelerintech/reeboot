@@ -34,12 +34,8 @@ export async function handleDefaultAction(opts: {
   const deps = opts._deps ?? {};
 
   if (!existsSync(configPath)) {
-    if (deps.runWizard) {
-      await deps.runWizard({ configPath });
-    } else {
-      const { runSetupWizard } = await import('./wizard/index.js');
-      await runSetupWizard({ configPath });
-    }
+    console.error('✗ No configuration found. Run `reeboot init` to get started.');
+    process.exit(1);
   } else {
     if (deps.startAgent) {
       await deps.startAgent(configPath);
@@ -62,6 +58,81 @@ export async function handleDefaultAction(opts: {
       });
       console.log(`✓ WebChat ready at http://localhost:${config.channels.web.port}`);
     }
+  }
+}
+
+// ─── runInitCommand ─────────────────────────────────────────────────────────
+
+/**
+ * Exported for testing: `reeboot init` handler.
+ * Always runs the wizard fresh — no overwrite confirmation.
+ */
+export interface InitCommandDeps {
+  runWizard?: (opts: { configPath: string }) => Promise<void>
+}
+
+export async function runInitCommand(opts: {
+  configPath?: string
+  _deps?: InitCommandDeps
+} = {}): Promise<void> {
+  const configPath = opts.configPath
+    ?? process.env.REEBOOT_CONFIG_PATH
+    ?? join(homedir(), '.reeboot', 'config.json')
+
+  const deps = opts._deps ?? {}
+  if (deps.runWizard) {
+    await deps.runWizard({ configPath })
+  } else {
+    const { runSetupWizard } = await import('./wizard/index.js')
+    await runSetupWizard({ configPath })
+  }
+}
+
+// ─── runStartCommand ─────────────────────────────────────────────────────────
+
+/**
+ * Exported for testing: `reeboot start` handler (non-daemon path).
+ * Errors clearly when no config exists instead of launching the wizard.
+ */
+export interface StartCommandDeps {
+  startAgent?: (configPath: string) => Promise<void>
+}
+
+export async function runStartCommand(opts: {
+  configPath?: string
+  _deps?: StartCommandDeps
+} = {}): Promise<void> {
+  const configPath = opts.configPath
+    ?? process.env.REEBOOT_CONFIG_PATH
+    ?? join(homedir(), '.reeboot', 'config.json')
+
+  if (!existsSync(configPath)) {
+    console.error('✗ No configuration found. Run `reeboot init` to get started.')
+    process.exit(1)
+  }
+
+  const deps = opts._deps ?? {}
+  if (deps.startAgent) {
+    await deps.startAgent(configPath)
+  } else {
+    const { loadConfig } = await import('./config.js')
+    const { startServer } = await import('./server.js')
+    const config = loadConfig(configPath)
+    console.log(`Starting reeboot on port ${config.channels.web.port}...`)
+    const authMode = config.agent.model.authMode ?? 'own'
+    if (authMode === 'pi') {
+      console.log('[reeboot] auth: using pi\'s provider, model and auth')
+    } else {
+      console.log(`[reeboot] auth: own (provider=${config.agent.model.provider})`)
+    }
+    await startServer({
+      port: config.channels.web.port,
+      host: process.env.REEBOOT_HOST ?? '127.0.0.1',
+      logLevel: config.logging.level,
+      token: config.server.token,
+      config,
+    })
+    console.log(`Server running at http://localhost:${config.channels.web.port}`)
   }
 }
 
@@ -92,14 +163,11 @@ export async function runSetupCommand(opts: {
         default: false,
       });
     } else {
-      const { default: inquirer } = await import('inquirer');
-      const { overwrite } = await inquirer.prompt([{
-        type: 'confirm',
-        name: 'overwrite',
+      const { confirm } = await import('@inquirer/prompts');
+      confirmed = await confirm({
         message: 'Config already exists. Overwrite?',
         default: false,
-      }]);
-      confirmed = overwrite;
+      });
     }
     if (!confirmed) {
       console.log('Setup cancelled. Existing config preserved.');
@@ -117,6 +185,13 @@ export async function runSetupCommand(opts: {
 }
 
 // ─── start ───────────────────────────────────────────────────────────────────
+
+program
+  .command('init')
+  .description('First-time setup wizard — configure reeboot for the first time')
+  .action(async () => {
+    await runInitCommand()
+  })
 
 program
   .command('start')
@@ -144,31 +219,7 @@ program
       return;
     }
 
-    const configPath = join(homedir(), '.reeboot', 'config.json');
-    if (!existsSync(configPath)) {
-      // No config — launch wizard
-      const { runWizard } = await import('./setup-wizard.js');
-      await runWizard({ interactive: opts.interactive ?? true, ...opts });
-    } else {
-      const { loadConfig } = await import('./config.js');
-      const { startServer } = await import('./server.js');
-      const config = loadConfig(configPath);
-      console.log(`Starting reeboot on port ${config.channels.web.port}...`);
-      const authMode = config.agent.model.authMode ?? 'own';
-      if (authMode === 'pi') {
-        console.log(`[reeboot] auth: using pi's provider, model and auth`);
-      } else {
-        console.log(`[reeboot] auth: own (provider=${config.agent.model.provider})`);
-      }
-      await startServer({
-        port: config.channels.web.port,
-        host: process.env.REEBOOT_HOST ?? '127.0.0.1',
-        logLevel: config.logging.level,
-        token: config.server.token,
-        config,
-      });
-      console.log(`Server running at http://localhost:${config.channels.web.port}`);
-    }
+    await runStartCommand();
   });
 
 // ─── stop ────────────────────────────────────────────────────────────────────
@@ -349,6 +400,66 @@ packages
     }
   });
 
+// ─── runWhatsAppLoginCommand ─────────────────────────────────────────────────
+
+/**
+ * Exported for testing: `reeboot channels login whatsapp` handler.
+ * `_deps.connectAdapter` performs the actual QR scan + connection (injectable for tests).
+ * When it resolves successfully, config is updated with enabled: true.
+ */
+export interface WhatsAppLoginDeps {
+  /** Called to perform the QR scan and wait for connection. Throws on failure. */
+  connectAdapter?: () => Promise<void>
+}
+
+export async function runWhatsAppLoginCommand(opts: {
+  configPath?: string
+  _deps?: WhatsAppLoginDeps
+} = {}): Promise<void> {
+  const configPath = opts.configPath
+    ?? process.env.REEBOOT_CONFIG_PATH
+    ?? join(homedir(), '.reeboot', 'config.json')
+
+  const deps = opts._deps ?? {}
+
+  if (deps.connectAdapter) {
+    await deps.connectAdapter()
+  } else {
+    // Production path: real WhatsApp adapter
+    const { WhatsAppAdapter } = await import('./channels/whatsapp.js')
+    const { MessageBus } = await import('./channels/interface.js')
+    const authDir = join(homedir(), '.reeboot', 'channels', 'whatsapp', 'auth')
+    const adapter = new WhatsAppAdapter(authDir)
+    const bus = new MessageBus()
+    await adapter.init({ enabled: true }, bus)
+    await adapter.start()
+    await new Promise<void>((resolve) => {
+      const check = setInterval(() => {
+        const s = adapter.status()
+        if (s === 'connected') {
+          clearInterval(check)
+          console.log('WhatsApp connected.')
+          resolve()
+        } else if (s === 'error') {
+          clearInterval(check)
+          console.error('WhatsApp login failed.')
+          process.exit(1)
+        }
+      }, 500)
+    })
+    await adapter.stop()
+  }
+
+  // B1 fix: write enabled: true using load→merge→save pattern
+  if (existsSync(configPath)) {
+    const { loadConfig, saveConfig } = await import('./config.js')
+    const cfg = loadConfig(configPath)
+    cfg.channels.whatsapp.enabled = true
+    saveConfig(cfg, configPath)
+    console.log('✓ WhatsApp enabled in config.')
+  }
+}
+
 // ─── channels ────────────────────────────────────────────────────────────────
 
 const channels = program
@@ -388,35 +499,7 @@ channels
   .action(async (type: string) => {
     if (type === 'whatsapp') {
       console.log('Starting WhatsApp login — scan the QR code in the terminal...');
-      const { join } = await import('path');
-      const { homedir } = await import('os');
-      const { WhatsAppAdapter } = await import('./channels/whatsapp.js');
-      const { MessageBus } = await import('./channels/interface.js');
-
-      const authDir = join(homedir(), '.reeboot', 'channels', 'whatsapp', 'auth');
-      const adapter = new WhatsAppAdapter(authDir);
-      const bus = new MessageBus();
-
-      await adapter.init({ enabled: true }, bus);
-      await adapter.start();
-
-      // Wait for connection or error
-      await new Promise<void>((resolve) => {
-        const check = setInterval(() => {
-          const s = adapter.status();
-          if (s === 'connected') {
-            clearInterval(check);
-            console.log('WhatsApp connected.');
-            resolve();
-          } else if (s === 'error') {
-            clearInterval(check);
-            console.error('WhatsApp login failed.');
-            process.exit(1);
-          }
-        }, 500);
-      });
-
-      await adapter.stop();
+      await runWhatsAppLoginCommand();
       process.exit(0);
     } else if (type === 'signal') {
       const { execSync, spawnSync, spawn } = await import('child_process');
@@ -652,6 +735,20 @@ channels
       process.exit(0);
     } else {
       console.log(`channels login ${type}: not yet implemented`);
+    }
+  });
+
+channels
+  .command('setup <subcommand>')
+  .description('Setup channel configuration (e.g., owner-whatsapp)')
+  .action(async (subcommand: string) => {
+    if (subcommand === 'owner-whatsapp') {
+      const { InquirerPrompter } = await import('./wizard/prompter.js');
+      const { runOwnerSetupCommand } = await import('./wizard/steps/owner-setup.js');
+      await runOwnerSetupCommand({ prompter: new InquirerPrompter() });
+    } else {
+      console.error(`Unknown setup subcommand: ${subcommand}`);
+      process.exit(1);
     }
   });
 

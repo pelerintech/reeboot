@@ -46,7 +46,7 @@ What can you do?
 To talk to your agent from your phone:
 
 ```bash
-reeboot channel login whatsapp
+reeboot channels login whatsapp
 ```
 
 Scan the QR code with WhatsApp → Settings → Linked Devices → Link a Device. Your agent is now available in your WhatsApp DMs.

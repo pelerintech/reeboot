@@ -271,3 +271,23 @@ The initial implementation used `pi.on('turn_start', ...)` with a non-existent `
 ### Daily budget limits are per-context, not instance-wide — 2026-05-07 (Request: token-budget)
 
 The initial BudgetGuard daily token/cost queries summed usage across ALL contexts, meaning ctx2's spend could block ctx1. The evaluator correctly flagged this as diverging from spec intent ("tokens consumed today for this context"). The queries were updated to add `context_id = ?`. This means `daily_tokens` and `daily_cost_usd` in config.json are per-context per-day limits. A deployment with N active contexts has N independent daily buckets. This is the least surprising semantics for a single-owner agent and is consistent with how session limits already worked (session limits were already per-context).
+
+### InquirerPrompter rewritten to use @inquirer/prompts individual functions — 2026-05-10 (Request: setup-wizard-improvements)
+
+`InquirerPrompter` was rewritten to use the individual function API from `@inquirer/prompts` (`select`, `input`, `password`, `checkbox`, `confirm`) instead of the legacy `inquirer.prompt([{ type: '...' }])` pattern. Inquirer v13 (pinned at `^13.4.0`) rewrote the API entirely — the old pattern silently fell back to plain text input on Linux SSH terminals. The `Prompter` interface and `FakePrompter` are unchanged. The overwrite-confirmation prompt in `runSetupCommand` was also updated to use `confirm` from `@inquirer/prompts`.
+
+### Cloud provider step reordered to provider → API key → model — 2026-05-10 (Request: setup-wizard-improvements)
+
+The cloud provider flow was reordered from provider → model → API key to provider → API key → model. This enables live model fetching: after the key is entered, the wizard calls `fetchCloudModels(provider, apiKey)` (3s timeout), shows the live list, and falls back to static curated lists on failure. The static fallback ensures the wizard still works without network access or when the provider API is unavailable.
+
+### Start-now confirm moved from launch step to wizard orchestrator — 2026-05-10 (Request: setup-wizard-improvements)
+
+The "Start the agent now?" confirm prompt was moved from `runLaunchStep` to the end of `runSetupWizard`. The launch step now only writes config. This enables injectable `_deps.startAgent` for testing the full wizard without starting a real server. Tests that previously provided `prompter([true/false])` to `runLaunchStep` for start-now were updated to no longer need that answer, while the wizard-level tests now provide it.
+
+### Local providers follow same models.json pattern as Ollama — 2026-05-10 (Request: setup-wizard-improvements)
+
+llama.cpp, LM Studio, and Custom endpoint use the identical `models.json` + `baseUrl` mechanism as Ollama. No new templates were needed — `writeOllamaModelsJson` is reused for all local providers. The local branch was generalised from `if (provider === 'ollama')` to `if (provider in LOCAL_PROVIDERS)`. This keeps local inference support zero-cost in terms of code surface area.
+
+### OpenRouter uses unified cloud flow (provider → API key → model), not a special-cased order — 2026-05-10 (Request: setup-wizard-improvements)
+
+The original spec described an OpenRouter-specific ordering where the model list is fetched before the API key is entered, and the API key is asked *after* model selection. This was reconsidered: the implementation pre-fetches the public OpenRouter models list in the background before asking for the API key, then presents the model select (using those pre-fetched results) in the normal position. The user experience is identical to other cloud providers — provider → API key → model — with the only difference being that OpenRouter's model list is already available without waiting for a new fetch. Deviating from the unified flow for one provider was rejected because it adds UI inconsistency without user-visible benefit: the pre-fetch happens silently and the API key is still needed before the user can proceed. The spec was updated to reflect this intent.

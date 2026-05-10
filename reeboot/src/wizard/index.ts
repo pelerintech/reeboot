@@ -5,10 +5,15 @@ import { InquirerPrompter } from './prompter.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface WizardDeps {
+  startAgent?: (configPath: string) => Promise<void>
+}
+
 export interface WizardOptions {
   prompter?: Prompter
   configPath?: string
   configDir?: string
+  _deps?: WizardDeps
 }
 
 // ─── runSetupWizard ───────────────────────────────────────────────────────────
@@ -32,11 +37,25 @@ export async function runSetupWizard(opts: WizardOptions = {}): Promise<void> {
     ?? process.env.REEBOOT_CONFIG_PATH
     ?? join(homedir(), '.reeboot', 'config.json')
   const configDir = opts.configDir ?? join(homedir(), '.reeboot')
+  const deps = opts._deps ?? {}
 
   console.log('\n🚀 Welcome to Reeboot Setup Wizard\n')
   console.log('  We\'ll guide you through setting up your AI agent in 4 steps.\n')
 
-  // ── Step 1: Provider ──────────────────────────────────────────────────────
+  // ── Step 1: Deployment method ─────────────────────────────────────────────
+  const deploymentChoice = await prompter.select({
+    message: 'How do you want to run Reeboot?',
+    choices: [
+      { name: 'Native (daemon)  — run directly on this machine', value: 'native' },
+      { name: 'Docker (full stack) — containerised with Docker Compose', value: 'docker' },
+    ],
+    default: 'native',
+  })
+  if (deploymentChoice === 'docker') {
+    console.log('\n  Docker support coming soon. Continuing with native setup.\n')
+  }
+
+  // ── Step 2: Provider ──────────────────────────────────────────────────────
   const { runProviderStep } = await import('./steps/provider.js')
   const providerResult = await runProviderStep({ prompter, configDir })
 
@@ -77,13 +96,37 @@ export async function runSetupWizard(opts: WizardOptions = {}): Promise<void> {
   const { runWizard } = await import('../setup-wizard.js')
   // Scaffold only (non-interactive, using existing configDir)
   // We call scaffoldOnly to avoid double-writing config
-  await scaffoldSetup(configDir)
+  await scaffoldSetup(configDir, agentName)
+
+  // ── Start now? ─────────────────────────────────────────────────────────────
+  const startNow = await prompter.confirm({
+    message: 'Start the agent now?',
+    default: true,
+  })
+  if (startNow) {
+    if (deps.startAgent) {
+      await deps.startAgent(configPath)
+    } else {
+      const { loadConfig } = await import('../config.js')
+      const { startServer } = await import('../server.js')
+      const loaded = loadConfig(configPath)
+      await startServer({
+        port: loaded.channels.web.port,
+        host: process.env.REEBOOT_HOST ?? '127.0.0.1',
+        logLevel: loaded.logging.level,
+        token: loaded.server.token,
+        config: loaded,
+      })
+    }
+  } else {
+    console.log("\n  Run 'reeboot start' when you're ready.\n")
+  }
 }
 
 // ─── scaffoldSetup ────────────────────────────────────────────────────────────
 
-async function scaffoldSetup(configDir: string): Promise<void> {
-  const { mkdirSync, existsSync, copyFileSync } = await import('fs')
+async function scaffoldSetup(configDir: string, agentName?: string): Promise<void> {
+  const { mkdirSync, existsSync, copyFileSync, readFileSync, writeFileSync } = await import('fs')
   const { join } = await import('path')
   const { dirname } = await import('path')
   const { fileURLToPath } = await import('url')
@@ -118,7 +161,14 @@ async function scaffoldSetup(configDir: string): Promise<void> {
   ]
 
   for (const { src, dest } of copies) {
-    if (existsSync(dest)) continue
-    if (existsSync(src)) copyFileSync(src, dest)
+    if (!existsSync(src)) continue
+    if (src.endsWith('main-agents.md') && agentName) {
+      // Substitute {{AGENT_NAME}} and always overwrite (name may change on re-run)
+      let tmpl = readFileSync(src, 'utf-8')
+      tmpl = tmpl.replace(/\{\{AGENT_NAME\}\}/g, agentName)
+      writeFileSync(dest, tmpl, 'utf-8')
+    } else {
+      if (!existsSync(dest)) copyFileSync(src, dest)
+    }
   }
 }

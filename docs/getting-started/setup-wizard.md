@@ -62,8 +62,8 @@ Select which channels to link during setup (all are optional — you can add the
 Both channels can be linked later with:
 
 ```bash
-reeboot channel login whatsapp
-reeboot channel login signal
+reeboot channels login whatsapp
+reeboot channels login signal
 ```
 
 ---

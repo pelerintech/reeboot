@@ -64,8 +64,8 @@ export class FakePrompter implements Prompter {
   async select(opts: SelectOptions): Promise<string> {
     const ans = this._next('select', opts)
     if (typeof ans !== 'string') throw new Error(`FakePrompter: expected string for select, got ${typeof ans}`)
-    // run validation-style check: answer must be one of the choices
-    const valid = opts.choices.some(c => c.value === ans)
+    // run validation-style check: answer must be one of the non-separator choices
+    const valid = opts.choices.some(c => 'type' in c ? false : (c as any).value === ans)
     if (!valid) throw new Error(`FakePrompter: value "${ans}" not in select choices`)
     return ans
   }

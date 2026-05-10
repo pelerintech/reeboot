@@ -18,6 +18,7 @@ export interface ChannelsStepDeps {
   linkWhatsApp?: typeof linkWhatsAppDevice
   linkSignal?: typeof linkSignalDevice
   checkDocker?: typeof checkDockerStatus
+  runOwnerSetup?: () => Promise<void>
 }
 
 // ─── runChannelsStep ──────────────────────────────────────────────────────────
@@ -52,7 +53,11 @@ export async function runChannelsStep(opts: {
   }
 
   if (selected.includes('whatsapp')) {
-    result.whatsapp = await runWhatsAppSubflow({ configDir, linkFn: _linkWhatsApp })
+    result.whatsapp = await runWhatsAppSubflow({
+      configDir,
+      linkFn: _linkWhatsApp,
+      runOwnerSetup: deps.runOwnerSetup,
+    })
   }
 
   if (selected.includes('signal')) {
@@ -77,6 +82,7 @@ export async function runChannelsStep(opts: {
 async function runWhatsAppSubflow(opts: {
   configDir: string
   linkFn: typeof linkWhatsAppDevice
+  runOwnerSetup?: () => Promise<void>
 }): Promise<boolean> {
   const { configDir, linkFn } = opts
 
@@ -103,9 +109,26 @@ async function runWhatsAppSubflow(opts: {
           ;(qrTerminal as any).default.generate(qr, { small: true })
           console.log('\n  Waiting up to 2 minutes...\n')
         },
-        onSuccess: () => {
+        onSuccess: async () => {
           success = true
           console.log('  ✓ WhatsApp linked!')
+          // B1 fix: write enabled: true using load→merge→save pattern
+          try {
+            const { loadConfig, saveConfig } = await import('../../config.js')
+            const cfgPath = join(configDir, 'config.json')
+            const { existsSync } = await import('fs')
+            if (existsSync(cfgPath)) {
+              const existing = loadConfig(cfgPath)
+              existing.channels.whatsapp.enabled = true
+              saveConfig(existing, cfgPath)
+            }
+          } catch {
+            // config may not exist yet during initial wizard run — that's OK
+          }
+          // F2: run owner setup subflow immediately after success
+          if (opts.runOwnerSetup) {
+            try { await opts.runOwnerSetup() } catch { /* non-fatal */ }
+          }
           resolve()
         },
         onTimeout: () => {

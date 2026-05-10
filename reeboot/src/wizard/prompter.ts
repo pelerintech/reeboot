@@ -1,8 +1,14 @@
 // ─── Prompter Interface ───────────────────────────────────────────────────────
 
+/** A visual divider entry in a select list — rendered as a horizontal rule in the terminal. */
+export interface SeparatorEntry {
+  type: 'separator'
+  name?: string
+}
+
 export interface SelectOptions {
   message: string
-  choices: Array<{ name: string; value: string }>
+  choices: Array<{ name: string; value: string } | SeparatorEntry>
   default?: string
 }
 
@@ -38,65 +44,58 @@ export interface Prompter {
 // ─── InquirerPrompter ─────────────────────────────────────────────────────────
 
 /**
- * Production prompter backed by inquirer.
- * Lazy-loads inquirer so tests that inject FakePrompter never import it.
+ * Production prompter backed by inquirer v13 (@inquirer/prompts individual functions).
+ * Uses the v13 API to correctly render interactive menus on all terminals including
+ * Linux SSH sessions. Lazy-loads so tests that inject FakePrompter never import it.
  */
 export class InquirerPrompter implements Prompter {
   async select(opts: SelectOptions): Promise<string> {
-    const { default: inquirer } = await import('inquirer')
-    const { answer } = await inquirer.prompt([{
-      type: 'list',
-      name: 'answer',
+    const { select, Separator } = await import('@inquirer/prompts')
+    // Map SeparatorEntry items to @inquirer/prompts Separator instances
+    const choices = opts.choices.map((c) =>
+      'type' in c && c.type === 'separator'
+        ? new Separator(c.name)
+        : c as { name: string; value: string }
+    )
+    return select({
       message: opts.message,
-      choices: opts.choices,
+      choices,
       default: opts.default,
-    }])
-    return answer
+    })
   }
 
   async input(opts: InputOptions): Promise<string> {
-    const { default: inquirer } = await import('inquirer')
-    const { answer } = await inquirer.prompt([{
-      type: 'input',
-      name: 'answer',
+    const { input } = await import('@inquirer/prompts')
+    return input({
       message: opts.message,
       default: opts.default,
       validate: opts.validate,
-    }])
-    return answer
+    })
   }
 
   async password(opts: PasswordOptions): Promise<string> {
-    const { default: inquirer } = await import('inquirer')
-    const { answer } = await inquirer.prompt([{
-      type: 'password',
-      name: 'answer',
+    const { password } = await import('@inquirer/prompts')
+    return password({
       message: opts.message,
       mask: '*',
       validate: opts.validate,
-    }])
-    return answer
+    })
   }
 
   async checkbox(opts: CheckboxOptions): Promise<string[]> {
-    const { default: inquirer } = await import('inquirer')
-    const { answer } = await inquirer.prompt([{
-      type: 'checkbox',
-      name: 'answer',
+    const { checkbox } = await import('@inquirer/prompts')
+    const result = await checkbox({
       message: opts.message,
       choices: opts.choices,
-    }])
-    return answer
+    })
+    return result as string[]
   }
 
   async confirm(opts: ConfirmOptions): Promise<boolean> {
-    const { default: inquirer } = await import('inquirer')
-    const { answer } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'answer',
+    const { confirm } = await import('@inquirer/prompts')
+    return confirm({
       message: opts.message,
       default: opts.default,
-    }])
-    return answer
+    })
   }
 }

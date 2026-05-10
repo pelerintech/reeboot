@@ -23,6 +23,48 @@ function makePrompter(overrides: Record<string, any> = {}) {
   };
 }
 
+// ─── f4-custom-escape gap: search backend __custom__ scenarios ───────────────
+
+describe('web search backend: __custom__ escape hatch', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it('__custom__ is the last option in the provider select list', async () => {
+    const { runWebSearchStep } = await import('@src/wizard/steps/web-search.js');
+
+    // Capture the choices passed to prompter.select
+    let capturedChoices: any[] = [];
+    const prompter = makePrompter({
+      select: vi.fn(async (opts: any) => {
+        capturedChoices = opts.choices ?? [];
+        return 'none'; // pick a real value so the function exits
+      }),
+    });
+
+    await runWebSearchStep({ prompter: prompter as any });
+
+    const lastChoice = capturedChoices[capturedChoices.length - 1];
+    expect(lastChoice?.value).toBe('__custom__');
+    expect(lastChoice?.name).toContain('custom');
+  });
+
+  it('selecting __custom__ on the search backend shows a text input and uses the typed value', async () => {
+    const { runWebSearchStep } = await import('@src/wizard/steps/web-search.js');
+
+    const prompter = makePrompter({
+      select: vi.fn().mockResolvedValue('__custom__'),
+      input: vi.fn().mockResolvedValue('my-custom-search-backend'),
+    });
+
+    const result = await runWebSearchStep({ prompter: prompter as any });
+
+    expect(prompter.input).toHaveBeenCalled();
+    expect(result.provider).toBe('my-custom-search-backend');
+  });
+});
+
 describe('runSearXNGSubflow (probe + URL confirmation)', () => {
   afterEach(() => {
     vi.resetModules();

@@ -171,7 +171,8 @@ describe('daemon mode — Linux', () => {
     const { readFileSync } = await import('fs');
     const unitPath = join(systemdDir, 'reeboot.service');
     const content = readFileSync(unitPath, 'utf-8');
-    expect(content).toContain('ExecStart=/usr/local/bin/reeboot start');
+    // ExecStart now includes the node binary followed by the reeboot script
+    expect(content).toMatch(/ExecStart=.*\/usr\/local\/bin\/reeboot start/);
   });
 
   it('systemd unit file sets PI_CACHE_RETENTION=long', async () => {

@@ -29,21 +29,26 @@ function writeConfig(dir: string): void {
   )
 }
 
-// ─── no-args → wizard when no config ─────────────────────────────────────────
+// ─── no-args → error when no config (F1: reeboot init required) ────────────────
 
 describe('first-run-entrypoint: no config', () => {
-  it('runs wizard when config does not exist', async () => {
+  it('errors with process.exit(1) and "reeboot init" message when config does not exist', async () => {
     const configPath = join(tmpDir, 'config.json')
-    const wizardCalls: string[] = []
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit') })
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const { handleDefaultAction } = await import('@src/index.js')
-    await handleDefaultAction({
-      configPath,
-      _deps: {
-        runWizard: async () => { wizardCalls.push('called') },
-      },
-    })
-    expect(wizardCalls).toHaveLength(1)
+    await expect(
+      handleDefaultAction({ configPath })
+    ).rejects.toThrow('process.exit')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    const output = consoleSpy.mock.calls.map((c: any[]) => c.join(' ')).join('\n')
+    expect(output).toContain('reeboot init')
+
+    exitSpy.mockRestore()
+    consoleSpy.mockRestore()
   })
 })
 

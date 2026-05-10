@@ -26,7 +26,8 @@ describe('initAgentDir', () => {
     const agentsPath = join(tmpDir, 'agent', 'AGENTS.md');
     expect(existsSync(agentsPath)).toBe(true);
     const content = readFileSync(agentsPath, 'utf-8');
-    expect(content).toContain('Reeboot');
+    // Template now uses {{AGENT_NAME}} placeholder (substituted at scaffold time by wizard)
+    expect(content).toContain('{{AGENT_NAME}}');
   });
 
   it('does not overwrite existing AGENTS.md', async () => {

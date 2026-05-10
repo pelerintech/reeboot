@@ -96,10 +96,10 @@ reeboot packages list     List installed packages
 
 reeboot skills list       List all bundled skills
 
-reeboot channel list      List channels and status
-reeboot channel login whatsapp   Link WhatsApp (shows QR code)
-reeboot channel login signal     Link Signal
-reeboot channel logout <ch>      Disconnect a channel
+reeboot channels list     List channels and status
+reeboot channels login whatsapp  Link WhatsApp (shows QR code)
+reeboot channels login signal    Link Signal
+reeboot channels logout <ch>     Disconnect a channel
 
 reeboot contexts list     List contexts (coming soon)
 reeboot contexts create <name>   Create a context (coming soon)
@@ -122,7 +122,7 @@ Open `http://localhost:3000` after starting the agent. No setup required.
 ### WhatsApp
 
 1. Set `"whatsapp": { "enabled": true }` in config
-2. Run `reeboot channel login whatsapp`
+2. Run `reeboot channels login whatsapp`
 3. Scan the QR code with WhatsApp → Settings → Linked Devices
 
 → [docs/channels/whatsapp.md](../docs/channels/whatsapp.md)

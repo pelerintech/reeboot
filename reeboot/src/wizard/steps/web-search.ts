@@ -26,7 +26,7 @@ export async function runWebSearchStep(opts: {
 
   console.log('\n── Step 3b: Web Search ──────────────────────────────────────────\n')
 
-  const provider = await prompter.select({
+  let provider = await prompter.select({
     message: 'Select a web search provider:',
     choices: [
       { name: 'DuckDuckGo (free, no API key) [recommended]', value: 'duckduckgo' },
@@ -36,9 +36,16 @@ export async function runWebSearchStep(opts: {
       { name: 'Exa (API key required)', value: 'exa' },
       { name: 'SearXNG (self-hosted, requires Docker)', value: 'searxng' },
       { name: 'None (fetch URLs directly, no web search)', value: 'none' },
+      { name: 'Enter custom value...', value: '__custom__' },
     ],
     default: 'duckduckgo',
   })
+  if (provider === '__custom__') {
+    provider = await prompter.input({
+      message: 'Enter custom search backend:',
+      validate: (val) => val.trim().length > 0 ? true : 'value cannot be empty',
+    })
+  }
 
   if (provider === 'duckduckgo') {
     console.log('  ✓ Web search enabled via DuckDuckGo — no setup required.\n')

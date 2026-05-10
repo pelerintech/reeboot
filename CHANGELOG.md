@@ -11,6 +11,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0] - 2026-05-10
+
+### Breaking
+
+- `reeboot start` (and bare `reeboot`) no longer launch the setup wizard when no config
+  exists — they now error with a clear message and instruct the user to run `reeboot init`.
+  Deployments that relied on `reeboot start` triggering first-run setup must switch to
+  `reeboot init`.
+
+### Added
+
+- `reeboot init` — dedicated first-time setup wizard with deployment choice step (Docker
+  shows "coming soon" and falls through to native).
+- `reeboot channels setup owner-whatsapp` — captures the owner's exact WhatsApp `peerId`
+  from a live message, eliminating the `@s.whatsapp.net` vs `@lid` format ambiguity.
+- Local providers (llama.cpp, LM Studio, Custom OpenAI-compatible endpoint) in the wizard
+  provider list; local providers appear before cloud providers (private-first ordering).
+- Live model fetch from provider APIs after API key entry; static curated lists used as
+  fallback when fetch fails or times out.
+- Local model auto-detection: pings running server, shows detected models as a select list;
+  falls back to manual input if server is unreachable.
+- "Enter custom value..." escape hatch on all wizard select menus (provider, model, search
+  backend) — allows any value without being blocked by the curated list.
+- "Start the agent now?" prompt at the end of `reeboot init` — Y starts immediately,
+  N prints run instructions.
+
+### Fixed
+
+- Wizard provider/model menus degraded to plain text on Linux SSH (inquirer v13 API
+  mismatch) — `InquirerPrompter` now uses the `@inquirer/prompts` individual functions
+  (`select`, `input`, `password`, `checkbox`, `confirm`).
+- WhatsApp `enabled: false` after QR scan — `channels.whatsapp.enabled` is now written
+  to config on successful link (both wizard and standalone `reeboot channels login whatsapp`).
+- Agent always introduced itself as "Reeboot" regardless of configured name — the
+  `templates/main-agents.md` template now uses `{{AGENT_NAME}}` substituted at scaffold
+  time, and on every `reeboot setup` re-run.
+- Cloud provider step now prompts for API key before model (provider → API key → model),
+  enabling live model fetch.
+
+---
+
+## [2.0.1] - 2026-05-09
+
+### Fixed
+
+- **`reeboot channel` commands not found** — all channel subcommands were documented as `reeboot channel *` (singular) but the CLI registers them under `reeboot channels *` (plural). Updated all references in `README.md`, `docs/getting-started/quick-start.md`, `docs/getting-started/setup-wizard.md`, and `docs/channels/whatsapp.md`.
+
+- **Daemon fails to start with nvm (exit code 127)** — `reeboot start --daemon` generated systemd and launchd service files that relied on `#!/usr/bin/env node` to resolve the node binary. On machines using nvm, systemd user services don't inherit the shell environment so `node` was not found in PATH, causing the service to exit immediately with code 127. The daemon generator now uses `process.execPath` (the full path to the node binary that ran `reeboot`) in `ExecStart`, making it work correctly regardless of how node was installed (nvm, homebrew, system package, etc.).
+
+---
+
 ## [2.0.0] - 2026-05-08
 
 ### Fixed

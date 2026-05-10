@@ -43,10 +43,11 @@ function fullWizardAnswers({
   startNow?: boolean
 } = {}): unknown[] {
   const answers: unknown[] = []
+  answers.push('native')     // select deployment method
   answers.push(provider)     // select provider
-  answers.push(model)        // select model
-  if (provider !== 'ollama') answers.push(apiKey) // password: api key
+  if (provider !== 'ollama') answers.push(apiKey) // password: api key (BEFORE model)
   if (provider === 'ollama') answers.push('http://localhost:11434/v1') // input: base url
+  if (provider !== 'ollama') answers.push(model) // select model (AFTER api key)
   if (provider === 'ollama') answers.push(model) // input: model id
   answers.push(agentName)    // input: agent name
   answers.push(channels)     // checkbox: channels
@@ -60,7 +61,8 @@ function fullWizardAnswers({
 describe('wizard provider setup', () => {
   it('accepts Anthropic provider and stores claude-sonnet-4-5', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['anthropic', 'claude-sonnet-4-5', 'sk-ant-abc123'])
+    // New order: provider → api key → model
+    const prompter = new FakePrompter(['anthropic', 'sk-ant-abc123', 'claude-sonnet-4-5'])
     const result = await runProviderStep({ prompter, configDir: tmpDir })
     expect(result.provider).toBe('anthropic')
     expect(result.modelId).toBe('claude-sonnet-4-5')
@@ -69,7 +71,7 @@ describe('wizard provider setup', () => {
 
   it('accepts OpenAI provider and stores gpt-4o', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['openai', 'gpt-4o', 'sk-openai-xyz'])
+    const prompter = new FakePrompter(['openai', 'sk-openai-xyz', 'gpt-4o'])
     const result = await runProviderStep({ prompter, configDir: tmpDir })
     expect(result.provider).toBe('openai')
     expect(result.modelId).toBe('gpt-4o')
@@ -77,65 +79,65 @@ describe('wizard provider setup', () => {
 
   it('accepts Google provider', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['google', 'gemini-2.0-flash', 'goog-key'])
+    const prompter = new FakePrompter(['google', 'goog-key', 'gemini-2.0-flash'])
     const result = await runProviderStep({ prompter, configDir: tmpDir })
     expect(result.provider).toBe('google')
   })
 
   it('accepts Groq provider', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['groq', 'llama-3.3-70b-versatile', 'gsk_key'])
+    const prompter = new FakePrompter(['groq', 'gsk_key', 'llama-3.3-70b-versatile'])
     const result = await runProviderStep({ prompter, configDir: tmpDir })
     expect(result.provider).toBe('groq')
   })
 
   it('accepts Mistral provider', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['mistral', 'mistral-large-latest', 'mist-key'])
+    const prompter = new FakePrompter(['mistral', 'mist-key', 'mistral-large-latest'])
     const result = await runProviderStep({ prompter, configDir: tmpDir })
     expect(result.provider).toBe('mistral')
   })
 
   it('accepts xAI provider', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['xai', 'grok-2', 'xai-key'])
+    const prompter = new FakePrompter(['xai', 'xai-key', 'grok-2'])
     const result = await runProviderStep({ prompter, configDir: tmpDir })
     expect(result.provider).toBe('xai')
   })
 
   it('accepts OpenRouter provider', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['openrouter', 'openai/gpt-4o', 'or-key'])
+    const prompter = new FakePrompter(['openrouter', 'or-key', 'openai/gpt-4o'])
     const result = await runProviderStep({ prompter, configDir: tmpDir })
     expect(result.provider).toBe('openrouter')
   })
 
   it('stores API key in config draft', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['anthropic', 'claude-sonnet-4-5', 'sk-ant-abc123'])
+    const prompter = new FakePrompter(['anthropic', 'sk-ant-abc123', 'claude-sonnet-4-5'])
     const result = await runProviderStep({ prompter, configDir: tmpDir })
     expect(result.apiKey).toBe('sk-ant-abc123')
   })
 
   it('rejects empty API key and re-prompts', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    // empty key first, then valid key
-    const prompter = new FakePrompter(['anthropic', 'claude-sonnet-4-5', '', 'sk-valid'])
+    // empty key first, then valid key (new order: provider → apikey → model)
+    const prompter = new FakePrompter(['anthropic', '', 'sk-valid', 'claude-sonnet-4-5'])
     // The validate fn in password should reject empty, so FakePrompter
     // will throw — we handle by providing valid on second try.
     // Actually for validation, the FakePrompter raises on validate failure.
     // So let's test that the validate function itself rejects empty:
     const { PROVIDERS } = await import('@src/wizard/steps/provider.js')
-    // Just verify the provider list has 8 entries
-    expect(PROVIDERS).toHaveLength(8)
+    // Verify the provider list has providers (including new local providers)
+    expect(PROVIDERS.length).toBeGreaterThan(8)
   })
 
-  it('PROVIDERS list contains exactly 8 entries', async () => {
+  it('PROVIDERS list contains all expected providers', async () => {
     const { PROVIDERS } = await import('@src/wizard/steps/provider.js')
-    expect(PROVIDERS.map((p: { value: string }) => p.value)).toEqual(
-      expect.arrayContaining(['anthropic', 'openai', 'google', 'groq', 'mistral', 'xai', 'openrouter', 'ollama'])
+    const values = PROVIDERS.filter((p: any) => p.type !== 'separator').map((p: any) => p.value)
+    expect(values).toEqual(
+      expect.arrayContaining(['anthropic', 'openai', 'google', 'groq', 'mistral', 'xai', 'openrouter', 'ollama', 'llamacpp', 'lmstudio', 'custom'])
     )
-    expect(PROVIDERS).toHaveLength(8)
   })
 
   it('each non-Ollama provider has a curated model list', async () => {
@@ -159,15 +161,18 @@ describe('wizard provider setup', () => {
 
 // ─── Ollama scenarios ─────────────────────────────────────────────────────────
 
+// fetchLocalModels that always rejects (no server) — used in Ollama tests
+const noServerFetch = async () => { throw new Error('no server') }
+
 describe('wizard provider setup: Ollama', () => {
   it('skips API key prompt for Ollama', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const prompter = new FakePrompter([
       'ollama',
       'http://localhost:11434/v1', // base URL
-      'qwen2.5:7b',               // model ID
+      'qwen2.5:7b',               // model ID (input fallback)
     ])
-    const result = await runProviderStep({ prompter, configDir: tmpDir })
+    const result = await runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })
     expect(result.provider).toBe('ollama')
     expect(result.apiKey).toBe('')
     expect(result.modelId).toBe('qwen2.5:7b')
@@ -176,37 +181,34 @@ describe('wizard provider setup: Ollama', () => {
 
   it('uses default Ollama URL when Enter pressed', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    // FakePrompter returns '' for default → input step should use default
     const prompter = new FakePrompter(['ollama', 'http://localhost:11434/v1', 'llama3:8b'])
-    const result = await runProviderStep({ prompter, configDir: tmpDir })
+    const result = await runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })
     expect(result.ollamaBaseUrl).toBe('http://localhost:11434/v1')
   })
 
   it('accepts custom Ollama URL', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const prompter = new FakePrompter(['ollama', 'http://192.168.1.5:11434/v1', 'phi3'])
-    const result = await runProviderStep({ prompter, configDir: tmpDir })
+    const result = await runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })
     expect(result.ollamaBaseUrl).toBe('http://192.168.1.5:11434/v1')
   })
 
   it('writes models.json with Ollama provider block', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const prompter = new FakePrompter(['ollama', 'http://localhost:11434/v1', 'qwen2.5:7b'])
-    await runProviderStep({ prompter, configDir: tmpDir })
+    await runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })
     const modelsPath = join(tmpDir, 'models.json')
     expect(existsSync(modelsPath)).toBe(true)
     const models = JSON.parse(readFileSync(modelsPath, 'utf-8'))
     expect(models).toBeDefined()
-    // Should contain ollama provider with the model id
     const hasOllama = JSON.stringify(models).includes('ollama') || JSON.stringify(models).includes('qwen2.5:7b')
     expect(hasOllama).toBe(true)
   })
 
   it('rejects empty Ollama model ID', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    // Empty model id should fail validate
     const prompter = new FakePrompter(['ollama', 'http://localhost:11434/v1', ''])
-    await expect(runProviderStep({ prompter, configDir: tmpDir })).rejects.toThrow()
+    await expect(runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })).rejects.toThrow()
   })
 })
 
@@ -466,7 +468,7 @@ describe('wizard launch step', () => {
     const origLog = console.log
     console.log = (...args: unknown[]) => { logs.push(args.join(' ')) }
 
-    const prompter = new FakePrompter([false]) // don't start now
+    const prompter = new FakePrompter([]) // launch step no longer asks start-now
     try {
       await runLaunchStep({
         prompter,
@@ -490,9 +492,9 @@ describe('wizard launch step', () => {
     expect(output).toContain('duckduckgo')
   })
 
-  it('user declines start → config written, exit message printed', async () => {
+  it('config written after launch step', async () => {
     const { runLaunchStep } = await import('@src/wizard/steps/launch.js')
-    const prompter = new FakePrompter([false])
+    const prompter = new FakePrompter([]) // launch step no longer asks start-now
 
     const configPath = join(tmpDir, 'config.json')
 
@@ -519,35 +521,6 @@ describe('wizard launch step', () => {
     expect(writtenConfigs).toHaveLength(1)
   })
 
-  it('user starts now → config written + agent starts', async () => {
-    const { runLaunchStep } = await import('@src/wizard/steps/launch.js')
-    const prompter = new FakePrompter([true])
-
-    const configPath = join(tmpDir, 'config.json')
-    const startCalls: unknown[] = []
-
-    vi.doMock('@src/utils/atomic-config.js', () => ({
-      saveConfigAtomic: (_cfg: unknown, _path: string) => {},
-    }))
-    vi.doMock('@src/server.js', () => ({
-      startServer: async (opts: unknown) => { startCalls.push(opts) },
-    }))
-
-    await runLaunchStep({
-      prompter,
-      configPath,
-      draft: {
-        provider: 'anthropic',
-        modelId: 'claude-sonnet-4-5',
-        agentName: 'Reeboot',
-        whatsapp: false,
-        signal: false,
-        searchProvider: 'duckduckgo',
-      },
-    })
-
-    expect(startCalls).toHaveLength(1)
-  })
 })
 
 // ─── Wizard orchestration ─────────────────────────────────────────────────────
@@ -577,7 +550,8 @@ describe('wizard orchestration', () => {
     }))
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
-    await expect(runSetupWizard({ configPath })).rejects.toThrow('interrupted')
+    const prompter = new FakePrompter(['native'])
+    await expect(runSetupWizard({ configPath, prompter })).rejects.toThrow('interrupted')
     expect(existsSync(configPath)).toBe(false)
   })
 
@@ -608,7 +582,9 @@ describe('wizard orchestration', () => {
     }))
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
-    await runSetupWizard({ configPath })
+    // Provide prompter with deployment choice (steps are all mocked, only wizard-level prompts consume it)
+    const prompter = new FakePrompter(['native', false])
+    await runSetupWizard({ configPath, prompter })
     expect(existsSync(configPath)).toBe(true)
   })
 })
@@ -642,7 +618,8 @@ describe('wizard authMode threading', () => {
     }))
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
-    await runSetupWizard({ configPath })
+    const prompter = new FakePrompter(['native', false])
+    await runSetupWizard({ configPath, prompter })
 
     const { loadConfig } = await import('@src/config.js')
     const cfg = loadConfig(configPath)
@@ -678,7 +655,8 @@ describe('wizard authMode threading', () => {
     }))
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
-    await runSetupWizard({ configPath })
+    const prompter = new FakePrompter(['native', false])
+    await runSetupWizard({ configPath, prompter })
 
     const { loadConfig } = await import('@src/config.js')
     const cfg = loadConfig(configPath)
@@ -717,5 +695,55 @@ describe('non-interactive wizard authMode', () => {
     expect(cfg.agent.model.authMode).toBe('pi')
     expect(cfg.agent.model.provider).toBe('')
     expect(cfg.agent.model.apiKey).toBe('')
+  })
+})
+
+// ─── Task 5: "Start now?" prompt in wizard orchestrator ──────────────────────
+
+describe('wizard "start now?" orchestrator prompt', () => {
+  function mockAllSteps() {
+    vi.doMock('@src/wizard/steps/provider.js', () => ({
+      runProviderStep: vi.fn().mockResolvedValue({
+        authMode: 'own', provider: 'anthropic', modelId: 'claude-sonnet-4-5', apiKey: 'sk-test', ollamaBaseUrl: '',
+      }),
+    }))
+    vi.doMock('@src/wizard/steps/name.js', () => ({ runNameStep: vi.fn().mockResolvedValue('Reeboot') }))
+    vi.doMock('@src/wizard/steps/channels.js', () => ({
+      runChannelsStep: vi.fn().mockResolvedValue({ whatsapp: false, signal: false }),
+    }))
+    vi.doMock('@src/wizard/steps/web-search.js', () => ({
+      runWebSearchStep: vi.fn().mockResolvedValue({ provider: 'duckduckgo', apiKey: '', searxngBaseUrl: '' }),
+    }))
+    vi.doMock('@src/wizard/steps/launch.js', () => ({
+      runLaunchStep: vi.fn().mockResolvedValue(undefined),
+    }))
+  }
+
+  it('calls _deps.startAgent when startNow = true', async () => {
+    mockAllSteps()
+    const mockStartAgent = vi.fn().mockResolvedValue(undefined)
+    const prompter = new FakePrompter(['native', true]) // deployment + start-now
+    const configPath = join(tmpDir, 'config.json')
+
+    const { runSetupWizard } = await import('@src/wizard/index.js')
+    await runSetupWizard({ prompter, configPath, _deps: { startAgent: mockStartAgent } })
+
+    expect(mockStartAgent).toHaveBeenCalled()
+  })
+
+  it('does NOT call startAgent and prints instructions when startNow = false', async () => {
+    mockAllSteps()
+    const mockStartAgent = vi.fn().mockResolvedValue(undefined)
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const prompter = new FakePrompter(['native', false]) // deployment + decline start-now
+    const configPath = join(tmpDir, 'config.json')
+
+    const { runSetupWizard } = await import('@src/wizard/index.js')
+    await runSetupWizard({ prompter, configPath, _deps: { startAgent: mockStartAgent } })
+
+    expect(mockStartAgent).not.toHaveBeenCalled()
+    const allLogs = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n')
+    expect(allLogs).toMatch(/reeboot start/i)
+    consoleSpy.mockRestore()
   })
 })

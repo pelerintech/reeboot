@@ -25,9 +25,20 @@ export interface ModelChoice {
   value: string
 }
 
-// ─── Provider list (8) ────────────────────────────────────────────────────────
+// ─── Provider list (private-first) ──────────────────────────────────────────────
 
-export const PROVIDERS: ProviderChoice[] = [
+// Separator sentinel for the local/cloud visual divider
+export const PROVIDER_SEPARATOR = { type: 'separator' as const, value: '__separator__', name: '────────────────────────────────────────' }
+
+export const PROVIDERS: (ProviderChoice | typeof PROVIDER_SEPARATOR)[] = [
+  // Local (private-first) ─────────────────────────────────────────────────────
+  { name: 'Ollama (local)            — http://localhost:11434/v1', value: 'ollama' },
+  { name: 'llama.cpp (local)         — http://localhost:8080/v1',  value: 'llamacpp' },
+  { name: 'LM Studio (local)         — http://localhost:1234/v1',  value: 'lmstudio' },
+  { name: 'Custom OpenAI-compatible endpoint (local)',              value: 'custom' },
+  // divider
+  PROVIDER_SEPARATOR,
+  // Cloud ──────────────────────────────────────────────────────────────────────
   { name: 'Anthropic (Claude)', value: 'anthropic' },
   { name: 'OpenAI (GPT)', value: 'openai' },
   { name: 'Google (Gemini)', value: 'google' },
@@ -35,7 +46,6 @@ export const PROVIDERS: ProviderChoice[] = [
   { name: 'Mistral', value: 'mistral' },
   { name: 'xAI (Grok)', value: 'xai' },
   { name: 'OpenRouter (multi-provider)', value: 'openrouter' },
-  { name: 'Ollama (local models)', value: 'ollama' },
 ]
 
 // ─── Curated model lists per provider ────────────────────────────────────────
@@ -91,11 +101,18 @@ const ENV_VARS: Record<string, string> = {
 
 // ─── runProviderStep ──────────────────────────────────────────────────────────
 
+export interface ProviderStepDeps {
+  fetchLocalModels?: (baseUrl: string) => Promise<string[]>
+  fetchCloudModels?: (provider: string, apiKey: string) => Promise<string[]>
+}
+
 export async function runProviderStep(opts: {
   prompter: Prompter
   configDir: string
+  _deps?: ProviderStepDeps
 }): Promise<ProviderStepResult> {
   const { prompter, configDir } = opts
+  const deps = opts._deps ?? {}
 
   console.log('\n── Step 1: AI Provider ──────────────────────────────────────────\n')
 
@@ -125,39 +142,90 @@ export async function runProviderStep(opts: {
 
   console.log('  Note: Custom providers can be added via config.json after setup.\n')
 
-  // Select provider
-  const provider = await prompter.select({
+  // Build provider choices including the visual separator for terminal rendering
+  const providerChoicesWithCustom = [
+    ...PROVIDERS,
+    { name: 'Enter custom value...', value: '__custom__' },
+  ]
+  let provider = await prompter.select({
     message: 'Select your AI provider:',
-    choices: PROVIDERS,
+    choices: providerChoicesWithCustom,
   })
+  if (provider === '__custom__') {
+    provider = await prompter.input({
+      message: 'Enter custom provider ID:',
+      validate: (val) => val.trim().length > 0 ? true : 'provider cannot be empty',
+    })
+  }
 
   let modelId: string
   let apiKey = ''
   let ollamaBaseUrl = ''
 
-  if (provider === 'ollama') {
-    // Ollama: URL + model ID (no API key)
+  const LOCAL_PROVIDERS: Record<string, string> = {
+    ollama:   'http://localhost:11434/v1',
+    llamacpp: 'http://localhost:8080/v1',
+    lmstudio: 'http://localhost:1234/v1',
+    custom:   '',
+  }
+
+  if (provider in LOCAL_PROVIDERS) {
+    // Local provider: URL + model ID (no API key)
+    const defaultUrl = LOCAL_PROVIDERS[provider]
     ollamaBaseUrl = await prompter.input({
-      message: 'Ollama base URL:',
-      default: 'http://localhost:11434/v1',
+      message: `Base URL for ${provider}:`,
+      default: defaultUrl || undefined,
       validate: (val) => val.trim().length > 0 ? true : 'base URL cannot be empty',
     })
 
-    modelId = await prompter.input({
-      message: 'Model ID (run `ollama list` to see available models):',
-      validate: (val) => val.trim().length > 0 ? true : 'model ID cannot be empty',
-    })
+    // Try to auto-detect models from running server
+    let detectedModels: string[] = []
+    try {
+      detectedModels = await (deps.fetchLocalModels ?? defaultFetchLocalModels)(ollamaBaseUrl)
+    } catch {
+      // Server not reachable — fall through to manual input
+    }
+
+    if (detectedModels.length > 0) {
+      const modelChoices = [
+        ...detectedModels.map(m => ({ name: m, value: m })),
+        { name: 'Enter custom value...', value: '__custom__' },
+      ]
+      modelId = await prompter.select({
+        message: 'Select a model:',
+        choices: modelChoices,
+        default: detectedModels[0],
+      })
+      if (modelId === '__custom__') {
+        modelId = await prompter.input({
+          message: 'Enter custom model ID:',
+          validate: (val) => val.trim().length > 0 ? true : 'model ID cannot be empty',
+        })
+      }
+    } else {
+      if (detectedModels.length === 0) {
+        console.log('  ⚠  Server not reachable or no models found. Enter model ID manually.\n')
+      }
+      modelId = await prompter.input({
+        message: 'Model ID:',
+        validate: (val) => val.trim().length > 0 ? true : 'model ID cannot be empty',
+      })
+    }
 
     // Write models.json
     await writeOllamaModelsJson({ configDir, ollamaBaseUrl, modelId })
   } else {
-    // Non-Ollama: select from curated model list
-    const modelChoices = MODEL_LISTS[provider]
-    modelId = await prompter.select({
-      message: 'Select a model:',
-      choices: modelChoices,
-      default: modelChoices[0].value,
-    })
+    // Cloud provider: API key first, then model (enables live model fetch)
+    // Exception: OpenRouter has a public models endpoint — fetch before API key
+
+    let openRouterPreFetchedModels: string[] = []
+    if (provider === 'openrouter') {
+      try {
+        openRouterPreFetchedModels = await (deps.fetchCloudModels ?? defaultFetchCloudModels)(provider, '')
+      } catch {
+        // fall through to static list
+      }
+    }
 
     // Prompt for API key
     const envVar = ENV_VARS[provider] ?? 'API_KEY'
@@ -177,6 +245,60 @@ export async function runProviderStep(opts: {
         if (!apiKey.trim()) {
           console.log('  ⚠  API key cannot be empty. Press Ctrl+C to cancel setup.')
         }
+      }
+    }
+
+    // Select model — try live fetch first (use pre-fetched for OpenRouter), fall back to static list
+    let liveModels: string[] = openRouterPreFetchedModels
+    if (liveModels.length === 0) {
+      try {
+        liveModels = await (deps.fetchCloudModels ?? defaultFetchCloudModels)(provider, apiKey)
+      } catch {
+        // fetch failed — use static fallback
+      }
+    }
+
+    if (liveModels.length > 0) {
+      const modelChoices = [
+        ...liveModels.map(m => ({ name: m, value: m })),
+        { name: 'Enter custom value...', value: '__custom__' },
+      ]
+      modelId = await prompter.select({
+        message: 'Select a model:',
+        choices: modelChoices,
+        default: liveModels[0],
+      })
+      if (modelId === '__custom__') {
+        modelId = await prompter.input({
+          message: 'Enter custom model ID:',
+          validate: (val) => val.trim().length > 0 ? true : 'model ID cannot be empty',
+        })
+      }
+    } else {
+      const staticChoices = MODEL_LISTS[provider] ?? []
+      // Always show warning when live fetch was attempted but yielded no models
+      console.log('  ⚠  Could not fetch live models. Using curated list.\n')
+      if (staticChoices.length > 0) {
+        const staticWithCustom = [
+          ...staticChoices,
+          { name: 'Enter custom value...', value: '__custom__' },
+        ]
+        modelId = await prompter.select({
+          message: 'Select a model:',
+          choices: staticWithCustom,
+          default: staticChoices[0].value,
+        })
+        if (modelId === '__custom__') {
+          modelId = await prompter.input({
+            message: 'Enter custom model ID:',
+            validate: (val) => val.trim().length > 0 ? true : 'model ID cannot be empty',
+          })
+        }
+      } else {
+        modelId = await prompter.input({
+          message: 'Model ID:',
+          validate: (val) => val.trim().length > 0 ? true : 'model ID cannot be empty',
+        })
       }
     }
   }
@@ -215,4 +337,63 @@ async function writeOllamaModelsJson(opts: {
 
   mkdirSync(configDir, { recursive: true })
   writeFileSync(join(configDir, 'models.json'), template, 'utf-8')
+}
+
+// ─── defaultFetchLocalModels ──────────────────────────────────────────────────
+
+async function defaultFetchLocalModels(baseUrl: string): Promise<string[]> {
+  // For Ollama, use /api/tags; for others use /models (OpenAI-compatible)
+  const isOllama = baseUrl.includes(':11434')
+  const url = isOllama
+    ? baseUrl.replace(/\/v1\/?$/, '') + '/api/tags'
+    : baseUrl.replace(/\/?$/, '') + '/models'
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json() as any
+
+  if (isOllama && data.models) {
+    return (data.models as any[]).map((m: any) => m.name as string)
+  }
+  if (data.data) {
+    return (data.data as any[]).map((m: any) => m.id as string)
+  }
+  return []
+}
+
+// ─── defaultFetchCloudModels ──────────────────────────────────────────────────
+
+const CLOUD_MODEL_ENDPOINTS: Record<string, string> = {
+  anthropic:   'https://api.anthropic.com/v1/models',
+  openai:      'https://api.openai.com/v1/models',
+  google:      'https://generativelanguage.googleapis.com/v1beta/models',
+  groq:        'https://api.groq.com/openai/v1/models',
+  mistral:     'https://api.mistral.ai/v1/models',
+  xai:         'https://api.x.ai/v1/models',
+  openrouter:  'https://openrouter.ai/api/v1/models',
+}
+
+async function defaultFetchCloudModels(provider: string, apiKey: string): Promise<string[]> {
+  const endpoint = CLOUD_MODEL_ENDPOINTS[provider]
+  if (!endpoint) return []
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (apiKey) {
+    if (provider === 'anthropic') {
+      headers['x-api-key'] = apiKey
+      headers['anthropic-version'] = '2023-06-01'
+    } else {
+      headers['Authorization'] = `Bearer ${apiKey}`
+    }
+  }
+
+  const res = await fetch(endpoint, {
+    headers,
+    signal: AbortSignal.timeout(3000),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json() as any
+
+  const items: any[] = data.data ?? data.models ?? []
+  return items.map((m: any) => m.id ?? m.name ?? '').filter(Boolean)
 }
