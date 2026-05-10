@@ -70,7 +70,7 @@ export async function runOwnerSetupCommand(opts: OwnerSetupOpts): Promise<void> 
   console.log('  Waiting for a message from your phone... (press Q to cancel)\n')
 
   let captured: string | null = null
-  let stopFn: (() => Promise<void>) | null = null
+  let stopFn: (() => Promise<void>) | undefined
 
   // cancelRef: lets both Q-keypress and injected deps trigger cancel
   let _cancelResolve: (() => void) | null = null
@@ -110,16 +110,16 @@ export async function runOwnerSetupCommand(opts: OwnerSetupOpts): Promise<void> 
       if (deps.startAdapter) {
         stopFn = await deps.startAdapter(onMessage, cancelRef)
       } else {
-        // Production: start WhatsApp adapter in receive-only mode
-        const { linkWhatsAppDevice } = await import('../../channels/whatsapp.js')
+        // Production: use WhatsAppAdapter in receive-only mode
+        const { WhatsAppAdapter } = await import('../../channels/whatsapp.js')
+        const { MessageBus } = await import('../../channels/interface.js')
         const authDir = join(homedir(), '.reeboot', 'channels', 'whatsapp', 'auth')
-        linkWhatsAppDevice({
-          authDir,
-          onQr: () => {},
-          onSuccess: () => {},
-          onTimeout: () => {},
-          onMessage,
-        })
+        const adapter = new WhatsAppAdapter(authDir)
+        const bus = new MessageBus()
+        bus.onMessage((msg) => onMessage(msg.peerId))
+        await adapter.init({ enabled: true }, bus)
+        await adapter.start()
+        stopFn = () => adapter.stop()
       }
     })
   } finally {
@@ -128,7 +128,7 @@ export async function runOwnerSetupCommand(opts: OwnerSetupOpts): Promise<void> 
       process.stdin.pause()
       process.stdin.removeListener('data', onKeypress)
     }
-    if (stopFn) await stopFn()
+    if (stopFn != null) await stopFn()
   }
 
   if (cancelled) {
