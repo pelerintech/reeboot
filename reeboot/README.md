@@ -17,19 +17,23 @@ Requires **Node.js ≥ 22**.
 ## First Run
 
 ```bash
-reeboot
+reeboot init
 ```
 
-On first run, the setup wizard launches automatically. It walks you through:
+Run `reeboot init` once after installing. The setup wizard walks you through:
 
-1. **Auth mode** — use your existing pi credentials, or enter your own API key
-2. **Provider** — Anthropic, OpenAI, Google, Groq, Mistral, xAI, OpenRouter, or Ollama
-3. **Model** — curated list per provider, or enter any model ID
-4. **Agent name** — defaults to `Reeboot`
-5. **Channels** — optionally link WhatsApp or Signal inline
-6. **Web search** — choose a search backend (DuckDuckGo, Brave, Tavily, Serper, Exa, SearXNG, or none)
+1. **Deployment** — native (default) or Docker (coming soon)
+2. **Provider** — local-first: Ollama, llama.cpp, LM Studio, Custom endpoint, or cloud: Anthropic, OpenAI, Google, Groq, Mistral, xAI, OpenRouter
+3. **API key** — for cloud providers (skipped for local)
+4. **Model** — fetched live from the provider API, with a static fallback list; every menu has an "Enter custom value..." escape hatch
+5. **Agent name** — defaults to `Reeboot`
+6. **Channels** — optionally link WhatsApp or Signal inline
+7. **Web search** — choose a search backend (DuckDuckGo, Brave, Tavily, Serper, Exa, SearXNG, or none)
+8. **Start now?** — optionally launch the agent immediately after setup
 
-Config is written to `~/.reeboot/config.json` at the end. If you exit early, nothing is saved.
+Config is saved to `~/.reeboot/config.json`. If you exit early, nothing is saved.
+
+> **Note:** `reeboot` and `reeboot start` will error if no config exists — run `reeboot init` first.
 
 To re-run setup at any time:
 
@@ -76,7 +80,8 @@ reeboot setup
 ## CLI Reference
 
 ```
-reeboot                   Start agent (or run wizard on first run)
+reeboot init              First-run setup wizard (run this once after installing)
+reeboot                   Start agent (errors if no config — run `reeboot init` first)
 reeboot start             Start the agent server
 reeboot start --daemon    Run as a background service (launchd / systemd)
 reeboot stop              Stop the running daemon
@@ -96,10 +101,11 @@ reeboot packages list     List installed packages
 
 reeboot skills list       List all bundled skills
 
-reeboot channels list     List channels and status
-reeboot channels login whatsapp  Link WhatsApp (shows QR code)
-reeboot channels login signal    Link Signal
-reeboot channels logout <ch>     Disconnect a channel
+reeboot channels list                    List channels and status
+reeboot channels login whatsapp          Link WhatsApp (shows QR code)
+reeboot channels login signal            Link Signal
+reeboot channels logout <ch>             Disconnect a channel
+reeboot channels setup owner-whatsapp    Capture owner WhatsApp identity
 
 reeboot contexts list     List contexts (coming soon)
 reeboot contexts create <name>   Create a context (coming soon)

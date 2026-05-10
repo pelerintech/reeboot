@@ -1,6 +1,6 @@
 {
   "name": "reeboot",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Personal AI agent running locally, reachable via WhatsApp, Signal, or WebChat",
   "author": "Bogdan Nenu",
   "license": "MIT",
