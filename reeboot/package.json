@@ -1,6 +1,6 @@
 {
   "name": "reeboot",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Personal AI agent running locally, reachable via WhatsApp, Signal, or WebChat",
   "author": "Bogdan Nenu",
   "license": "MIT",
@@ -46,7 +46,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
     "@types/ws": "^8.18.1",
-    "@whiskeysockets/baileys": "6.7.21",
+    "@whiskeysockets/baileys": "6.7.22",
     "better-sqlite3": "^12.8.0",
     "commander": "^14.0.3",
     "cron-parser": "^5.5.0",

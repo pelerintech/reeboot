@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.1] - 2026-05-21
+
+### Security
+
+- **`@whiskeysockets/baileys` patched to `6.7.22`** — fixes a zero-day (GHSA-qvv5-jq5g-4cgg, critical) that allowed spoofing of message upserts and app state corruption via maliciously crafted `protocolMessage` payloads. Drop-in patch; no API changes.
+
+---
+
 ## [2.2.0] - 2026-05-21
 
 ### Changed
