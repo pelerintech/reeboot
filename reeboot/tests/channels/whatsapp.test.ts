@@ -1,7 +1,10 @@
 /**
- * WhatsApp adapter tests (task 3.1) — TDD red
+ * WhatsApp adapter tests
  *
  * Uses a mock of @whiskeysockets/baileys so no real connection is made.
+ *
+ * NOTE: start() now awaits 'open' before resolving (new reconnect design).
+ * Use startAndConnect() helper to start the adapter and emit 'open' concurrently.
  */
 
 import { describe, it, expect, beforeEach, vi, type MockedFunction } from 'vitest';
@@ -59,6 +62,19 @@ describe('WhatsAppAdapter', () => {
     adapter = new WhatsAppAdapter('/tmp/test-wa-auth');
   });
 
+  /**
+   * start() now awaits the 'open' event before resolving.
+   * This helper starts the adapter and emits 'open' once makeWASocket has been called
+   * (which means the connection.update listener is registered).
+   */
+  async function startAndConnect(): Promise<void> {
+    const p = adapter.start();
+    // Wait until makeWASocket has been called (listener is registered)
+    await vi.waitFor(() => expect(mockMakeWASocket).toHaveBeenCalled());
+    mockEv.emit('connection.update', { connection: 'open' });
+    await p;
+  }
+
   it('init sets up adapter with bus and config', async () => {
     await adapter.init({ enabled: true }, bus);
     expect(adapter.status()).toBe('initializing');
@@ -66,7 +82,7 @@ describe('WhatsAppAdapter', () => {
 
   it('start calls makeWASocket with auth state', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
     expect(mockMakeWASocket).toHaveBeenCalledWith(
       expect.objectContaining({ auth: expect.anything() })
     );
@@ -74,13 +90,13 @@ describe('WhatsAppAdapter', () => {
 
   it('saved auth state is loaded without QR (useMultiFileAuthState called)', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
     expect(mockUseMultiFileAuthState).toHaveBeenCalledWith('/tmp/test-wa-auth');
   });
 
   it('incoming text message is emitted on bus', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
 
     const received: any[] = [];
     bus.onMessage((msg) => received.push(msg));
@@ -104,7 +120,7 @@ describe('WhatsAppAdapter', () => {
 
   it('own messages (fromMe=true) are ignored', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
 
     const received: any[] = [];
     bus.onMessage((msg) => received.push(msg));
@@ -124,7 +140,7 @@ describe('WhatsAppAdapter', () => {
 
   it('self-chat via own @lid (multi-device) is accepted', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
 
     const received: any[] = [];
     bus.onMessage((msg) => received.push(msg));
@@ -146,9 +162,7 @@ describe('WhatsAppAdapter', () => {
 
   it('echo of sent message is skipped (sent ID tracked)', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    // Simulate connection open so status becomes 'connected' (required by send() status guard)
-    mockEv.emit('connection.update', { connection: 'open' });
+    await startAndConnect();
 
     mockSocket.sendMessage = vi.fn().mockResolvedValue({ key: { id: 'sent-abc' } });
     await adapter.send('43624150659184@lid', { type: 'text', text: 'Reply' });
@@ -172,7 +186,7 @@ describe('WhatsAppAdapter', () => {
 
   it('@lid fromMe=true with unknown lid is ignored (prevents echo loop)', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
 
     const received: any[] = [];
     bus.onMessage((msg) => received.push(msg));
@@ -193,7 +207,7 @@ describe('WhatsAppAdapter', () => {
 
   it('append type messages are processed (retry/replay support)', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
 
     const received: any[] = [];
     bus.onMessage((msg) => received.push(msg));
@@ -214,7 +228,7 @@ describe('WhatsAppAdapter', () => {
 
   it('unknown upsert types are ignored', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
 
     const received: any[] = [];
     bus.onMessage((msg) => received.push(msg));
@@ -234,8 +248,7 @@ describe('WhatsAppAdapter', () => {
 
   it('short message sent as single sendMessage call', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    mockEv.emit('connection.update', { connection: 'open' });
+    await startAndConnect();
 
     await adapter.send('1234@s.whatsapp.net', { type: 'text', text: 'Hello' });
 
@@ -248,8 +261,7 @@ describe('WhatsAppAdapter', () => {
 
   it('long message (>4096 chars) is chunked into multiple sendMessage calls', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    mockEv.emit('connection.update', { connection: 'open' });
+    await startAndConnect();
 
     const longText = 'A'.repeat(4097);
     await adapter.send('1234@s.whatsapp.net', { type: 'text', text: longText });
@@ -259,11 +271,11 @@ describe('WhatsAppAdapter', () => {
 
   it('non-logout disconnect triggers reconnect (makeWASocket called again)', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
 
     const callsBefore = mockMakeWASocket.mock.calls.length;
 
-    // Simulate non-logout disconnect
+    // Simulate non-logout disconnect (post-open close → starts reconnect loop)
     const error = new Error('connection closed') as any;
     error.output = { statusCode: 428 }; // not loggedOut
     mockEv.emit('connection.update', { connection: 'close', lastDisconnect: { error } });
@@ -276,7 +288,7 @@ describe('WhatsAppAdapter', () => {
 
   it('logout disconnect sets status to error and does not reconnect', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
+    await startAndConnect();
 
     const callsBefore = mockMakeWASocket.mock.calls.length;
 
@@ -292,17 +304,13 @@ describe('WhatsAppAdapter', () => {
 
   it('connection open sets status to connected', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-
-    mockEv.emit('connection.update', { connection: 'open' });
-
+    await startAndConnect();
     expect(adapter.status()).toBe('connected');
   });
 
   it('markRead is called on incoming messages before bus publish', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    mockEv.emit('connection.update', { connection: 'open' });
+    await startAndConnect();
 
     const callOrder: string[] = [];
     const origPublish = bus.publish.bind(bus);
@@ -333,8 +341,7 @@ describe('WhatsAppAdapter', () => {
 
   it('startTyping sends composing presence immediately', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    mockEv.emit('connection.update', { connection: 'open' });
+    await startAndConnect();
 
     const incomingMsg = {
       channelType: 'whatsapp' as const,
@@ -350,11 +357,11 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('startTyping refreshes composing presence every 8 seconds', async () => {
-    vi.useFakeTimers();
-
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    mockEv.emit('connection.update', { connection: 'open' });
+    // Connect before enabling fake timers so vi.waitFor works
+    await startAndConnect();
+
+    vi.useFakeTimers();
 
     mockSocket.sendPresenceUpdate = vi.fn().mockResolvedValue(undefined);
 
@@ -379,11 +386,11 @@ describe('WhatsAppAdapter', () => {
   });
 
   it('stopTyping sends paused presence and stops the refresh interval', async () => {
-    vi.useFakeTimers();
-
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    mockEv.emit('connection.update', { connection: 'open' });
+    // Connect before enabling fake timers
+    await startAndConnect();
+
+    vi.useFakeTimers();
 
     mockSocket.sendPresenceUpdate = vi.fn().mockResolvedValue(undefined);
 
@@ -434,8 +441,7 @@ describe('WhatsAppAdapter', () => {
 
   it('startTyping errors do not propagate', async () => {
     await adapter.init({ enabled: true }, bus);
-    await adapter.start();
-    mockEv.emit('connection.update', { connection: 'open' });
+    await startAndConnect();
 
     mockSocket.sendPresenceUpdate = vi.fn().mockRejectedValue(new Error('socket error'));
 

@@ -53,12 +53,19 @@ const whatsappFactory: Tier1Factory = (_bus) => {
   return {
     adapter,
     setup: async () => {
-      // Start the adapter (sets up baileys event handlers via _connect())
-      await adapter.start();
-      // Simulate WA connection open so status becomes 'connected'
-      if (connectionUpdateHandler) {
-        await connectionUpdateHandler({ connection: 'open' });
+      // Start the adapter — _connect() now properly awaits 'open' before resolving.
+      // We must fire 'open' concurrently; start() hangs until the event fires.
+      const startPromise = adapter.start();
+      // Poll until _connect() has registered the connection.update handler.
+      // A single tick is usually enough, but poll up to 50ms to be safe.
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 5));
+        if (connectionUpdateHandler) break;
       }
+      if (connectionUpdateHandler) {
+        connectionUpdateHandler({ connection: 'open' });
+      }
+      await startPromise;
     },
     simulateInbound: ({ peerId, text, fromSelf }) => {
       // Directly inject via messages.upsert — adapter must be init'd first

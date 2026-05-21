@@ -84,8 +84,10 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=${nodeBin} ${reebotBin} start
-Restart=on-failure
+Restart=always
 RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=5
 WorkingDirectory=${reebotDir}
 Environment=PI_CACHE_RETENTION=long
 StandardOutput=append:${logsDir}/reeboot.log

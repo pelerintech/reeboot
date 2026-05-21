@@ -13,9 +13,8 @@
  *   pi --extension examples/extensions/custom-compaction.ts
  */
 
-import { complete } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
+import { generateSummary } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_before_compact", async (event, ctx) => {
@@ -46,21 +45,9 @@ export default function (pi: ExtensionAPI) {
 			"info",
 		);
 
-		// Convert messages to readable text format
-		const conversationText = serializeConversation(convertToLlm(allMessages));
-
-		// Include previous summary context if available
-		const previousContext = previousSummary ? `\n\nPrevious session summary for context:\n${previousSummary}` : "";
-
-		// Build messages that ask for a comprehensive summary
-		const summaryMessages = [
-			{
-				role: "user" as const,
-				content: [
-					{
-						type: "text" as const,
-						text: `You are a conversation summarizer. Create a comprehensive summary of this conversation that captures:${previousContext}
-
+		// Custom instructions: ask for a comprehensive full-context summary.
+		// generateSummary builds its own prompt internally and appends customInstructions.
+		const customInstructions = `Create a comprehensive summary that captures:
 1. The main goals and objectives discussed
 2. Key decisions made and their rationale
 3. Important code changes, file modifications, or technical details
@@ -70,25 +57,19 @@ export default function (pi: ExtensionAPI) {
 
 Be thorough but concise. The summary will replace the ENTIRE conversation history, so include all information needed to continue the work effectively.
 
-Format the summary as structured markdown with clear sections.
-
-<conversation>
-${conversationText}
-</conversation>`,
-					},
-				],
-				timestamp: Date.now(),
-			},
-		];
+Format the summary as structured markdown with clear sections.`;
 
 		try {
-			// Pass signal to honor abort requests (e.g., user cancels compaction)
-			const response = await complete(model, { messages: summaryMessages }, { apiKey: auth.apiKey, headers: auth.headers, maxTokens: 8192, signal });
-
-			const summary = response.content
-				.filter((c): c is { type: "text"; text: string } => c.type === "text")
-				.map((c) => c.text)
-				.join("\n");
+			const summary = await generateSummary(
+				allMessages,
+				model,
+				8192,
+				auth.apiKey,
+				auth.headers,
+				signal,
+				customInstructions,
+				previousSummary,
+			);
 
 			if (!summary.trim()) {
 				if (!signal.aborted) ctx.ui.notify("Compaction summary was empty, using default compaction", "warning");

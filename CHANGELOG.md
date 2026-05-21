@@ -9,7 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [2.2.0] - 2026-05-21
+
+### Changed
+
+- **`@earendil-works/pi-coding-agent` upgraded to 0.75.4** — bumped pin from `0.74.0`. Picks up four releases (0.74.1–0.75.4): image generation APIs, Together AI provider, Windows ARM64 binaries, improved markdown rendering, Node 26 fetch compatibility fixes, HTTP idle timeout fix for long-running provider streams, OpenAI prompt cache key length fix, subagent parallel output fix, `ctx.abort()` preflight fix, AgentSession retry/compaction settlement fix, and supply-chain hardening (shrinkwrap, lifecycle-script allowlists). No reeboot code changes required — none of the breaking changes affect the API surface reeboot uses (`createAgentSession`, `DefaultResourceLoader`, `SessionManager`, `ModelRegistry`, `AuthStorage`, `SettingsManager`, `ExtensionAPI`, `convertToLlm`, `serializeConversation`, `loadProjectContextFiles`, `DefaultPackageManager`).
+- **`@huggingface/transformers` upgraded to `^4.2.0`** — minor release; no API changes affecting the knowledge-manager embedding pipeline.
+- **`@hono/node-server` floor raised to `^1.19.14`** — stays on the v1 line (v2 is a major with breaking changes, deferred). Picks up patch fixes within the v1 range.
+- **`@hono/node-ws` upgraded to `^1.3.1`** — patch.
+- **`inquirer` floor raised to `^13.4.3`** — patch.
+- **`typebox` floor raised to `^1.1.38`** — patch.
+- **`ws` floor raised to `^8.20.1`** — patch.
+- **`zod` floor raised to `^3.25.76`** — pins to the latest Zod 3 patch (Zod 4 is a major with breaking changes, deferred).
+- **Dev: `@types/node` floor raised to `^20.19.41`**, **`tsx` to `^4.22.3`**, **`typescript` to `^6.0.3`** — patch/minor bumps within their current major lines.
+- **`@whiskeysockets/baileys` stays at `6.7.21`** (v7 is pre-release RC, deferred), **`@hono/node-server` stays on v1** (v2 major, deferred), **`vitest` stays at `^1.6.1`** (v4 major, deferred), **`zod` stays on v3** (v4 major, deferred).
+
+### Fixed
+
+- **`custom-compaction` extension: removed private `@earendil-works/pi-ai` import** — the extension was importing `complete()` directly from `@earendil-works/pi-ai`, a transitive dependency of pi that is not hoisted to the top-level `node_modules` and has no public `exports` entry. This caused a `Cannot find module` TypeScript error on every build. Replaced with `generateSummary()` exported from `@earendil-works/pi-coding-agent` (the public API), which provides the same behaviour and also accepts `customInstructions` and `previousSummary` natively — removing the need to hand-build the prompt.
+
+- **WhatsApp silent-death regression (ebe5c69)** — the reconnect logic introduced
+  in the `ebe5c69` commit treated `await _connect()` as "connection established"
+  when it actually returned immediately after registering event handlers. If a
+  socket stalled (never firing `'open'` or `'close'`), `_reconnecting` would stay
+  `true` permanently and the adapter would sit dead-silent with no logs, no retries,
+  and no recovery. This caused a 3-day production outage (May 18–21, 2026).
+
+  **Root fix:** `_connect()` is now a proper awaitable Promise that resolves only
+  when `'open'` fires and rejects on `'close'` or a 30-second watchdog timeout.
+  The reconnect handler is replaced with `_reconnectLoop()` — a persistent
+  `while (!this._stopping)` loop that retries with exponential backoff and cannot
+  get stuck regardless of how Baileys behaves internally.
+
+- **Dropped sends are no longer silent** — `send()` previously returned silently
+  when the socket was reconnecting. It now logs `warn` with `component`, `peerId`,
+  and `status` so investigators can reconstruct what happened.
+
+- **systemd unit upgraded to `Restart=always`** — previously `Restart=on-failure`
+  only triggered on non-zero exits. A hung (not crashed) process would run
+  indefinitely without restart. `Restart=always` covers both cases.
+  `StartLimitBurst=5` within `StartLimitIntervalSec=120` prevents crash loops.
+
 ### Added
+
+- **WhatsApp `channel_stalled` DB event** — when a connect attempt times out
+  (30s watchdog) or when the reconnect loop has been running for more than 5
+  minutes without success, a `channel_stalled` event (severity 17 / ERROR) is
+  emitted to the `operational_logs` table. Investigators can query this table
+  to find the exact time and attempt count of any future outage.
+
+- **"I'm back" proactive notification** — when WhatsApp reconnects after more
+  than 5 minutes of downtime, the agent sends a short message to the last peer
+  who wrote to it: `⚡ I'm back online. I was unreachable for ~N minutes.`
+  Normal reconnects (< 5 min, which happen ~3x/day as part of normal WA Web
+  protocol) do not trigger the notification.
 
 - Read receipts on WhatsApp and Signal — incoming messages are marked as read
   (blue ticks / read receipt) immediately on arrival, before the agent turn begins.

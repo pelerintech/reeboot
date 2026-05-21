@@ -1,8 +1,17 @@
 /**
  * WhatsApp channel adapter
  *
- * Uses @whiskeysockets/baileys v7 (pinned to 7.0.0-rc.9).
+ * Uses @whiskeysockets/baileys v6.7.x.
  * Auth state persisted at authDir (default: ~/.reeboot/channels/whatsapp/auth/).
+ *
+ * Reconnect design:
+ *  - _connect() returns a Promise<void> that resolves on 'open' or rejects on
+ *    'close' / CONNECT_TIMEOUT_MS. It is a proper awaitable connection attempt.
+ *  - _reconnectLoop() is a persistent while-loop that retries with exponential
+ *    backoff. It is started by the 'close' handler and runs until connected or
+ *    _stopping is set.
+ *  - _stopping (set by stop()) is the only way to exit the loop cleanly.
+ *  - _reconnecting guards against spawning a second loop on duplicate 'close'.
  */
 
 import { join } from 'path';
@@ -18,6 +27,12 @@ import { getDb } from '../db/index.js';
 const CHUNK_SIZE = 4096;
 const CHUNK_DELAY_MS = 100;
 const TYPING_REFRESH_MS = 8_000;
+/** How long to wait for a socket to reach 'open' before giving up. */
+const CONNECT_TIMEOUT_MS = 30_000;
+/** After this much cumulative downtime, emit a channel_stalled DB event. */
+export const STALL_NOTIFY_MS = 5 * 60 * 1000;
+/** After this much downtime, send a proactive "I'm back" message to the user. */
+const BACK_ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
 
 export class WhatsAppAdapter implements ChannelAdapter {
   private _authDir: string;
@@ -26,15 +41,29 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private _bus: MessageBus | null = null;
   private _config: ChannelConfig | null = null;
   private _socket: any = null;
+  /** True while _reconnectLoop() is running — prevents a second loop from starting. */
   private _reconnecting = false;
+  /** Set by stop() — causes _reconnectLoop() to exit cleanly. */
+  private _stopping = false;
   private _reconnectAttempt = 0;
+  /** Guards the one-time channel_stalled emission per loop. */
+  private _stalledEventEmitted = false;
   /** IDs of messages we sent — used to skip our own echoes in multi-device mode. */
   private _sentIds = new Set<string>();
   /** Refresh intervals for typing indicators, keyed by peerId. */
   private _typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
+  /** Last peer who sent us a message — used for back-online notification. */
+  _lastActivePeer: string | null = null;
+  /** Timestamp when the connection last went dark. */
+  _disconnectedAt: Date | null = null;
+  /** Guards back-online notification — sent at most once per reconnect cycle. */
+  private _backOnlineSent = false;
+  /** Overridable in tests — defaults to STALL_NOTIFY_MS (5 min). */
+  _stallNotifyMs: number;
 
-  constructor(authDir?: string) {
+  constructor(authDir?: string, stallNotifyMs?: number) {
     this._authDir = authDir ?? join(homedir(), '.reeboot', 'channels', 'whatsapp', 'auth');
+    this._stallNotifyMs = stallNotifyMs ?? STALL_NOTIFY_MS;
   }
 
   async init(config: ChannelConfig, bus: MessageBus): Promise<void> {
@@ -44,159 +73,253 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async start(): Promise<void> {
+    this._stopping = false;
     await this._connect();
   }
 
-  private async _connect(): Promise<void> {
-    const {
-      makeWASocket,
-      useMultiFileAuthState,
-      DisconnectReason,
-      Browsers,
-      fetchLatestWaWebVersion,
-    } = await import('@whiskeysockets/baileys');
+  /**
+   * Attempt one connection. Returns a Promise that:
+   *  - resolves when 'open' fires
+   *  - rejects when 'close' fires OR CONNECT_TIMEOUT_MS elapses
+   */
+  private _connect(): Promise<void> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const {
+          makeWASocket,
+          useMultiFileAuthState,
+          DisconnectReason,
+          Browsers,
+          fetchLatestWaWebVersion,
+        } = await import('@whiskeysockets/baileys');
 
-    const qrTerminal = await import('qrcode-terminal');
+        const qrTerminal = await import('qrcode-terminal');
 
-    mkdirSync(this._authDir, { recursive: true });
-    const { state, saveCreds } = await useMultiFileAuthState(this._authDir);
+        mkdirSync(this._authDir, { recursive: true });
+        const { state, saveCreds } = await useMultiFileAuthState(this._authDir);
 
-    // Fetch the current WhatsApp Web version from WA servers.
-    // The version bundled in Baileys RC is often stale and gets rejected (405).
-    let version: [number, number, number];
-    try {
-      const result = await fetchLatestWaWebVersion({});
-      version = result.version;
-      getLogger().info({ component: 'whatsapp' }, `[WhatsApp] Using WA Web version: ${version.join('.')}`);
-    } catch (err) {
-      getLogger().warn({ component: 'whatsapp', err }, `[WhatsApp] Could not fetch latest WA version, using default`);
-      version = [2, 3000, 1027934701];
-    }
+        let version: [number, number, number];
+        try {
+          const result = await fetchLatestWaWebVersion({});
+          version = result.version;
+          getLogger().info({ component: 'whatsapp' }, `[WhatsApp] Using WA Web version: ${version.join('.')}`);
+        } catch (err) {
+          getLogger().warn({ component: 'whatsapp', err }, `[WhatsApp] Could not fetch latest WA version, using default`);
+          version = [2, 3000, 1027934701];
+        }
 
-    // Baileys requires a pino-compatible logger. We use a real pino child logger
-    // at 'warn' level so real errors surface while internal Signal Protocol noise
-    // (trace/debug/info) is suppressed.
-    const baileysLogger = getLogger().child({ component: 'whatsapp' });
-    baileysLogger.level = 'warn';
-    const sock = makeWASocket({
-      version,
-      auth: state,
-      browser: Browsers.ubuntu('Chrome'),
-      logger: baileysLogger,
-      // fetchProps times out on every connect (WA server doesn't respond to
-      // this query for our client fingerprint). Messaging works without it.
-      fireInitQueries: false,
-    });
+        const baileysLogger = getLogger().child({ component: 'whatsapp' });
+        baileysLogger.level = 'warn';
+        const sock = makeWASocket({
+          version,
+          auth: state,
+          browser: Browsers.ubuntu('Chrome'),
+          logger: baileysLogger,
+          // fetchProps times out on every connect (WA server doesn't respond to
+          // this query for our client fingerprint). Messaging works without it.
+          fireInitQueries: false,
+        });
 
-    this._socket = sock;
+        this._socket = sock;
 
-    sock.ev.on('creds.update', saveCreds);
+        let settled = false;
 
-    sock.ev.on('connection.update', async (update: any) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr) {
-        getLogger().info({ component: 'whatsapp' }, '📱 Scan this QR code with WhatsApp (Settings → Linked Devices → Link a Device)');
-        (qrTerminal as any).default.generate(qr, { small: true });
-      }
-
-      if (connection === 'open') {
-        this._status = 'connected';
-        this._connectedAt = new Date().toISOString();
-        this._reconnecting = false;
-        this._reconnectAttempt = 0;
-        const user = sock.user as any;
-        getLogger().info({ component: 'whatsapp', userId: user?.id, lid: user?.lid }, '[WhatsApp] Connected ✓ — ready to receive messages');
-        try { emitEvent(getDb(), { type: 'channel_connected', severity: 9, payload: { channelType: 'whatsapp' } }).catch(() => {}); } catch { /* db not ready */ }
-      } else if (connection === 'close') {
-        this._status = 'disconnected';
-        this._connectedAt = null;
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        const loggedOut = statusCode === DisconnectReason.loggedOut;
-        try { emitEvent(getDb(), { type: 'channel_disconnected', severity: 13, payload: { channelType: 'whatsapp', reason: loggedOut ? 'logged_out' : 'closed' } }).catch(() => {}); } catch { /* db not ready */ }
-
-        if (loggedOut) {
-          this._status = 'error';
-        } else if (!this._reconnecting) {
-          this._reconnecting = true;
-          this._reconnectAttempt++;
-          // Exponential backoff: 2s, 4s, 8s … capped at 60s
-          const delayMs = Math.min(2000 * Math.pow(2, this._reconnectAttempt - 1), 60_000);
-          getLogger().info({ component: 'whatsapp', attempt: this._reconnectAttempt, delayMs }, `[WhatsApp] Reconnecting in ${delayMs / 1000}s…`);
-          await new Promise(res => setTimeout(res, delayMs));
+        // Watchdog: if neither 'open' nor 'close' fires within CONNECT_TIMEOUT_MS,
+        // abort the stalled socket and reject.
+        const watchdog = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          getLogger().error({ component: 'whatsapp' }, '[WhatsApp] Connection attempt timed out — stalled socket');
           try {
-            await this._connect();
-          } catch (err) {
-            getLogger().error({ component: 'whatsapp', err }, '[WhatsApp] Reconnect attempt failed');
-            this._reconnecting = false;
-          }
-        }
-      }
-    });
+            emitEvent(getDb(), { type: 'channel_stalled', severity: 17,
+              payload: { channelType: 'whatsapp', reason: 'connect_timeout' } }).catch(() => {});
+          } catch { /* db not ready */ }
+          try { sock.end(undefined); } catch { /* ignore */ }
+          reject(new Error('connect timeout'));
+        }, CONNECT_TIMEOUT_MS);
 
-    sock.ev.on('messages.upsert', ({ type, messages }: any) => {
-      for (const msg of messages) {
-        const peerId = msg.key.remoteJid;
-        const fromMe = msg.key.fromMe;
-        const msgId = msg.key.id ?? '';
-        const text =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
-          msg.message?.imageMessage?.caption ||
-          '';
+        sock.ev.on('creds.update', saveCreds);
 
-        // 'notify' = real-time incoming; 'append' = history/retry replay.
-        // We process both so that retry-replayed messages after a Signal
-        // session handshake are not silently dropped.
-        if (type !== 'notify' && type !== 'append') continue;
+        sock.ev.on('connection.update', async (update: any) => {
+          const { connection, lastDisconnect, qr } = update;
 
-        // Resolve user identity once per message (needed for self-chat detection
-        // and @lid → @s.whatsapp.net normalization).
-        const userId = sock.user?.id?.replace(/:.*/, '');
-        const userLid = (sock.user as any)?.lid?.replace(/:.*/, '');
-
-        if (fromMe) {
-          // Skip echoes of messages we sent (multi-device mirror).
-          if (this._sentIds.has(msgId)) {
-            this._sentIds.delete(msgId);
-            continue;
+          if (qr) {
+            getLogger().info({ component: 'whatsapp' }, '📱 Scan this QR code with WhatsApp (Settings → Linked Devices → Link a Device)');
+            (qrTerminal as any).default.generate(qr, { small: true });
           }
 
-          // Accept self-chat: "message yourself" via @s.whatsapp.net OR
-          // the user's own @lid (linked-device address in multi-device mode).
-          const isSelfChat =
-            peerId === userId + '@s.whatsapp.net' ||
-            (userLid && peerId === userLid + '@lid');
+          if (connection === 'open') {
+            if (!settled) {
+              settled = true;
+              clearTimeout(watchdog);
+            }
+            // Connected — update state
+            this._status = 'connected';
+            this._connectedAt = new Date().toISOString();
+            this._reconnectAttempt = 0;
+            this._stalledEventEmitted = false;
+            const user = sock.user as any;
+            getLogger().info({ component: 'whatsapp', userId: user?.id, lid: user?.lid }, '[WhatsApp] Connected ✓ — ready to receive messages');
+            try { emitEvent(getDb(), { type: 'channel_connected', severity: 9, payload: { channelType: 'whatsapp' } }).catch(() => {}); } catch { /* db not ready */ }
 
-          if (!isSelfChat) continue;
-        }
+            // Back-online notification
+            const disconnectedMs = this._disconnectedAt
+              ? Date.now() - this._disconnectedAt.getTime() : 0;
+            this._disconnectedAt = null;
+            if (disconnectedMs > BACK_ONLINE_THRESHOLD_MS && this._lastActivePeer && !this._backOnlineSent) {
+              this._backOnlineSent = true;
+              const mins = Math.round(disconnectedMs / 60_000);
+              const text = `⚡ I'm back online. I was unreachable for ~${mins} minute${mins !== 1 ? 's' : ''}.`;
+              this._socket?.sendMessage(this._lastActivePeer, { text }).catch(() => {});
+              getLogger().info({ component: 'whatsapp', peerId: this._lastActivePeer, durationMs: disconnectedMs },
+                '[WhatsApp] back online — notification sent');
+            }
 
-        if (!peerId) continue;
+            resolve();
 
-        if (!text) {
-          getLogger().debug({ component: 'whatsapp', type, fromMe, peerId }, '[WhatsApp] Skipping empty text');
-          continue;
-        }
+          } else if (connection === 'close') {
+            this._status = 'disconnected';
+            this._connectedAt = null;
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const loggedOut = statusCode === (DisconnectReason as any).loggedOut;
+            try { emitEvent(getDb(), { type: 'channel_disconnected', severity: 13,
+              payload: { channelType: 'whatsapp', reason: loggedOut ? 'logged_out' : 'closed' } }).catch(() => {}); } catch { /* db not ready */ }
 
-        getLogger().debug({ component: 'whatsapp', type, fromMe, peerId, len: text.length }, '[WhatsApp] Received message');
-        // Mark as read immediately — before publishing to the bus
-        try { sock.readMessages([msg.key]).catch(() => {}); } catch { /* socket not ready */ }
+            if (loggedOut) {
+              this._status = 'error';
+              this._stopping = true; // treat logout as a stop — no more reconnects
+              if (!settled) {
+                settled = true;
+                clearTimeout(watchdog);
+                reject(lastDisconnect?.error ?? new Error('logged out'));
+              }
+              return;
+            }
 
-        this._bus?.publish(
-          createIncomingMessage({
-            channelType: 'whatsapp',
-            peerId,
-            content: text,
-            raw: msg,
-            fromSelf: !!fromMe,
-          })
-        );
+            if (!settled) {
+              // First close fires before open — reject this _connect() attempt
+              settled = true;
+              clearTimeout(watchdog);
+              reject(lastDisconnect?.error ?? new Error('connection closed'));
+            } else {
+              // Close fired after a previous 'open' — start reconnect loop
+              if (!this._disconnectedAt) {
+                this._disconnectedAt = new Date();
+                this._backOnlineSent = false;
+              }
+              if (!this._stopping && !this._reconnecting) {
+                this._reconnecting = true;
+                this._reconnectLoop(statusCode ?? 'unknown').finally(() => { this._reconnecting = false; });
+              }
+            }
+          }
+        });
+
+        sock.ev.on('messages.upsert', ({ type, messages }: any) => {
+          for (const msg of messages) {
+            const peerId = msg.key.remoteJid;
+            const fromMe = msg.key.fromMe;
+            const msgId = msg.key.id ?? '';
+            const text =
+              msg.message?.conversation ||
+              msg.message?.extendedTextMessage?.text ||
+              msg.message?.imageMessage?.caption ||
+              '';
+
+            // 'notify' = real-time incoming; 'append' = history/retry replay.
+            if (type !== 'notify' && type !== 'append') continue;
+
+            const userId = sock.user?.id?.replace(/:.*/, '');
+            const userLid = (sock.user as any)?.lid?.replace(/:.*/, '');
+
+            if (fromMe) {
+              if (this._sentIds.has(msgId)) {
+                this._sentIds.delete(msgId);
+                continue;
+              }
+              const isSelfChat =
+                peerId === userId + '@s.whatsapp.net' ||
+                (userLid && peerId === userLid + '@lid');
+              if (!isSelfChat) continue;
+            }
+
+            if (!peerId) continue;
+
+            if (!text) {
+              getLogger().debug({ component: 'whatsapp', type, fromMe, peerId }, '[WhatsApp] Skipping empty text');
+              continue;
+            }
+
+            // Track last active peer for back-online notification
+            this._lastActivePeer = peerId;
+
+            getLogger().debug({ component: 'whatsapp', type, fromMe, peerId, len: text.length }, '[WhatsApp] Received message');
+            try { sock.readMessages([msg.key]).catch(() => {}); } catch { /* socket not ready */ }
+
+            this._bus?.publish(
+              createIncomingMessage({
+                channelType: 'whatsapp',
+                peerId,
+                content: text,
+                raw: msg,
+                fromSelf: !!fromMe,
+              })
+            );
+          }
+        });
+
+      } catch (err) {
+        reject(err);
       }
     });
   }
 
+  /**
+   * Persistent reconnect loop. Retries _connect() with exponential backoff
+   * until connected or _stopping is set. Called by the 'close' handler on a
+   * post-open disconnect.
+   */
+  private async _reconnectLoop(initialStatusCode?: number | string): Promise<void> {
+    const loopStartedAt = Date.now();
+
+    while (!this._stopping) {
+      this._reconnectAttempt++;
+      const delayMs = Math.min(2000 * Math.pow(2, this._reconnectAttempt - 1), 60_000);
+      const statusCode = this._reconnectAttempt === 1 ? (initialStatusCode ?? 'unknown') : undefined;
+      getLogger().info(
+        statusCode !== undefined
+          ? { component: 'whatsapp', attempt: this._reconnectAttempt, delayMs, statusCode }
+          : { component: 'whatsapp', attempt: this._reconnectAttempt, delayMs },
+        `[WhatsApp] Reconnecting in ${delayMs / 1000}s…`);
+      await new Promise(res => setTimeout(res, delayMs));
+
+      if (this._stopping) break;
+
+      try {
+        await this._connect();
+        // Connected — exit loop
+        this._reconnectAttempt = 0;
+        return;
+      } catch (err: any) {
+        const reason = err?.message ?? 'unknown';
+        getLogger().warn({ component: 'whatsapp', attempt: this._reconnectAttempt, reason },
+          '[WhatsApp] Reconnect attempt failed — will retry');
+
+        // Emit stalled event once per loop after _stallNotifyMs
+        const durationMs = Date.now() - loopStartedAt;
+        if (durationMs > this._stallNotifyMs && !this._stalledEventEmitted) {
+          this._stalledEventEmitted = true;
+          try {
+            emitEvent(getDb(), { type: 'channel_stalled', severity: 17,
+              payload: { channelType: 'whatsapp', durationMs, attempt: this._reconnectAttempt } }).catch(() => {});
+          } catch { /* db not ready */ }
+        }
+      }
+    }
+  }
+
   async stop(): Promise<void> {
-    this._reconnecting = true; // prevent reconnect on close
+    this._stopping = true;
     if (this._socket) {
       try { this._socket.end(); } catch { /* ignore */ }
       this._socket = null;
@@ -205,7 +328,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async send(peerId: string, content: MessageContent): Promise<void> {
-    if (!this._socket || this._status !== 'connected') return; // not ready yet — silently drop
+    if (!this._socket || this._status !== 'connected') {
+      getLogger().warn({ component: 'whatsapp', peerId, status: this._status },
+        '[WhatsApp] send() called while not connected — message dropped');
+      return;
+    }
 
     const text = content.text ?? '';
 
@@ -213,9 +340,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
       const id = result?.key?.id;
       if (id) {
         this._sentIds.add(id);
-        // TTL cleanup: keep the ID for 30s so that both notify and append
-        // deliveries of the same echo are caught (deleting on first match
-        // leaves the door open for a second delivery triggering a new turn).
         setTimeout(() => this._sentIds.delete(id), 30_000);
       }
     };
@@ -225,7 +349,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
       return;
     }
 
-    // Chunk into CHUNK_SIZE pieces
     let offset = 0;
     while (offset < text.length) {
       const chunk = text.slice(offset, offset + CHUNK_SIZE);
@@ -245,7 +368,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return this._connectedAt;
   }
 
-  /** Returns the connected JID (e.g. '40700000001@s.whatsapp.net') or null when not connected. */
   selfAddress(): string | null {
     const userId = this._socket?.user?.id?.replace(/:.*/, '');
     return userId ? `${userId}@s.whatsapp.net` : null;
@@ -263,14 +385,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
     if (!this._socket) return;
     try {
       const peerId = msg.peerId;
-      // Don't restart if already active
       if (this._typingIntervals.has(peerId)) return;
-
       await this._socket.sendPresenceUpdate('composing', peerId);
       const intervalId = setInterval(() => {
-        try {
-          this._socket?.sendPresenceUpdate('composing', peerId);
-        } catch { /* cosmetic failure */ }
+        try { this._socket?.sendPresenceUpdate('composing', peerId); } catch { /* cosmetic */ }
       }, TYPING_REFRESH_MS);
       this._typingIntervals.set(peerId, intervalId);
     } catch { /* socket error — cosmetic failure */ }
@@ -295,13 +413,6 @@ registerChannel('whatsapp', () => new WhatsAppAdapter());
 
 // ─── linkDevice (wizard) ──────────────────────────────────────────────────────
 
-/**
- * Initiates a device-linking flow for the setup wizard.
- * Calls onQr with the QR string, onSuccess on connection, onTimeout if not
- * connected within the 2-minute timeout.
- *
- * Accepts a temp auth directory to keep wizard state separate from production.
- */
 export async function linkWhatsAppDevice(opts: {
   authDir: string
   onQr: (qr: string) => void
@@ -332,7 +443,6 @@ export async function linkWhatsAppDevice(opts: {
     version = [2, 3000, 1027934701]
   }
 
-  // Shared across all reconnect attempts
   let resolved = false
 
   const timeoutHandle = setTimeout(() => {
@@ -364,7 +474,6 @@ export async function linkWhatsAppDevice(opts: {
       if (connection === 'open' && !resolved) {
         resolved = true
         clearTimeout(timeoutHandle)
-        // Give baileys a moment to finish writing creds before we signal success
         setTimeout(() => {
           try { sock.end(undefined) } catch { /* ignore */ }
           onSuccess()
@@ -377,11 +486,9 @@ export async function linkWhatsAppDevice(opts: {
         const loggedOut = statusCode === DisconnectReason.loggedOut
 
         if (loggedOut) {
-          // Fatal — do not reconnect; timeout will eventually fire
           return
         }
 
-        // restartRequired (515) or any other non-fatal disconnect — reconnect
         if (!resolved) {
           await connect()
         }

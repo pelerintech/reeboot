@@ -28,6 +28,18 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### WhatsApp _connect() is a proper awaitable — resolves on 'open', rejects on 'close'/timeout — 2026-05-21 (Request: whatsapp-resilience)
+
+Previously `_connect()` was async but returned immediately after registering Baileys event handlers. The reconnect handler treated `await this._connect()` as "connection established" when it actually meant "event handlers registered". The fix makes `_connect()` return a `Promise<void>` that resolves when `connection.update { connection: 'open' }` fires and rejects on `connection.update { connection: 'close' }` or `CONNECT_TIMEOUT_MS` (30s) watchdog. This is the foundational change that enables the persistent retry loop. Any future code that calls `_connect()` must be aware it now truly awaits connection establishment.
+
+### WhatsApp reconnect uses persistent _reconnectLoop(), not recursive event handler — 2026-05-21 (Request: whatsapp-resilience)
+
+`_reconnecting` previously served dual purpose: reconnect guard and stop sentinel. It was set to `true` by `stop()` to prevent reconnect and set in the close handler to prevent double-entry. After the ebe5c69 regression, `_reconnecting` would stay `true` permanently if `_connect()` returned without a `'close'` event. The fix: `_stopping` (set only by `stop()`) is the stop sentinel; `_reconnecting` guards loop entry only; `_reconnectLoop()` is a `while (!this._stopping)` loop that properly `await`s each `_connect()` call and retries on rejection with exponential backoff. The `connection.update 'close'` handler on post-connect sockets starts the loop once; subsequent closes during reconnect are handled by the running loop catching the rejection.
+
+### Restart=always with StartLimitBurst=5/120s replaces Restart=on-failure — 2026-05-21 (Request: whatsapp-resilience)
+
+`Restart=on-failure` only triggers on non-zero exits. A hung process (alive but socket dead) never triggers it. `Restart=always` triggers on any exit including clean exits, covering both crash and hung-process scenarios (the hung process requires `reeboot stop` or an OS reboot to trigger restart — but L1/L2 fixes prevent the hung state). `StartLimitBurst=5` within `StartLimitIntervalSec=120` prevents crash loops: if reeboot crashes 5 times in 2 minutes, systemd stops restarting.
+
 ### Signal receipt timestamps must be sent in milliseconds, not seconds — 2026-05-15 (Request: presence-feedback)
 
 The `markRead` implementation initially sent `Math.floor(msg.timestamp / 1000)` (converting IncomingMessage's ms timestamp to seconds) to the signal-cli-rest-api `/v1/receipts` endpoint. Source research (signal-cli-rest-api `client.go` + signal-cli `DateUtils.java`) confirms signal-cli passes the timestamp as-is to its internal `sendReceipt -t` command, which expects Java milliseconds (`new Date(timestamp)`). Sending seconds caused the receipt to silently target a message around January 1970. Fixed: `markRead` now sends `msg.timestamp` directly (no conversion). The `_handleIncomingMessage` fallback was also corrected from `Math.floor(Date.now() / 1000)` to `Date.now()`. Any future Signal integration that stores or forwards timestamps must preserve the ms unit throughout.

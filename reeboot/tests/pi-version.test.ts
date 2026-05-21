@@ -1,7 +1,7 @@
 /**
  * pi-version.test.ts
  *
- * Verifies that package.json pins @earendil-works/pi-coding-agent to exactly 0.74.0
+ * Verifies that package.json pins @earendil-works/pi-coding-agent to exactly 0.75.4
  * and that the installed node_modules version matches.
  */
 
@@ -22,11 +22,11 @@ const installed = JSON.parse(
 );
 
 describe('pi version', () => {
-  it('package.json declares exact pin 0.74.0', () => {
-    expect(pkg.dependencies['@earendil-works/pi-coding-agent']).toBe('0.74.0');
+  it('package.json declares exact pin 0.75.4', () => {
+    expect(pkg.dependencies['@earendil-works/pi-coding-agent']).toBe('0.75.4');
   });
 
-  it('installed node_modules version is 0.74.0', () => {
-    expect(installed.version).toBe('0.74.0');
+  it('installed node_modules version is 0.75.4', () => {
+    expect(installed.version).toBe('0.75.4');
   });
 });
