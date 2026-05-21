@@ -28,6 +28,10 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Signal receipt timestamps must be sent in milliseconds, not seconds — 2026-05-15 (Request: presence-feedback)
+
+The `markRead` implementation initially sent `Math.floor(msg.timestamp / 1000)` (converting IncomingMessage's ms timestamp to seconds) to the signal-cli-rest-api `/v1/receipts` endpoint. Source research (signal-cli-rest-api `client.go` + signal-cli `DateUtils.java`) confirms signal-cli passes the timestamp as-is to its internal `sendReceipt -t` command, which expects Java milliseconds (`new Date(timestamp)`). Sending seconds caused the receipt to silently target a message around January 1970. Fixed: `markRead` now sends `msg.timestamp` directly (no conversion). The `_handleIncomingMessage` fallback was also corrected from `Math.floor(Date.now() / 1000)` to `Date.now()`. Any future Signal integration that stores or forwards timestamps must preserve the ms unit throughout.
+
 ### Two READMEs and docs/ are the single source of documentation — 2026-05-08 (Request: docs-overhaul)
 
 All user-facing documentation lives in exactly three places: `/README.md` (marketing/presentation), `/reeboot/README.md` (install + usage essentials), and `/docs/` (full reference, feeds the Astro docs site). Any other markdown file that attempts to document user-facing behaviour is redundant and should be removed or migrated. The one exception is `reeboot/src/channels/CHANNEL_CONTRACT.md` — a developer contract spec tightly coupled to the channel test suite. It is mirrored into `docs/extending/channel-adapters.md` but the canonical source remains in `src/channels/` next to the code it governs. Both READMEs and all pages under `docs/` must be kept current as features are added or changed — documentation updates are part of the definition of done for every future request that changes user-facing behaviour.

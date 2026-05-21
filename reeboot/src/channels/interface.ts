@@ -116,4 +116,14 @@ export interface ChannelAdapter {
    * Returns null when not connected or not applicable (Web, CLI).
    */
   selfAddress(): string | null;
+  /**
+   * Mark an incoming message as read (e.g. blue ticks). Optional — no-op if absent.
+   */
+  markRead?(msg: IncomingMessage): Promise<void>;
+
+  /** Start a typing indicator directed at the sender of msg. Optional — no-op if absent. */
+  startTyping?(msg: IncomingMessage): Promise<void>;
+
+  /** Stop the typing indicator. Optional — no-op if absent. */
+  stopTyping?(msg: IncomingMessage): Promise<void>;
 }

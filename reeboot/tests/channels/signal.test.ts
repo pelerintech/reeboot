@@ -210,6 +210,47 @@ describe('SignalAdapter — json-rpc mode (WebSocket)', () => {
     expect(received).toHaveLength(0);
   });
 
+  it('markRead is called on incoming messages before bus publish (json-rpc)', async () => {
+    const callOrder: string[] = [];
+
+    // Track receipts calls
+    let receiptsCalled = false;
+    mockFetch.mockImplementation((...args: any[]) => {
+      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url ?? '';
+      if (url.includes('/v1/receipts')) {
+        callOrder.push('receipts');
+        receiptsCalled = true;
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      // Default: return json-rpc about response for the setup
+      if (url.includes('/v1/about')) {
+        return Promise.resolve(aboutResponse('json-rpc'));
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+
+    const origPublish = bus.publish.bind(bus);
+    bus.publish = ((msg: any) => {
+      callOrder.push('publish');
+      origPublish(msg);
+    }) as any;
+
+    const { SignalAdapter: SA } = await import('@src/channels/signal.js');
+    const testAdapter = new SA({ phoneNumber: '+1234567890', apiPort: 8080 });
+    await testAdapter.init({ enabled: true }, bus);
+    await testAdapter.start();
+    await Promise.resolve();
+
+    MockWebSocket.lastInstance!.simulateMessage(
+      makeDataMessage('+15559876543', 'Hello from Signal')
+    );
+
+    expect(receiptsCalled).toBe(true);
+    expect(callOrder.indexOf('receipts')).toBeLessThan(callOrder.indexOf('publish'));
+
+    await testAdapter.stop();
+  });
+
   it('WebSocket reconnects after close', async () => {
     await adapter.init({ enabled: true }, bus);
     await adapter.start();
@@ -246,6 +287,106 @@ describe('SignalAdapter — json-rpc mode (WebSocket)', () => {
 
     // No new instance created after stop
     expect(MockWebSocket.lastInstance).toBe(first);
+  });
+
+  it('startTyping sends PUT to typing-indicator endpoint', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    const incomingMsg = {
+      channelType: 'signal' as const,
+      peerId: '+15559876543',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: {},
+    };
+
+    await adapter.startTyping(incomingMsg);
+
+    const typingCall = mockFetch.mock.calls.find(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('/v1/typing-indicator')
+    );
+    expect(typingCall).toBeDefined();
+    expect(typingCall![1].method).toBe('PUT');
+    const body = JSON.parse(typingCall![1].body as string);
+    expect(body.recipient).toBe('+15559876543');
+    expect(typingCall![0]).toContain('%2B1234567890'); // encoded own number
+  });
+
+  it('stopTyping sends DELETE to typing-indicator endpoint', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    const incomingMsg = {
+      channelType: 'signal' as const,
+      peerId: '+15559876543',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: {},
+    };
+
+    await adapter.stopTyping(incomingMsg);
+
+    const typingCall = mockFetch.mock.calls.find(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('/v1/typing-indicator')
+    );
+    expect(typingCall).toBeDefined();
+    expect(typingCall![1].method).toBe('DELETE');
+    const body = JSON.parse(typingCall![1].body as string);
+    expect(body.recipient).toBe('+15559876543');
+  });
+
+  it('markRead posts a read receipt with correct body (PF-3-A)', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    // Signal-cli expects timestamps in milliseconds (Java System.currentTimeMillis()).
+    // IncomingMessage.timestamp is already in ms — must be sent without conversion.
+    const msgTimestampMs = 1700000000000;
+    const incomingMsg = {
+      channelType: 'signal' as const,
+      peerId: '+15559876543',
+      content: 'Hello',
+      timestamp: msgTimestampMs,
+      raw: {},
+    };
+
+    await adapter.markRead(incomingMsg);
+
+    const receiptCall = mockFetch.mock.calls.find(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('/v1/receipts')
+    );
+    expect(receiptCall).toBeDefined();
+    expect(receiptCall![1].method).toBe('POST');
+    const body = JSON.parse(receiptCall![1].body as string);
+    expect(body.recipient).toBe('+15559876543');
+    expect(body.receipt_type).toBe('read');
+    expect(body.timestamp).toBe(msgTimestampMs);
+    expect(receiptCall![0]).toContain('%2B1234567890'); // encoded own number
+  });
+
+  it('presence errors do not propagate', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await Promise.resolve();
+
+    // Make all fetch calls fail
+    mockFetch.mockRejectedValue(new Error('network error'));
+
+    const incomingMsg = {
+      channelType: 'signal' as const,
+      peerId: '+15559876543',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: {},
+    };
+
+    await expect(adapter.startTyping(incomingMsg)).resolves.toBeUndefined();
+    await expect(adapter.stopTyping(incomingMsg)).resolves.toBeUndefined();
+    await expect(adapter.markRead(incomingMsg)).resolves.toBeUndefined();
   });
 });
 
@@ -336,6 +477,46 @@ describe('SignalAdapter — normal mode (HTTP polling)', () => {
 
     expect(adapter.status()).toBe('disconnected');
     expect((adapter as any)._pollTimer).toBeNull();
+  });
+
+  it('markRead is called on incoming messages before bus publish (normal mode / HTTP polling) — PF-3-F', async () => {
+    const callOrder: string[] = [];
+
+    const msg = makeDataMessage('+1987654321', 'Hello via poll');
+
+    mockFetch.mockImplementation((...args: any[]) => {
+      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url ?? '';
+      if (url.includes('/v1/about')) {
+        return Promise.resolve(aboutResponse('normal'));
+      }
+      if (url.includes('/v1/receipts')) {
+        callOrder.push('receipts');
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes('/v1/receive')) {
+        // First poll returns one message; subsequent polls return empty
+        if (!callOrder.includes('polled')) {
+          callOrder.push('polled');
+          return Promise.resolve({ ok: true, json: async () => [msg] });
+        }
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.resolve({ ok: true, json: async () => [] });
+    });
+
+    const origPublish = bus.publish.bind(bus);
+    bus.publish = ((m: any) => {
+      callOrder.push('publish');
+      origPublish(m);
+    }) as any;
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(callOrder).toContain('receipts');
+    expect(callOrder).toContain('publish');
+    expect(callOrder.indexOf('receipts')).toBeLessThan(callOrder.indexOf('publish'));
   });
 });
 
@@ -530,6 +711,29 @@ describe('SignalAdapter — send() status guard', () => {
     SignalAdapter = mod.SignalAdapter;
     bus = new MessageBus();
     adapter = new SignalAdapter({ phoneNumber: '+1234567890', apiPort: 8080 });
+  });
+
+  it('markRead is a no-op when adapter is not connected', async () => {
+    await adapter.init({ enabled: true }, bus);
+    // NOT started — status() is still 'disconnected'
+    mockFetch.mockClear();
+
+    const incomingMsg = {
+      channelType: 'signal' as const,
+      peerId: '+15559876543',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: {},
+    };
+
+    // Should resolve without throwing
+    await expect(adapter.markRead(incomingMsg)).resolves.toBeUndefined();
+
+    // No HTTP request should have been made
+    const receiptCalls = mockFetch.mock.calls.filter(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('/v1/receipts')
+    );
+    expect(receiptCalls).toHaveLength(0);
   });
 
   it('send() returns without throwing when adapter is not started', async () => {

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Read receipts on WhatsApp and Signal — incoming messages are marked as read
+  (blue ticks / read receipt) immediately on arrival, before the agent turn begins.
+- Typing indicator on WhatsApp and Signal — three-dot typing indicator is shown
+  for the full duration of an agent turn. WhatsApp indicator refreshes every 8 seconds
+  to stay alive during long-running tasks (research, multi-step planning).
+  Disappearing dots with no reply serve as an implicit signal that the agent
+  encountered a problem.
+
 ---
 
 ## [2.1.0] - 2026-05-10

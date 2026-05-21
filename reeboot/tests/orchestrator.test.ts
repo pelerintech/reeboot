@@ -51,6 +51,8 @@ function makeAdapter() {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     status: vi.fn().mockReturnValue('connected'),
+    startTyping: vi.fn().mockResolvedValue(undefined),
+    stopTyping: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -254,6 +256,155 @@ describe('Orchestrator routing', () => {
 
     // Both turns should have been called
     expect(slowRunner.prompt).toHaveBeenCalledTimes(2);
+  });
+
+  // ── Presence wiring ──────────────────────────────────────────────────────
+
+  it('startTyping is called before runner.prompt and stopTyping after response', async () => {
+    const callOrder: string[] = [];
+    adapter.startTyping = vi.fn().mockImplementation(() => {
+      callOrder.push('startTyping');
+      return Promise.resolve();
+    });
+    adapter.stopTyping = vi.fn().mockImplementation(() => {
+      callOrder.push('stopTyping');
+      return Promise.resolve();
+    });
+    runner.prompt = vi.fn().mockImplementation(() => {
+      callOrder.push('prompt');
+      return Promise.resolve({ type: 'text', content: 'done' });
+    });
+
+    const runners = new Map([['main', runner]]);
+    const adapters = new Map([['whatsapp', adapter]]);
+    const orc = new Orchestrator(makeConfig(), bus, adapters, runners);
+    orc.start();
+
+    bus.publish(makeMsg());
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(adapter.startTyping).toHaveBeenCalled();
+    expect(adapter.stopTyping).toHaveBeenCalled();
+    // PF-4-A: startTyping must precede runner.prompt
+    expect(callOrder.indexOf('startTyping')).toBeLessThan(callOrder.indexOf('prompt'));
+  });
+
+  it('stopTyping is called after a turn that errors', async () => {
+    const errorRunner = {
+      prompt: vi.fn().mockRejectedValue(new Error('provider down')),
+      abort: vi.fn(),
+      dispose: vi.fn().mockResolvedValue(undefined),
+      reload: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const runners = new Map([['main', errorRunner]]);
+    const adapters = new Map([['whatsapp', adapter]]);
+    const orc = new Orchestrator(makeConfig(), bus, adapters, runners);
+    orc.start();
+
+    bus.publish(makeMsg({ content: 'crash me' }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(adapter.startTyping).toHaveBeenCalled();
+    expect(adapter.stopTyping).toHaveBeenCalled();
+  });
+
+  it('stopTyping is called after a turn timeout', async () => {
+    const hungRunner = {
+      prompt: vi.fn().mockImplementation(() => new Promise(() => { /* never resolves */ })),
+      abort: vi.fn(),
+      dispose: vi.fn().mockResolvedValue(undefined),
+      reload: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const runners = new Map([['main', hungRunner]]);
+    const adapters = new Map([['whatsapp', adapter]]);
+    const orc = new Orchestrator(
+      makeConfig({ agent: { turnTimeout: 30, rateLimitRetries: 0, _testBackoffMs: 0 } }),
+      bus, adapters, runners
+    );
+    orc.start();
+
+    bus.publish(makeMsg());
+    // Wait enough for the 30ms timeout to fire plus cleanup
+    await new Promise(r => setTimeout(r, 150));
+
+    expect(adapter.startTyping).toHaveBeenCalled();
+    expect(adapter.stopTyping).toHaveBeenCalled();
+  });
+
+  it('no presence calls for synthetic channel types (scheduler)', async () => {
+    const runners = new Map([['main', runner]]);
+    const adapters = new Map([['scheduler', adapter]]);
+    const orc = new Orchestrator(makeConfig(), bus, adapters, runners);
+    orc.start();
+
+    bus.publish(makeMsg({ channelType: 'scheduler', content: 'scheduled task' }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(adapter.startTyping).not.toHaveBeenCalled();
+    expect(adapter.stopTyping).not.toHaveBeenCalled();
+  });
+
+  it('no presence calls for synthetic channel type: heartbeat', async () => {
+    const runners = new Map([['main', runner]]);
+    const adapters = new Map([['heartbeat', adapter]]);
+    const orc = new Orchestrator(makeConfig(), bus, adapters, runners);
+    orc.start();
+
+    bus.publish(makeMsg({ channelType: 'heartbeat', content: 'heartbeat tick' }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(adapter.startTyping).not.toHaveBeenCalled();
+    expect(adapter.stopTyping).not.toHaveBeenCalled();
+  });
+
+  it('no presence calls for synthetic channel type: recovery', async () => {
+    const runners = new Map([['main', runner]]);
+    const adapters = new Map([['recovery', adapter]]);
+    const orc = new Orchestrator(makeConfig(), bus, adapters, runners);
+    orc.start();
+
+    bus.publish(makeMsg({ channelType: 'recovery', content: 'recovery prompt' }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(adapter.startTyping).not.toHaveBeenCalled();
+    expect(adapter.stopTyping).not.toHaveBeenCalled();
+  });
+
+  it('no presence calls for synthetic channel type: memory', async () => {
+    const runners = new Map([['main', runner]]);
+    const adapters = new Map([['memory', adapter]]);
+    const orc = new Orchestrator(makeConfig(), bus, adapters, runners);
+    orc.start();
+
+    bus.publish(makeMsg({ channelType: 'memory', content: 'memory consolidation' }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(adapter.startTyping).not.toHaveBeenCalled();
+    expect(adapter.stopTyping).not.toHaveBeenCalled();
+  });
+
+  it('missing presence methods are silently skipped', async () => {
+    const adapterNoPresence = {
+      send: vi.fn().mockResolvedValue(undefined),
+      init: vi.fn().mockResolvedValue(undefined),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      status: vi.fn().mockReturnValue('connected'),
+      // No startTyping / stopTyping
+    };
+
+    const runners = new Map([['main', runner]]);
+    const adapters = new Map([['whatsapp', adapterNoPresence]]);
+    const orc = new Orchestrator(makeConfig(), bus, adapters, runners);
+    orc.start();
+
+    bus.publish(makeMsg());
+    await new Promise(r => setTimeout(r, 30));
+
+    // Should complete without error
+    expect(runner.prompt).toHaveBeenCalled();
   });
 });
 

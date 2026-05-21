@@ -17,6 +17,7 @@ import { getDb } from '../db/index.js';
 
 const CHUNK_SIZE = 4096;
 const CHUNK_DELAY_MS = 100;
+const TYPING_REFRESH_MS = 8_000;
 
 export class WhatsAppAdapter implements ChannelAdapter {
   private _authDir: string;
@@ -29,6 +30,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private _reconnectAttempt = 0;
   /** IDs of messages we sent — used to skip our own echoes in multi-device mode. */
   private _sentIds = new Set<string>();
+  /** Refresh intervals for typing indicators, keyed by peerId. */
+  private _typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor(authDir?: string) {
     this._authDir = authDir ?? join(homedir(), '.reeboot', 'channels', 'whatsapp', 'auth');
@@ -176,6 +179,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
         }
 
         getLogger().debug({ component: 'whatsapp', type, fromMe, peerId, len: text.length }, '[WhatsApp] Received message');
+        // Mark as read immediately — before publishing to the bus
+        try { sock.readMessages([msg.key]).catch(() => {}); } catch { /* socket not ready */ }
+
         this._bus?.publish(
           createIncomingMessage({
             channelType: 'whatsapp',
@@ -243,6 +249,44 @@ export class WhatsAppAdapter implements ChannelAdapter {
   selfAddress(): string | null {
     const userId = this._socket?.user?.id?.replace(/:.*/, '');
     return userId ? `${userId}@s.whatsapp.net` : null;
+  }
+
+  async markRead(msg: import('./interface.js').IncomingMessage): Promise<void> {
+    if (!this._socket) return;
+    try {
+      const rawKey = typeof (msg.raw as any)?.key === 'object' ? (msg.raw as any).key : msg.raw;
+      await this._socket.readMessages([rawKey]);
+    } catch { /* socket not ready — cosmetic failure */ }
+  }
+
+  async startTyping(msg: import('./interface.js').IncomingMessage): Promise<void> {
+    if (!this._socket) return;
+    try {
+      const peerId = msg.peerId;
+      // Don't restart if already active
+      if (this._typingIntervals.has(peerId)) return;
+
+      await this._socket.sendPresenceUpdate('composing', peerId);
+      const intervalId = setInterval(() => {
+        try {
+          this._socket?.sendPresenceUpdate('composing', peerId);
+        } catch { /* cosmetic failure */ }
+      }, TYPING_REFRESH_MS);
+      this._typingIntervals.set(peerId, intervalId);
+    } catch { /* socket error — cosmetic failure */ }
+  }
+
+  async stopTyping(msg: import('./interface.js').IncomingMessage): Promise<void> {
+    if (!this._socket) return;
+    try {
+      const peerId = msg.peerId;
+      const intervalId = this._typingIntervals.get(peerId);
+      if (intervalId) {
+        clearInterval(intervalId);
+        this._typingIntervals.delete(peerId);
+      }
+      await this._socket.sendPresenceUpdate('paused', peerId);
+    } catch { /* socket error — cosmetic failure */ }
   }
 }
 

@@ -254,6 +254,12 @@ export class SignalAdapter implements ChannelAdapter {
     }
 
     _log.debug({ peerId, fromSelf, len: text.length }, '[Signal] Received message');
+
+    // Mark as read before publishing to the bus.
+    // signal-cli timestamps are in milliseconds (Java System.currentTimeMillis()).
+    const msgTimestamp = (envelope as any).timestamp ?? Date.now();
+    this._markReadInternal(peerId, msgTimestamp).catch(() => {});
+
     this._bus?.publish(
       createIncomingMessage({
         channelType: 'signal',
@@ -344,6 +350,61 @@ export class SignalAdapter implements ChannelAdapter {
 
   connectedAt(): string | null {
     return this._connectedAt;
+  }
+
+  /**
+   * Start a typing indicator for the recipient of msg. No-op if not connected.
+   */
+  async startTyping(msg: import('./interface.js').IncomingMessage): Promise<void> {
+    if (this._status !== 'connected') return;
+    try {
+      const encoded = encodeURIComponent(this._phoneNumber);
+      await fetch(`${this._baseUrl}/v1/typing-indicator/${encoded}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient: msg.peerId }),
+      });
+    } catch { /* cosmetic failure */ }
+  }
+
+  /**
+   * Stop the typing indicator. No-op if not connected.
+   */
+  async stopTyping(msg: import('./interface.js').IncomingMessage): Promise<void> {
+    if (this._status !== 'connected') return;
+    try {
+      const encoded = encodeURIComponent(this._phoneNumber);
+      await fetch(`${this._baseUrl}/v1/typing-indicator/${encoded}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient: msg.peerId }),
+      });
+    } catch { /* cosmetic failure */ }
+  }
+
+  /**
+   * Mark an incoming message as read (read receipt). No-op if not connected.
+   */
+  async markRead(msg: import('./interface.js').IncomingMessage): Promise<void> {
+    if (this._status !== 'connected') return;
+    // IncomingMessage.timestamp is in ms; signal-cli expects ms — no conversion.
+    this._markReadInternal(msg.peerId, msg.timestamp).catch(() => {});
+  }
+
+  private async _markReadInternal(peerId: string, timestamp: number): Promise<void> {
+    if (this._status !== 'connected') return;
+    try {
+      const encoded = encodeURIComponent(this._phoneNumber);
+      await fetch(`${this._baseUrl}/v1/receipts/${encoded}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient: peerId,
+          receipt_type: 'read',
+          timestamp,
+        }),
+      });
+    } catch { /* cosmic failure — read receipt is cosmetic */ }
   }
 
   /** Returns the configured phone number, or null if not set. */

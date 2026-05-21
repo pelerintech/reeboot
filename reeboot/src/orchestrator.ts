@@ -299,6 +299,15 @@ export class Orchestrator {
     const turnTimeoutMs = this._config.agent?.turnTimeout ?? DEFAULT_TURN_TIMEOUT_MS;
     const maxRetries = this._config.agent?.rateLimitRetries ?? DEFAULT_RATE_LIMIT_RETRIES;
 
+    // Presence: skip typing indicators for synthetic channel types
+    const SKIP_PRESENCE_CHANNELS = new Set(['scheduler', 'recovery', 'heartbeat', 'memory']);
+    const skipPresence = SKIP_PRESENCE_CHANNELS.has(msg.channelType);
+    const presenceAdapter = this._adapters.get(msg.channelType);
+
+    if (!skipPresence) {
+      await presenceAdapter?.startTyping?.(msg).catch(() => {});
+    }
+
     let responseText = '';
     let retries = 0;
 
@@ -315,6 +324,7 @@ export class Orchestrator {
       } catch { /* messages table may not exist in minimal deployments */ }
     }
 
+    try {
     while (true) {
       responseText = '';
 
@@ -450,6 +460,11 @@ export class Orchestrator {
 
       // Success
       break;
+    }
+    } finally {
+    if (!skipPresence) {
+      await presenceAdapter?.stopTyping?.(msg).catch(() => {});
+    }
     }
 
     // Clean turn — close the journal row and reset failure counter

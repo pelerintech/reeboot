@@ -18,6 +18,8 @@ const mockSocket = {
   sendMessage: vi.fn().mockResolvedValue({}),
   logout: vi.fn().mockResolvedValue({}),
   end: vi.fn(),
+  readMessages: vi.fn().mockResolvedValue(undefined),
+  sendPresenceUpdate: vi.fn().mockResolvedValue(undefined),
   user: { id: '40740025025:0@s.whatsapp.net', lid: '43624150659184:0@lid' },
 } as any;
 
@@ -48,6 +50,8 @@ describe('WhatsAppAdapter', () => {
     // Reset mockEv listeners
     mockEv.removeAllListeners();
     mockSocket.sendMessage = vi.fn().mockResolvedValue({});
+    mockSocket.readMessages = vi.fn().mockResolvedValue(undefined);
+    mockSocket.sendPresenceUpdate = vi.fn().mockResolvedValue(undefined);
 
     // Provide a temp auth dir
     const { WhatsAppAdapter } = await import('@src/channels/whatsapp.js');
@@ -293,5 +297,156 @@ describe('WhatsAppAdapter', () => {
     mockEv.emit('connection.update', { connection: 'open' });
 
     expect(adapter.status()).toBe('connected');
+  });
+
+  it('markRead is called on incoming messages before bus publish', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
+
+    const callOrder: string[] = [];
+    const origPublish = bus.publish.bind(bus);
+    bus.publish = ((msg: any) => {
+      callOrder.push('publish');
+      origPublish(msg);
+    }) as any;
+
+    mockSocket.readMessages = vi.fn().mockImplementation(() => {
+      callOrder.push('readMessages');
+      return Promise.resolve();
+    });
+
+    const msgKey = { remoteJid: '1234@s.whatsapp.net', fromMe: false, id: 'msg-read' };
+    mockEv.emit('messages.upsert', {
+      type: 'notify',
+      messages: [
+        {
+          key: msgKey,
+          message: { conversation: 'Hello' },
+        },
+      ],
+    });
+
+    expect(mockSocket.readMessages).toHaveBeenCalledWith([msgKey]);
+    expect(callOrder.indexOf('readMessages')).toBeLessThan(callOrder.indexOf('publish'));
+  });
+
+  it('startTyping sends composing presence immediately', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
+
+    const incomingMsg = {
+      channelType: 'whatsapp' as const,
+      peerId: '1234@s.whatsapp.net',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: {},
+    };
+
+    await adapter.startTyping(incomingMsg);
+
+    expect(mockSocket.sendPresenceUpdate).toHaveBeenCalledWith('composing', '1234@s.whatsapp.net');
+  });
+
+  it('startTyping refreshes composing presence every 8 seconds', async () => {
+    vi.useFakeTimers();
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
+
+    mockSocket.sendPresenceUpdate = vi.fn().mockResolvedValue(undefined);
+
+    const incomingMsg = {
+      channelType: 'whatsapp' as const,
+      peerId: '1234@s.whatsapp.net',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: {},
+    };
+
+    await adapter.startTyping(incomingMsg);
+    expect(mockSocket.sendPresenceUpdate).toHaveBeenCalledTimes(1); // initial
+
+    vi.advanceTimersByTime(8000);
+    expect(mockSocket.sendPresenceUpdate).toHaveBeenCalledTimes(2); // refresh 1
+
+    vi.advanceTimersByTime(8000);
+    expect(mockSocket.sendPresenceUpdate).toHaveBeenCalledTimes(3); // refresh 2
+
+    vi.useRealTimers();
+  });
+
+  it('stopTyping sends paused presence and stops the refresh interval', async () => {
+    vi.useFakeTimers();
+
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
+
+    mockSocket.sendPresenceUpdate = vi.fn().mockResolvedValue(undefined);
+
+    const incomingMsg = {
+      channelType: 'whatsapp' as const,
+      peerId: '1234@s.whatsapp.net',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: {},
+    };
+
+    await adapter.startTyping(incomingMsg);
+    expect(mockSocket.sendPresenceUpdate).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(8000);
+    expect(mockSocket.sendPresenceUpdate).toHaveBeenCalledTimes(2);
+
+    await adapter.stopTyping(incomingMsg);
+    expect(mockSocket.sendPresenceUpdate).toHaveBeenCalledWith('paused', '1234@s.whatsapp.net');
+
+    // After stop, no more composing updates should fire
+    vi.advanceTimersByTime(8000);
+    expect(mockSocket.sendPresenceUpdate).toHaveBeenCalledTimes(3); // initial + 1 refresh + paused
+
+    vi.useRealTimers();
+  });
+
+  it('markRead is a no-op when socket is not connected (_socket is null)', async () => {
+    // Adapter is initialised but NOT started — _socket is null
+    await adapter.init({ enabled: true }, bus);
+    // Do NOT call adapter.start() — socket remains null
+
+    const incomingMsg = {
+      channelType: 'whatsapp' as const,
+      peerId: '1234@s.whatsapp.net',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: { key: { remoteJid: '1234@s.whatsapp.net', fromMe: false, id: 'msg-no-socket' } },
+    };
+
+    // readMessages should NOT be called
+    mockSocket.readMessages = vi.fn().mockResolvedValue(undefined);
+
+    // Should resolve without error
+    await expect(adapter.markRead(incomingMsg)).resolves.toBeUndefined();
+    expect(mockSocket.readMessages).not.toHaveBeenCalled();
+  });
+
+  it('startTyping errors do not propagate', async () => {
+    await adapter.init({ enabled: true }, bus);
+    await adapter.start();
+    mockEv.emit('connection.update', { connection: 'open' });
+
+    mockSocket.sendPresenceUpdate = vi.fn().mockRejectedValue(new Error('socket error'));
+
+    const incomingMsg = {
+      channelType: 'whatsapp' as const,
+      peerId: '1234@s.whatsapp.net',
+      content: 'Hello',
+      timestamp: Date.now(),
+      raw: {},
+    };
+
+    await expect(adapter.startTyping(incomingMsg)).resolves.toBeUndefined();
   });
 });
