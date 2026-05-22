@@ -9,13 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Capabilities extension: two-tier tool capping** — bundled (internal) tools are now never capped; only external/user-defined tools are subject to a cap. Previously a flat `MAX_TOOLS = 30` applied to all tools, which could silently hide mandatory bundled tools like `memory` and `session_search` when MCP servers added 30+ tools. The default external tool cap is now `50` (up from `30`), and is configurable via `config.json → capabilities.externalToolCap`. Set it to `0` to hide all external tools, or a very high number to effectively disable capping.
+## [2.3.0] - 2026-05-22
 
 ### Added
 
 - **Centralized capabilities discovery extension** (`src/extensions/capabilities.ts`) — a new bundled extension that hooks `before_agent_start`, calls `pi.getAllTools()` to discover every registered tool dynamically, filters out pi built-ins, and injects a structured capabilities block into the system prompt. This replaces the scattered `promptSnippet` approach which was easy to forget and missed user extensions entirely. All tools are treated equally — bundled, user, MCP, and skill tools are all advertised automatically. Emits a `capabilities_injected` observability event with `toolCount`, `toolNames`, and `sourceBreakdown`.
+
+### Changed
+
+- **Capabilities extension: two-tier tool capping** — bundled (internal) tools are now never capped; only external/user-defined tools are subject to a cap. Previously a flat `MAX_TOOLS = 30` applied to all tools, which could silently hide mandatory bundled tools like `memory` and `session_search` when MCP servers added 30+ tools. The default external tool cap is now `50` (up from `30`), and is configurable via `config.json → capabilities.externalToolCap`. Set it to `0` to hide all external tools, or a very high number to effectively disable capping.
 
 ### Fixed
 
