@@ -23,6 +23,7 @@ import {
 import { join } from 'path';
 import { homedir } from 'os';
 import type Database from 'better-sqlite3';
+import { globalScheduler, noopScheduler } from '../scheduler-registry.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -563,20 +564,28 @@ export function makeMemoryExtension(
   }
 
   // ── Consolidation task registration ─────────────────────────────────────
+  // Register on session_start (not at extension load time) to avoid the
+  // race condition where globalScheduler is still noopScheduler.
+  let _consolidationRegistered = false;
+
   if (memoryConfig.enabled && memoryConfig.consolidation?.enabled) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { globalScheduler } = require('../scheduler-registry.js') as typeof import('../scheduler-registry.js');
-    const scheduler = globalScheduler;
-    if (scheduler) {
-      scheduler.registerJob({
-        id: '__memory_consolidation__',
-        contextId: 'main',
-        schedule: memoryConfig.consolidation.schedule ?? '0 2 * * *',
-        prompt:
-          '__memory_consolidation__: Run the memory consolidation process. ' +
-          'Analyse recent conversations and update MEMORY.md and USER.md with new insights.',
-      });
-    }
+    pi.on('session_start', () => {
+      if (_consolidationRegistered) return;
+
+      const scheduler = globalScheduler;
+      // Only register if the real scheduler is available (not noopScheduler)
+      if (scheduler && scheduler !== noopScheduler) {
+        scheduler.registerJob({
+          id: '__memory_consolidation__',
+          contextId: 'main',
+          schedule: memoryConfig.consolidation.schedule ?? '0 2 * * *',
+          prompt:
+            '__memory_consolidation__: Run the memory consolidation process. ' +
+            'Analyse recent conversations and update MEMORY.md and USER.md with new insights.',
+        });
+        _consolidationRegistered = true;
+      }
+    });
   }
 
   const paths: MemoryFilePaths = {

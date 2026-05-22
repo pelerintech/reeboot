@@ -62,6 +62,28 @@ LLM provider and credential configuration.
 
 ---
 
+## `capabilities`
+
+Controls how the agent discovers and sees registered tools via the capabilities extension.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `capabilities.externalToolCap` | number | `50` | Maximum number of **external** tools (user extensions, MCP servers, skills) advertised in the system prompt. Bundled (internal) reeboot tools are **never** capped. Set to `0` to hide all external tools, or a very high number to effectively disable the cap. |
+
+**Example — raise the external cap for heavy MCP setups:**
+
+```json
+{
+  "capabilities": {
+    "externalToolCap": 100
+  }
+}
+```
+
+> The `capabilities` extension runs automatically on every session start. It discovers all registered tools via `pi.getAllTools()`, filters out built-in pi tools (bash, read, edit, etc.), separates bundled reeboot tools from external ones, and injects a structured capabilities block into the system prompt. A `capabilities_injected` event is emitted to the observability stream after each injection.
+
+---
+
 ## `channels`
 
 ### `channels.web` — WebChat

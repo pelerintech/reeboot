@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Capabilities extension: two-tier tool capping** — bundled (internal) tools are now never capped; only external/user-defined tools are subject to a cap. Previously a flat `MAX_TOOLS = 30` applied to all tools, which could silently hide mandatory bundled tools like `memory` and `session_search` when MCP servers added 30+ tools. The default external tool cap is now `50` (up from `30`), and is configurable via `config.json → capabilities.externalToolCap`. Set it to `0` to hide all external tools, or a very high number to effectively disable capping.
+
+### Added
+
+- **Centralized capabilities discovery extension** (`src/extensions/capabilities.ts`) — a new bundled extension that hooks `before_agent_start`, calls `pi.getAllTools()` to discover every registered tool dynamically, filters out pi built-ins, and injects a structured capabilities block into the system prompt. This replaces the scattered `promptSnippet` approach which was easy to forget and missed user extensions entirely. All tools are treated equally — bundled, user, MCP, and skill tools are all advertised automatically. Emits a `capabilities_injected` observability event with `toolCount`, `toolNames`, and `sourceBreakdown`.
+
+### Fixed
+
+- **Memory consolidation scheduler race condition** — the `__memory_consolidation__` scheduled job was previously registered inside `makeMemoryExtension` at extension load time, when `globalScheduler` was still `noopScheduler`. The fix moves registration to a `session_start` event handler with a module-level `_consolidationRegistered` guard against double-registration. A `noopScheduler` export was added to `scheduler-registry.ts` so the handler can distinguish the real scheduler from the stub. This ensures consolidation actually fires after server startup.
+
 ---
 
 ## [2.2.1] - 2026-05-21

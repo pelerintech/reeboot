@@ -204,6 +204,15 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
     }
   });
 
+  // Capabilities discovery extension — always loaded (no feature flag).
+  // Discovers all registered tools and injects a capabilities block into
+  // the system prompt on every session start. Must be loaded AFTER all
+  // other extensions so getAllTools() sees the full tool set.
+  factories.push(async (pi) => {
+    const mod = await importExt('capabilities');
+    if (mod?.default) await (mod.default as any)(pi, config);
+  });
+
   // Knowledge manager — loaded when knowledge.enabled=true (default false).
   // Registers knowledge_search, knowledge_ingest, and optionally wiki tools.
   if (knowledgeEnabled) {

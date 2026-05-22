@@ -109,4 +109,37 @@ describe('createLoader (2.1)', () => {
     expect(registeredTools).toContain('web_search');
     expect(registeredTools).toContain('fetch_url');
   });
+
+  it('capabilities factory is included in bundled factories', async () => {
+    const { getBundledFactories } = await import('@src/extensions/loader.js');
+    const factories = getBundledFactories({} as any);
+
+    // The capabilities factory should be present (always loaded, no feature flag)
+    // We verify by checking that invoking all factories with a mock pi that
+    // has getAllTools results in the ADDITIONAL CAPABILITIES block being injected
+    const handlers: Record<string, Array<(event: any) => any>> = {};
+    const mockPi = {
+      getAllTools: vi.fn(() => []),
+      on: vi.fn((event: string, handler: (event: any) => any) => {
+        if (!handlers[event]) handlers[event] = [];
+        handlers[event].push(handler);
+      }),
+    };
+
+    for (const factory of factories) {
+      try { await (factory as any)(mockPi); } catch { /* ignore errors from other factories */ }
+    }
+
+    // Fire before_agent_start and check for the capabilities-specific block
+    expect(handlers['before_agent_start']?.length).toBeGreaterThanOrEqual(1);
+
+    let foundCapabilitiesBlock = false;
+    for (const handler of handlers['before_agent_start'] ?? []) {
+      const result = await handler({ systemPrompt: 'test' });
+      if (result?.systemPrompt?.includes('ADDITIONAL CAPABILITIES')) {
+        foundCapabilitiesBlock = true;
+      }
+    }
+    expect(foundCapabilitiesBlock).toBe(true);
+  });
 });

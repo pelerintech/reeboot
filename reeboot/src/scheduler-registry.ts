@@ -7,7 +7,7 @@ import type { SchedulerToolsTarget, Scheduler } from './scheduler.js';
 export { startHeartbeat, stopHeartbeat } from './scheduler/heartbeat.js';
 
 // Stub scheduler that no-ops until a real one is registered
-const noopScheduler: SchedulerToolsTarget & { start(): Promise<void>; stop(): void } = {
+export const noopScheduler: SchedulerToolsTarget & { start(): Promise<void>; stop(): void } = {
   registerJob: () => {},
   cancelJob: () => {},
   start: async () => {},

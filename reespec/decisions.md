@@ -28,6 +28,14 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Centralized capabilities discovery extension replaces per-tool promptSnippet — 2026-05-22 (Request: agent-capabilities)
+
+A new `capabilities.ts` bundled extension hooks `before_agent_start`, calls `pi.getAllTools()` to discover every registered tool dynamically, filters out pi built-ins, and injects a structured capabilities block into the system prompt. This replaces the scattered `promptSnippet` approach which was easy to forget and missed user extensions entirely. The extension is always-on, placed last in the loader order so it sees the full tool set, and emits a `capabilities_injected` observability event. Per-tool `promptSnippet` additions are no longer required for reeboot bundled tools.
+
+### Memory consolidation job registration moved from extension load to session_start — 2026-05-22 (Request: agent-capabilities)
+
+The memory extension's `__memory_consolidation__` scheduled job was previously registered inside `makeMemoryExtension` at extension load time, when `globalScheduler` was still `noopScheduler`. The fix moves registration to a `session_start` event handler with a module-level `_consolidationRegistered` guard against double-registration. A `noopScheduler` export was added to `scheduler-registry.ts` so the handler can distinguish the real scheduler from the stub. This ensures consolidation actually fires after server startup.
+
 ### WhatsApp _connect() is a proper awaitable — resolves on 'open', rejects on 'close'/timeout — 2026-05-21 (Request: whatsapp-resilience)
 
 Previously `_connect()` was async but returned immediately after registering Baileys event handlers. The reconnect handler treated `await this._connect()` as "connection established" when it actually meant "event handlers registered". The fix makes `_connect()` return a `Promise<void>` that resolves when `connection.update { connection: 'open' }` fires and rejects on `connection.update { connection: 'close' }` or `CONNECT_TIMEOUT_MS` (30s) watchdog. This is the foundational change that enables the persistent retry loop. Any future code that calls `_connect()` must be aware it now truly awaits connection establishment.

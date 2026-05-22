@@ -69,6 +69,9 @@ reeboot setup
   },
   "search": {
     "provider": "duckduckgo"
+  },
+  "capabilities": {
+    "externalToolCap": 50
   }
 }
 ```
@@ -158,6 +161,8 @@ Open `http://localhost:3000` after starting the agent. No setup required.
 | Observability & logs | [observability/logging.md](../docs/observability/logging.md) |
 | Resilience & recovery | [deployment/resilience.md](../docs/deployment/resilience.md) |
 | Extensions & skills | [extending/extensions.md](../docs/extending/extensions.md) |
+
+> **Tool discovery:** The agent discovers all registered tools automatically via the capabilities extension. Bundled (internal) tools are always advertised. External tools from MCP servers or user extensions are capped at 50 by default (configurable via `capabilities.externalToolCap`). If memory or other tools are not working, check that the feature is enabled in `config.json` and the `capabilities_injected` event appears in the observability stream.
 
 ---
 
