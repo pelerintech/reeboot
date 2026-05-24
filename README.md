@@ -110,15 +110,23 @@ Full documentation lives at **[docs.reeboot.dev](https://docs.reeboot.dev)** —
 
 ---
 
-## Docker
+## Docker (full stack)
+
+Clone the repo, copy the config template, edit it, and start:
 
 ```bash
-docker run -d \
-  -v ~/.reeboot:/home/reeboot/.reeboot \
-  -p 3000:3000 \
-  --name reeboot \
-  reeboot/reeboot:latest
+git clone <repo>
+cd reeboot
+cp config.example.json ./data/config.json
+# edit config.json with your provider, model, and API key
+docker compose up -d
 ```
+
+Visit `http://<host>:3000` for WebChat. The full stack includes reeboot,
+SearXNG (web search), and Signal CLI. Caddy is available (commented out
+in the compose file) for automatic HTTPS when you have a domain.
+
+See [docs/deployment/docker.md](docs/deployment/docker.md) for details.
 
 ---
 

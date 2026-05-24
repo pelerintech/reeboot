@@ -9,37 +9,24 @@ const mockScheduler = {
   stop: vi.fn(),
 };
 
-const noopScheduler = {
-  registerJob: vi.fn(),
-  cancelJob: vi.fn(),
-  start: vi.fn(),
-  stop: vi.fn(),
-};
-
 vi.mock('../../src/scheduler-registry.js', () => ({
   globalScheduler: mockScheduler,
-  noopScheduler: noopScheduler,
   setGlobalScheduler: vi.fn((s: any) => {
     Object.assign(mockScheduler, s);
   }),
 }));
 
-const { makeMemoryExtension } = await import('../../src/extensions/memory-manager.js');
+const { makeMemoryExtension, registerServerJobs } = await import('../../src/extensions/memory-manager.js');
 
-describe('memory consolidation scheduler race condition', () => {
+describe('memory consolidation — registerServerJobs', () => {
   beforeEach(() => {
     registerJobSpy.mockClear();
   });
 
   it('does NOT register consolidation job at extension load time', () => {
-    const handlers: Record<string, Array<(event: any) => any>> = {};
     const mockPi = {
-      on: vi.fn((event: string, handler: (event: any) => any) => {
-        if (!handlers[event]) handlers[event] = [];
-        handlers[event].push(handler);
-      }),
+      on: vi.fn(),
       registerTool: vi.fn(),
-      _handlers: handlers,
     };
 
     makeMemoryExtension(mockPi as any, {
@@ -53,31 +40,13 @@ describe('memory consolidation scheduler race condition', () => {
     expect(registerJobSpy).not.toHaveBeenCalled();
   });
 
-  it('registers consolidation job on session_start after scheduler is set', async () => {
-    const handlers: Record<string, Array<(event: any) => any>> = {};
-    const mockPi = {
-      on: vi.fn((event: string, handler: (event: any) => any) => {
-        if (!handlers[event]) handlers[event] = [];
-        handlers[event].push(handler);
-      }),
-      registerTool: vi.fn(),
-      _handlers: handlers,
-    };
-
-    makeMemoryExtension(mockPi as any, {
+  it('registers consolidation job via registerServerJobs when enabled', () => {
+    registerServerJobs({} as any, mockScheduler as any, {
       memory: {
         enabled: true,
         consolidation: { enabled: true, schedule: '0 2 * * *' },
       },
     });
-
-    // Fire session_start event
-    expect(handlers['session_start']).toBeDefined();
-    expect(handlers['session_start'].length).toBeGreaterThan(0);
-
-    for (const handler of handlers['session_start']) {
-      await handler({ reason: 'startup' });
-    }
 
     // Now the job should be registered
     expect(registerJobSpy).toHaveBeenCalledWith(
@@ -88,78 +57,24 @@ describe('memory consolidation scheduler race condition', () => {
     );
   });
 
-  it('does NOT double-register on multiple session_start events', async () => {
-    const handlers: Record<string, Array<(event: any) => any>> = {};
-    const mockPi = {
-      on: vi.fn((event: string, handler: (event: any) => any) => {
-        if (!handlers[event]) handlers[event] = [];
-        handlers[event].push(handler);
-      }),
-      registerTool: vi.fn(),
-      _handlers: handlers,
-    };
-
-    makeMemoryExtension(mockPi as any, {
-      memory: {
-        enabled: true,
-        consolidation: { enabled: true, schedule: '0 2 * * *' },
-      },
-    });
-
-    // Fire session_start twice (simulating reload)
-    for (const handler of handlers['session_start']) {
-      await handler({ reason: 'startup' });
-    }
-    for (const handler of handlers['session_start']) {
-      await handler({ reason: 'reload' });
-    }
-
-    // Should only register once
-    expect(registerJobSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('does NOT register when consolidation is disabled', async () => {
-    const handlers: Record<string, Array<(event: any) => any>> = {};
-    const mockPi = {
-      on: vi.fn((event: string, handler: (event: any) => any) => {
-        if (!handlers[event]) handlers[event] = [];
-        handlers[event].push(handler);
-      }),
-      registerTool: vi.fn(),
-      _handlers: handlers,
-    };
-
-    makeMemoryExtension(mockPi as any, {
+  it('does NOT register consolidation job via registerServerJobs when consolidation is disabled', () => {
+    registerServerJobs({} as any, mockScheduler as any, {
       memory: {
         enabled: true,
         consolidation: { enabled: false },
       },
     });
 
-    // session_start handler should not even be registered
-    expect(handlers['session_start'] ?? []).toHaveLength(0);
     expect(registerJobSpy).not.toHaveBeenCalled();
   });
 
-  it('does NOT register when memory is disabled', async () => {
-    const handlers: Record<string, Array<(event: any) => any>> = {};
-    const mockPi = {
-      on: vi.fn((event: string, handler: (event: any) => any) => {
-        if (!handlers[event]) handlers[event] = [];
-        handlers[event].push(handler);
-      }),
-      registerTool: vi.fn(),
-      _handlers: handlers,
-    };
-
-    makeMemoryExtension(mockPi as any, {
+  it('does NOT register consolidation job via registerServerJobs when memory is disabled', () => {
+    registerServerJobs({} as any, mockScheduler as any, {
       memory: {
         enabled: false,
       },
     });
 
-    // No error should be thrown, and no registration should happen
-    expect(handlers['session_start'] ?? []).toHaveLength(0);
     expect(registerJobSpy).not.toHaveBeenCalled();
   });
 });

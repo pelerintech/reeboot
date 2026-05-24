@@ -22,11 +22,11 @@ describe('createLoader (2.1)', () => {
   it('sandbox extension excluded when disabled in config', async () => {
     const { createLoader, getBundledFactories } = await import('@src/extensions/loader.js');
     // With sandbox=false the factories list should not include sandbox
-    const factories = getBundledFactories({
+    const factories = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {
       extensions: { core: { sandbox: false, confirm_destructive: true, protected_paths: true, git_checkpoint: false } }
     } as any);
     // sandbox factory is at index 0 when enabled; with sandbox=false length should be one less
-    const allFactories = getBundledFactories({
+    const allFactories = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {
       extensions: { core: { sandbox: true, confirm_destructive: true, protected_paths: true, git_checkpoint: false } }
     } as any);
     expect(factories.length).toBe(allFactories.length - 1);
@@ -34,8 +34,8 @@ describe('createLoader (2.1)', () => {
 
   it('git_checkpoint excluded by default', async () => {
     const { getBundledFactories } = await import('@src/extensions/loader.js');
-    const withDefault = getBundledFactories({} as any);
-    const withGit = getBundledFactories({
+    const withDefault = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {} as any);
+    const withGit = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {
       extensions: { core: { git_checkpoint: true } }
     } as any);
     expect(withGit.length).toBe(withDefault.length + 1);
@@ -57,8 +57,8 @@ describe('createLoader (2.1)', () => {
 
   it('mcp-manager factory included by default', async () => {
     const { getBundledFactories } = await import('@src/extensions/loader.js');
-    const withMcp = getBundledFactories({} as any);
-    const withoutMcp = getBundledFactories({
+    const withMcp = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {} as any);
+    const withoutMcp = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {
       extensions: { core: { mcp: false } }
     } as any);
     expect(withMcp.length).toBe(withoutMcp.length + 1);
@@ -66,15 +66,15 @@ describe('createLoader (2.1)', () => {
 
   it('mcp-manager factory excluded when extensions.core.mcp is false', async () => {
     const { getBundledFactories } = await import('@src/extensions/loader.js');
-    const withMcp = getBundledFactories({ extensions: { core: { mcp: true } } } as any);
-    const withoutMcp = getBundledFactories({ extensions: { core: { mcp: false } } } as any);
+    const withMcp = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, { extensions: { core: { mcp: true } } } as any);
+    const withoutMcp = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, { extensions: { core: { mcp: false } } } as any);
     expect(withoutMcp.length).toBe(withMcp.length - 1);
   });
 
   it('injection-guard factory included by default', async () => {
     const { getBundledFactories } = await import('@src/extensions/loader.js');
-    const withGuard = getBundledFactories({} as any);
-    const withoutGuard = getBundledFactories({
+    const withGuard = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {} as any);
+    const withoutGuard = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {
       extensions: { core: { injection_guard: false } }
     } as any);
     expect(withGuard.length).toBe(withoutGuard.length + 1);
@@ -82,8 +82,8 @@ describe('createLoader (2.1)', () => {
 
   it('injection-guard factory excluded when extensions.core.injection_guard is false', async () => {
     const { getBundledFactories } = await import('@src/extensions/loader.js');
-    const withGuard = getBundledFactories({ extensions: { core: { injection_guard: true } } } as any);
-    const withoutGuard = getBundledFactories({ extensions: { core: { injection_guard: false } } } as any);
+    const withGuard = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, { extensions: { core: { injection_guard: true } } } as any);
+    const withoutGuard = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, { extensions: { core: { injection_guard: false } } } as any);
     expect(withoutGuard.length).toBe(withGuard.length - 1);
   });
 
@@ -98,7 +98,7 @@ describe('createLoader (2.1)', () => {
 
     const { getBundledFactories } = await import('@src/extensions/loader.js');
     const config = { search: { provider: 'duckduckgo' } } as any;
-    const factories = getBundledFactories(config);
+    const factories = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, config);
 
     // Invoke all factories
     for (const factory of factories) {
@@ -112,7 +112,7 @@ describe('createLoader (2.1)', () => {
 
   it('capabilities factory is included in bundled factories', async () => {
     const { getBundledFactories } = await import('@src/extensions/loader.js');
-    const factories = getBundledFactories({} as any);
+    const factories = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, {} as any);
 
     // The capabilities factory should be present (always loaded, no feature flag)
     // We verify by checking that invoking all factories with a mock pi that

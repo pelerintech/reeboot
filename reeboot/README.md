@@ -22,14 +22,13 @@ reeboot init
 
 Run `reeboot init` once after installing. The setup wizard walks you through:
 
-1. **Deployment** — native (default) or Docker (coming soon)
-2. **Provider** — local-first: Ollama, llama.cpp, LM Studio, Custom endpoint, or cloud: Anthropic, OpenAI, Google, Groq, Mistral, xAI, OpenRouter
-3. **API key** — for cloud providers (skipped for local)
-4. **Model** — fetched live from the provider API, with a static fallback list; every menu has an "Enter custom value..." escape hatch
-5. **Agent name** — defaults to `Reeboot`
-6. **Channels** — optionally link WhatsApp or Signal inline
-7. **Web search** — choose a search backend (DuckDuckGo, Brave, Tavily, Serper, Exa, SearXNG, or none)
-8. **Start now?** — optionally launch the agent immediately after setup
+1. **Provider** — local-first: Ollama, llama.cpp, LM Studio, Custom endpoint, or cloud: Anthropic, OpenAI, Google, Groq, Mistral, xAI, OpenRouter
+2. **API key** — for cloud providers (skipped for local)
+3. **Model** — fetched live from the provider API, with a static fallback list; every menu has an "Enter custom value..." escape hatch
+4. **Agent name** — defaults to `Reeboot`
+5. **Channels** — optionally link WhatsApp or Signal inline
+6. **Web search** — choose a search backend (DuckDuckGo, Brave, Tavily, Serper, Exa, SearXNG, or none)
+7. **Start now?** — optionally launch the agent immediately after setup
 
 Config is saved to `~/.reeboot/config.json`. If you exit early, nothing is saved.
 
@@ -177,10 +176,26 @@ npm run build     # compile TypeScript → dist/
 
 ---
 
+## Docker
+
+For deployments on bare machines with nothing but Docker installed — a separate,
+CLI-independent deployment path:
+
+```bash
+git clone <repo>
+cd reeboot
+cp config.example.json ./data/config.json
+# edit config.json with your provider, model, and API key
+docker compose up -d
+```
+
+The full stack includes reeboot, SearXNG (web search), and Signal CLI. Caddy is
+available (commented out) for automatic HTTPS when you have a domain. See the
+[root README Docker section](../README.md#docker-full-stack) for details.
+
 ## Links
 
 - 📦 [npm](https://www.npmjs.com/package/reeboot)
-- 🐳 [Docker Hub](https://hub.docker.com/r/reeboot/reeboot)
 - 📖 [Full docs](../docs/)
 - 🗒️ [Changelog](../CHANGELOG.md)
 

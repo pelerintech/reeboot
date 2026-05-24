@@ -289,6 +289,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
         _scheduler = schedulerInstance;
         getLogger().info({ component: 'server' }, '[server] Scheduler started');
 
+        // ── Bootstrap server jobs ─────────────────────────────────
+        const { bootstrapServerJobs } = await import('./bootstrap.js');
+        bootstrapServerJobs(db, schedulerInstance, appConfig);
+
         // ── Heartbeat init ───────────────────────────────────────────
         if (appConfig.heartbeat) {
           startHeartbeat(appConfig.heartbeat, db, bus);

@@ -30,6 +30,7 @@ import { homedir } from 'os';
 import type { AgentRunner, ContextConfig, RunnerEvent, MessageTrust } from './interface.js';
 import type { ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { Config } from '../config.js';
+import { getLogger } from '../observability/logger.js';
 
 // ─── wrapUntrustedMessage ────────────────────────────────────────────────────
 
@@ -215,6 +216,17 @@ export class PiAgentRunner implements AgentRunner {
     if (this.disposed) return;
     this.disposed = true;
     this.abort();
+    // Emit session_shutdown before nulling the session
+    if (this._session) {
+      try {
+        const extRunner = (this._session as any)._extensionRunner;
+        if (extRunner && typeof extRunner.emit === 'function') {
+          await extRunner.emit({ type: 'session_shutdown', reason: 'quit' });
+        }
+      } catch (err) {
+        getLogger().error({ component: 'pi-runner', err }, 'session_shutdown emit failed during dispose');
+      }
+    }
     // No dispose() on AgentSession in pi SDK — it persists state on its own
     this._session = null;
   }
@@ -225,6 +237,17 @@ export class PiAgentRunner implements AgentRunner {
    */
   async reset(): Promise<void> {
     this.abort();
+    // Emit session_shutdown before nulling the session
+    if (this._session) {
+      try {
+        const extRunner = (this._session as any)._extensionRunner;
+        if (extRunner && typeof extRunner.emit === 'function') {
+          await extRunner.emit({ type: 'session_shutdown', reason: 'new' });
+        }
+      } catch (err) {
+        getLogger().error({ component: 'pi-runner', err }, 'session_shutdown emit failed during reset');
+      }
+    }
     this._session = null;
     this.disposed = false;
     this._toolCallHookRegistered = false; // re-register guard on next session
@@ -335,6 +358,11 @@ export class PiAgentRunner implements AgentRunner {
     }
 
     const { session } = await createAgentSession(sessionOpts);
+    await session.bindExtensions({
+      shutdownHandler: () => {
+        this.reset().catch(() => {});
+      },
+    });
     this._session = session;
     return session;
   }

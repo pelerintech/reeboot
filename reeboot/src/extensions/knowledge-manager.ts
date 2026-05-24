@@ -170,13 +170,15 @@ export interface KnowledgeExtensionOptions {
 
 /**
  * Core extension factory. Accepts optional directory overrides for tests.
+ * Config and db are passed explicitly by the loader — no phantom pi.getXxx() calls.
  */
 export function makeKnowledgeExtension(
   pi: ExtensionAPI,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  config: any = {},
+  db?: Database.Database,
   options?: KnowledgeExtensionOptions
 ): void {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const config = (pi as any).getConfig?.() ?? {};
   const knowledgeConfig: KnowledgeConfig = config.knowledge ?? {
     enabled: false,
     embeddingModel: 'nomic-ai/nomic-embed-text-v1.5',
@@ -196,10 +198,6 @@ export function makeKnowledgeExtension(
   // Init directories
   initKnowledgeDirs(rawDir, wikiEnabled ? wikiDir : undefined);
 
-  // Resolve db early — needed for sqlite-vec extension loading and schema migration
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (pi as any).getDb?.() as Database.Database | undefined;
-
   // Load sqlite-vec extension and run knowledge schema migration
   // (gated on knowledge.enabled — only runs when this extension is active)
   if (db) {
@@ -209,18 +207,7 @@ export function makeKnowledgeExtension(
 
   // Lint scheduled task (when wiki is enabled)
   if (wikiEnabled) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const scheduler = (pi as any).getScheduler?.();
-    if (scheduler) {
-      scheduler.registerJob({
-        id: '__knowledge_lint__',
-        contextId: 'main',
-        schedule: knowledgeConfig.wiki?.lint?.schedule ?? '0 9 * * 1',
-        prompt:
-          '__knowledge_lint__: Run a knowledge wiki lint pass. ' +
-          'Use the knowledge_lint tool to health-check the wiki and report findings via the owner channel.',
-      });
-    }
+    // Scheduler job registration moved to registerServerJobs — no phantom getScheduler call
   }
 
   // File watcher
@@ -602,5 +589,30 @@ export function makeKnowledgeExtension(
 // ─── Default export ───────────────────────────────────────────────────────────
 
 export default function knowledgeManagerExtension(pi: ExtensionAPI): void {
-  makeKnowledgeExtension(pi);
+  makeKnowledgeExtension(pi, {});
+}
+
+// ─── Server jobs registration ────────────────────────────────────────────────
+
+/**
+ * Registers background cron jobs for the knowledge manager.
+ * Called by bootstrap.ts at server start, after the scheduler is ready.
+ */
+export function registerServerJobs(
+  _db: Database.Database,
+  scheduler: { registerJob(task: { id: string; contextId: string; schedule: string; prompt: string }): void },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  config: any
+): void {
+  const knowledgeConfig = config.knowledge;
+  if (!knowledgeConfig?.enabled || !knowledgeConfig?.wiki?.enabled) return;
+
+  scheduler.registerJob({
+    id: '__knowledge_lint__',
+    contextId: 'main',
+    schedule: knowledgeConfig.wiki?.lint?.schedule ?? '0 9 * * 1',
+    prompt:
+      '__knowledge_lint__: Run a knowledge wiki lint pass. ' +
+      'Use the knowledge_lint tool to health-check the wiki and report findings via the owner channel.',
+  });
 }

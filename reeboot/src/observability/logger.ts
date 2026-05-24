@@ -97,7 +97,8 @@ function createDbStream(db: Database): Writable {
                   component: _c, context_id: _ci, contextId: _ciA, ...rest } = record;
           const payload = Object.keys(rest).length > 0 ? JSON.stringify(rest) : null;
           try {
-            stmt.run(level, msg, component, contextId, payload);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (stmt as any).run(level, msg, component, contextId, payload);
           } catch {
             // Ignore individual write errors — don't crash the logger
           }

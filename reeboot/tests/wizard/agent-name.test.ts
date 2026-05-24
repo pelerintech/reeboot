@@ -38,7 +38,7 @@ describe('scaffoldSetup agent name substitution', () => {
     }))
 
     const { FakePrompter } = await import('../helpers/fake-prompter.js')
-    const prompter = new FakePrompter(['native', false]) // deployment + decline start-now
+    const prompter = new FakePrompter([false]) // decline start-now
     const configPath = join(tmpDir, 'config.json')
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
@@ -97,7 +97,7 @@ describe('scaffoldSetup always overwrites AGENTS.md on re-run', () => {
     writeFileSync(agentsMd, '# Ree — Personal Assistant\n\nYou are Ree', 'utf-8')
 
     const { FakePrompter } = await import('../helpers/fake-prompter.js')
-    const prompter = new FakePrompter(['native', false])
+    const prompter = new FakePrompter([false])
     const configPath = join(tmpDir, 'config-nova.json')
 
     const { runSetupWizard } = await import('@src/wizard/index.js')

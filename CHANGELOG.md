@@ -7,7 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [2.4.0]
+
+### Added
+
+- **Docker Compose full-stack deployment** — new `docker-compose.yml` at repo root defines the complete stack (reeboot, searxng, signal-cli, caddy). Caddy is commented out by default for opt-in HTTPS. All services can be commented out individually. Clone the repo, copy `config.example.json` to `./data/config.json`, edit, and `docker compose up -d` — no Node.js, npm, or `reeboot` CLI required on the host. Bind mount `./data:/home/reeboot/.reeboot` persists config, DB, memories, and sessions across restarts and image rebuilds. Compatible with orchestrators like Coolify (bind mount + build directive).
+- **`config.example.json`** at repo root — documented config template with every ConfigSchema key, populated with defaults and inline `"$comment"` documentation keys. Docker DNS names used (`search.searxngBaseUrl: "http://searxng:8080"`, `channels.signal.apiPort: 8080`). Valid JSON — `JSON.parse` and `ConfigSchema.parse()` both accept it directly, so the user can literally `cp config.example.json ./data/config.json` and start.
+- **`.dockerignore`** at repo root — excludes `node_modules/`, `.git/`, `data/`, `dist/`, and `*.tgz` from the Docker build context, reducing build time and preventing accidental secrets-in-image.
+- **Docker deployment documentation in both READMEs** — root `README.md` now describes the `git clone → cp config.example.json ./data/config.json → docker compose up -d` flow instead of a non-existent Docker Hub image. `reeboot/README.md` has a new `## Docker` section referencing the compose path and linking to the root README.
+
+- **`src/bootstrap.ts` — centralised server job registration** — a single `bootstrapServerJobs(db, scheduler, config)` function owns the authoritative list of background cron jobs to register at boot. Called from `server.ts` immediately after `setGlobalScheduler()`. Adding a new background job now means exporting a `registerServerJobs()` from the extension file and adding one call in `bootstrap.ts` — nothing else.
+
+### Changed
+
+- **Dockerfile: `ENV PATH` includes `node_modules/.bin`** — added `ENV PATH="/home/reeboot/node_modules/.bin:$PATH"` after `WORKDIR` in `reeboot/container/Dockerfile`. Both `npx reeboot` and direct `reeboot` CLI calls now work inside the container without path prefixing.
+- **`.gitignore`: `data/` added to Runtime data section** — user config, DB, and state under `./data/` are never accidentally committed.
+- **Root README: removed non-existent Docker Hub image link** — the `reeboot/reeboot:latest` image reference and `hub.docker.com/r/reeboot/reeboot` link are gone. Replaced with the docker-compose deployment flow.
+- **Reeboot README: removed Docker Hub link from Links section** — npm, docs, and changelog links preserved. Setup wizard step numbering updated to start from "1. **Provider**" instead of "1. **Deployment** — native (default) or Docker (coming soon)".
+- **Setup wizard: removed Docker deployment choice** — `reeboot init` no longer asks "Native or Docker?" as its first step. The wizard starts directly with provider selection. Docker is a separate documented path, not a wizard branch.
+
+### Fixed
+
+- **`docker-compose.yml` build directive corrected** — the design specified `context: .` (repo root) with `dockerfile: container/Dockerfile`, but the actual repo layout places the Dockerfile at `reeboot/container/Dockerfile` and the repo root has no `package.json`. Fixed to `context: reeboot/` with `dockerfile: container/Dockerfile`, matching the actual file structure and giving the Dockerfile's `COPY package*.json ./` a valid source.
+
+- **Background jobs never registered on cold start** — `__memory_consolidation__` and `__knowledge_lint__` were previously wired to `session_start`, an event that only fires when `bindExtensions()` is called — which reeboot never did. Both jobs are now registered via `registerServerJobs()` exported from their respective extensions (`memory-manager.ts`, `knowledge-manager.ts`) and called from `bootstrapServerJobs()` at server start, before any user session exists. Jobs appear in the `tasks` table within seconds of startup with correct `status='active'` and computed `next_run`. Registrations are idempotent (survive server restart); failures in one registration do not block others.
+
+- **Session lifecycle events never fired** — `session_start` and `session_shutdown` are pi SDK events that only emit when `AgentSession.bindExtensions()` is called. `PiAgentRunner._getOrCreateSession()` now calls `session.bindExtensions({ shutdownHandler })` after session creation, so bundled and user-defined extensions receive `session_start` on every new session. `reset()` emits `session_shutdown` with `reason: 'new'`; `dispose()` emits with `reason: 'quit'`. The `shutdownHandler` bridges pi-internal `ctx.shutdown()` calls to the runner's `reset()` path. When `emitSessionShutdownEvent` throws, the error is caught and logged, and `_session` is still nulled (teardown always completes).
+
+- **`knowledge-manager` was completely dead** — the extension tried to access config, db, and scheduler via phantom `(pi as any).getConfig?.()`, `(pi as any).getDb?.()`, `(pi as any).getScheduler?.()` — none of which exist on the real `ExtensionAPI`. The extension exited immediately, registering nothing. Fixed: `makeKnowledgeExtension(pi, config, db?)` now receives config and db as explicit arguments from the loader. When `knowledge.enabled: true`, `knowledge_search`, `knowledge_ingest`, and wiki tools (`knowledge_file`, `knowledge_lint`) are now correctly registered. The file watcher starts on the raw knowledge directory. `loadVecExtension(db)` and `runKnowledgeMigration(db)` are called when db is provided.
+
+- **`session_search` crashed silently in production** — used `require()` inside an ESM module (`"type": "module"`), throwing `ReferenceError` at runtime. The error was caught and swallowed as "Database not available". Fixed: uses ESM-compatible `await import('../db/index.js')`. When the DB is genuinely unavailable, returns `{ results: [], error: 'Database not available' }` gracefully without an unhandled exception.
+
+- **`budget-manager` got wrong workspace path** — the loader was passing `process.cwd()` (the reeboot package root at startup) instead of the context's actual workspace path. `getBundledFactories(context, config)` now receives `ContextConfig` as its first argument and passes `{ workspacePath: context.workspacePath, config }` to `makeBudgetManagerExtension`. `.task_budget.json` writes now go to the correct context workspace directory.
+
+- **`scheduler-registry` had no deferred queue** — any `registerJob()` call that raced startup (before `setGlobalScheduler()`) was silently dropped into the `noopScheduler` stub with no recovery. The registry now maintains a `_pending` array; jobs registered before the real scheduler is set are queued and drained in registration order when `setGlobalScheduler()` fires. Once the real scheduler is set, jobs forward immediately. Calling `setGlobalScheduler()` a second time does not re-deliver already-drained jobs.
 
 ## [2.3.0] - 2026-05-22
 

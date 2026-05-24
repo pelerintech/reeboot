@@ -34,7 +34,7 @@ const BUNDLED_SKILLS_DIR = join(PACKAGE_ROOT, 'skills');
 // Returns the list of bundled ExtensionFactory functions based on config toggles.
 // Exported for testing.
 
-export function getBundledFactories(config: Config): ExtensionFactory[] {
+export function getBundledFactories(context: ContextConfig, config: Config): ExtensionFactory[] {
   const core = config?.extensions?.core ?? {};
 
   // Defaults (matching ConfigSchema defaults)
@@ -167,16 +167,13 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
 
   // Budget manager — always loaded (no feature flag).
   // Registers set_budget, check_budget, budget_status tools and turn_end/agent_end hooks.
-  // Workspace path derived from ctx.cwd at registration time.
   factories.push(async (pi) => {
     const mod = await importExt('budget-manager');
     if (mod?.makeBudgetManagerExtension) {
       const { getDb } = await import('../db/index.js');
       try {
         const db = getDb();
-        // Use the DB to get the workspace path; cwd is passed via pi context
-        // The factory uses process.cwd() as the workspacePath (same as default export)
-        mod.makeBudgetManagerExtension(pi, { workspacePath: process.cwd(), config });
+        mod.makeBudgetManagerExtension(pi, { workspacePath: context.workspacePath, config });
       } catch {
         // If DB not available, fall back to default export
         if (mod?.default) mod.default(pi);
@@ -218,7 +215,18 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
   if (knowledgeEnabled) {
     factories.push(async (pi) => {
       const mod = await importExt('knowledge-manager');
-      if (mod?.default) await (mod.default as any)(pi);
+      if (mod?.makeKnowledgeExtension) {
+        const { getDb } = await import('../db/index.js');
+        try {
+          const db = getDb();
+          mod.makeKnowledgeExtension(pi, config, db);
+        } catch {
+          // DB not available — call without DB
+          mod.makeKnowledgeExtension(pi, config);
+        }
+      } else if (mod?.default) {
+        await (mod.default as any)(pi);
+      }
     });
   }
 
@@ -229,7 +237,7 @@ export function getBundledFactories(config: Config): ExtensionFactory[] {
 
 export function createLoader(context: ContextConfig, config: Config): ResourceLoader {
   const agentDir = join(homedir(), '.reeboot', 'agent');
-  const extensionFactories = getBundledFactories(config);
+  const extensionFactories = getBundledFactories(context, config);
 
   // For sandbox, use additionalExtensionPaths so DefaultResourceLoader handles it
   const additionalExtensionPaths: string[] = [];

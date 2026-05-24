@@ -23,6 +23,7 @@ node_modules/.vite/
 .env
 .env.local
 .env.*.local
+data/
 
 # ─── reeboot runtime dirs (created at first run, user-specific) ───────────────
 # ~/.reeboot/ lives outside the repo, but guard against accidental inclusion

@@ -1,0 +1,74 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Reeboot Docker Compose — full stack
+#
+# Usage:
+#   cp config.example.json ./data/config.json
+#   # Edit config.json with your provider, model, API key
+#   docker compose up -d
+#
+# Visit http://<host>:3000 for WebChat.
+#
+# To stop:  docker compose down
+# To view logs: docker compose logs -f
+#
+# Services (comment out any you don't need):
+#   - reeboot      the agent (built locally, no image pull)
+#   - searxng      web search backend
+#   - signal-cli   Signal channel backend
+#   - caddy        reverse proxy with automatic TLS (commented out by default)
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Reeboot Agent ──────────────────────────────────────────────────────────
+  reeboot:
+    build:
+      context: reeboot/
+      dockerfile: container/Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/home/reeboot/.reeboot
+    environment:
+      - REEBOOT_HOST=0.0.0.0
+    restart: unless-stopped
+
+  # ── SearXNG — privacy-respecting web search ────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/searxng:/etc/searxng
+    restart: unless-stopped
+
+  # ── Signal CLI REST API — Signal channel backend ───────────────────────────
+  signal-cli:
+    image: bbernhard/signal-cli-rest-api:latest
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./data/signal-cli:/home/.local/share/signal-cli
+    restart: unless-stopped
+
+  # ── Caddy — automatic HTTPS reverse proxy (opt-in) ─────────────────────────
+  # Uncomment when you have a domain and want automatic TLS.
+  # Prerequisites:
+  #   1. Point your domain's DNS to this server's IP
+  #   2. Create a Caddyfile next to docker-compose.yml:
+  #        your-domain.com {
+  #          reverse_proxy reeboot:3000
+  #        }
+  #   3. Caddy will auto-provision TLS via Let's Encrypt
+  #
+  #  # caddy:
+  #  #   image: caddy:latest
+  #  #   ports:
+  #  #     - "80:80"
+  #  #     - "443:443"
+  #  #   volumes:
+  #  #     - ./Caddyfile:/etc/caddy/Caddyfile
+  #  #     - caddy_data:/data
+  #  #   restart: unless-stopped
+
+# volumes:
+#   caddy_data:

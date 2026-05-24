@@ -34,8 +34,9 @@ describe('budget-manager wired into getBundledFactories', () => {
       on: () => {},
     };
 
-    const factories = getBundledFactories({
-      ...defaultConfig,
+    const factories = getBundledFactories(
+      { id: 'test', workspacePath: '/tmp' } as any,
+      {
       extensions: {
         core: {
           ...defaultConfig.extensions.core,

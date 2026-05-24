@@ -23,6 +23,7 @@ RUN if id -u 1000 >/dev/null 2>&1; then \
 
 USER reeboot
 WORKDIR /home/reeboot
+ENV PATH="/home/reeboot/node_modules/.bin:$PATH"
 
 # Copy built output and runtime assets from builder
 COPY --from=builder --chown=reeboot:reeboot /app/dist ./dist

@@ -78,14 +78,14 @@ describe('memory integration — extension loader', () => {
       extensions: { core: {} },
       memory: { enabled: true, memoryCharLimit: 2200, userCharLimit: 1375, consolidation: { enabled: false, schedule: '0 2 * * *' } },
     } as any;
-    const factoriesEnabled = getBundledFactories(configEnabled).length;
+    const factoriesEnabled = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, configEnabled).length;
 
     // memory.enabled=false — factory count must be the same (session_search always-on)
     const configDisabled = {
       extensions: { core: {} },
       memory: { enabled: false, memoryCharLimit: 2200, userCharLimit: 1375, consolidation: { enabled: false, schedule: '0 2 * * *' } },
     } as any;
-    const factoriesDisabled = getBundledFactories(configDisabled).length;
+    const factoriesDisabled = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, configDisabled).length;
 
     expect(factoriesEnabled).toBe(factoriesDisabled);
     // And the list is non-trivially long (all core extensions are included)

@@ -23,7 +23,7 @@ import {
 import { join } from 'path';
 import { homedir } from 'os';
 import type Database from 'better-sqlite3';
-import { globalScheduler, noopScheduler } from '../scheduler-registry.js';
+import type { SchedulerToolsTarget } from '../scheduler.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -537,6 +537,31 @@ export async function runConsolidation(opts: ConsolidationOptions): Promise<void
   }
 }
 
+// ─── Server jobs registration ────────────────────────────────────────────────
+
+/**
+ * Registers background cron jobs for the memory manager.
+ * Called by bootstrap.ts at server start, after the scheduler is ready.
+ */
+export function registerServerJobs(
+  _db: Database.Database,
+  scheduler: SchedulerToolsTarget,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  config: any
+): void {
+  const memoryConfig = config.memory;
+  if (!memoryConfig?.enabled || !memoryConfig?.consolidation?.enabled) return;
+
+  scheduler.registerJob({
+    id: '__memory_consolidation__',
+    contextId: 'main',
+    schedule: memoryConfig.consolidation.schedule ?? '0 2 * * *',
+    prompt:
+      '__memory_consolidation__: Run the memory consolidation process. ' +
+      'Analyse recent conversations and update MEMORY.md and USER.md with new insights.',
+  });
+}
+
 // ─── Extension factory (testable) ────────────────────────────────────────────
 
 /**
@@ -563,30 +588,7 @@ export function makeMemoryExtension(
     initMemoryFiles(memoriesDir);
   }
 
-  // ── Consolidation task registration ─────────────────────────────────────
-  // Register on session_start (not at extension load time) to avoid the
-  // race condition where globalScheduler is still noopScheduler.
-  let _consolidationRegistered = false;
 
-  if (memoryConfig.enabled && memoryConfig.consolidation?.enabled) {
-    pi.on('session_start', () => {
-      if (_consolidationRegistered) return;
-
-      const scheduler = globalScheduler;
-      // Only register if the real scheduler is available (not noopScheduler)
-      if (scheduler && scheduler !== noopScheduler) {
-        scheduler.registerJob({
-          id: '__memory_consolidation__',
-          contextId: 'main',
-          schedule: memoryConfig.consolidation.schedule ?? '0 2 * * *',
-          prompt:
-            '__memory_consolidation__: Run the memory consolidation process. ' +
-            'Analyse recent conversations and update MEMORY.md and USER.md with new insights.',
-        });
-        _consolidationRegistered = true;
-      }
-    });
-  }
 
   const paths: MemoryFilePaths = {
     memoryPath: join(memoriesDir, 'MEMORY.md'),
@@ -629,9 +631,14 @@ export function makeMemoryExtension(
     }),
     execute: async (_id, params) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { getDb } = require('../db/index.js') as typeof import('../db/index.js');
-      const db: Database.Database | undefined = (() => { try { return getDb(); } catch { return undefined; } })();
+      const db: Database.Database | undefined = await (async () => {
+        try {
+          const { getDb } = await import('../db/index.js');
+          return getDb();
+        } catch {
+          return undefined;
+        }
+      })();
       if (!db) {
         return { content: [{ type: 'text' as const, text: JSON.stringify({ results: [], error: 'Database not available' }) }], details: {} };
       }

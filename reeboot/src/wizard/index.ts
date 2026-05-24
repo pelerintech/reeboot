@@ -42,20 +42,7 @@ export async function runSetupWizard(opts: WizardOptions = {}): Promise<void> {
   console.log('\n🚀 Welcome to Reeboot Setup Wizard\n')
   console.log('  We\'ll guide you through setting up your AI agent in 4 steps.\n')
 
-  // ── Step 1: Deployment method ─────────────────────────────────────────────
-  const deploymentChoice = await prompter.select({
-    message: 'How do you want to run Reeboot?',
-    choices: [
-      { name: 'Native (daemon)  — run directly on this machine', value: 'native' },
-      { name: 'Docker (full stack) — containerised with Docker Compose', value: 'docker' },
-    ],
-    default: 'native',
-  })
-  if (deploymentChoice === 'docker') {
-    console.log('\n  Docker support coming soon. Continuing with native setup.\n')
-  }
-
-  // ── Step 2: Provider ──────────────────────────────────────────────────────
+  // ── Step 1: Provider ──────────────────────────────────────────────────────
   const { runProviderStep } = await import('./steps/provider.js')
   const providerResult = await runProviderStep({ prompter, configDir })
 

@@ -84,7 +84,7 @@ describe('knowledge integration — loader wiring', () => {
       },
     };
 
-    const factories = getBundledFactories(config as any);
+    const factories = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, config as any);
     // Each factory is a function — we check that registering with knowledge.enabled
     // adds one more factory compared to disabled
     const configDisabled = {
@@ -94,7 +94,7 @@ describe('knowledge integration — loader wiring', () => {
         enabled: false,
       },
     };
-    const factoriesDisabled = getBundledFactories(configDisabled as any);
+    const factoriesDisabled = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, configDisabled as any);
 
     expect(factories.length).toBeGreaterThan(factoriesDisabled.length);
   });

@@ -1,0 +1,47 @@
+# ─── Node / npm ───────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+*.tgz
+
+# ─── Runtime data (never send to Docker daemon) ───────────────────────────────
+data/
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Git ──────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+
+# ─── Build output ─────────────────────────────────────────────────────────────
+dist/
+
+# ─── Test / coverage ──────────────────────────────────────────────────────────
+coverage/
+tests/
+*.test.ts
+
+# ─── CI / GitHub ──────────────────────────────────────────────────────────────
+.github/
+
+# ─── OS artefacts ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ─── Editor / IDE ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+
+# ─── Docs / research / planning (not needed at runtime) ───────────────────────
+docs/
+openspec/
+reespec/
+research_*
+*.md
+!README.md

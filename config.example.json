@@ -1,0 +1,168 @@
+{
+  "$comment": "Reeboot configuration template. Copy to ./data/config.json, edit, and run docker compose up -d.",
+  "$comment_agent": "Agent identity and model configuration.",
+  "agent": {
+    "name": "Reeboot",
+    "runner": "pi",
+    "model": {
+      "authMode": "own",
+      "$comment_authMode": "\"own\" = use provider/API key below. \"pi\" = delegate to an existing pi installation.",
+      "provider": "",
+      "$comment_provider": "anthropic | openai | google | groq | mistral | xai | openrouter | ollama | llamacpp | lmstudio | custom",
+      "id": "",
+      "$comment_model": "Model ID, e.g. \"claude-sonnet-4-20250514\" or \"llama3.1:8b\"",
+      "apiKey": "",
+      "$comment_apiKey": "API key for cloud providers. Leave empty for local/Ollama."
+    },
+    "turnTimeout": 300000
+  },
+  "$comment_channels": "Communication channels. Each can be enabled/disabled independently.",
+  "channels": {
+    "web": {
+      "enabled": true,
+      "port": 3000,
+      "$comment_port": "Port for the built-in WebChat UI and API.",
+      "trust": "owner",
+      "trusted_senders": []
+    },
+    "whatsapp": {
+      "enabled": false,
+      "$comment_whatsapp": "Run 'docker compose exec reeboot npx reeboot channels login whatsapp' to link.",
+      "owner_id": "",
+      "owner_only": true,
+      "trust": "end-user",
+      "trusted_senders": []
+    },
+    "signal": {
+      "enabled": false,
+      "$comment_signal": "Requires the signal-cli container in docker-compose. port 8080 is the container's internal port.",
+      "phoneNumber": "",
+      "apiPort": 8080,
+      "pollInterval": 1000,
+      "owner_id": "",
+      "owner_only": true,
+      "trust": "end-user",
+      "trusted_senders": []
+    }
+  },
+  "$comment_search": "Web search backend configuration.",
+  "search": {
+    "provider": "none",
+    "$comment_search_provider": "none | duckduckgo | brave | tavily | serper | exa | searxng",
+    "apiKey": "",
+    "searxngBaseUrl": "http://searxng:8080",
+    "$comment_searxng": "Docker DNS name. searxng:8080 points to the searxng container in docker-compose."
+  },
+  "$comment_memory": "Persistent memory (MEMORY.md + USER.md). On by default.",
+  "memory": {
+    "enabled": true,
+    "memoryCharLimit": 2200,
+    "userCharLimit": 1375,
+    "consolidation": {
+      "enabled": true,
+      "schedule": "0 2 * * *"
+    }
+  },
+  "$comment_knowledge": "Domain knowledge corpus (local RAG). Off by default.",
+  "knowledge": {
+    "enabled": false,
+    "embeddingModel": "nomic-ai/nomic-embed-text-v1.5",
+    "dimensions": 768,
+    "chunkSize": 512,
+    "chunkOverlap": 64,
+    "wiki": {
+      "enabled": false,
+      "lint": { "schedule": "0 9 * * 1" }
+    }
+  },
+  "$comment_budget": "Token and cost limits. All null = no limits.",
+  "budget": {
+    "daily_tokens": null,
+    "daily_cost_usd": null,
+    "session_tokens": null,
+    "session_cost_usd": null,
+    "turn_tokens": null,
+    "turn_cost_usd": null,
+    "warn_threshold": 0.8
+  },
+  "$comment_resilience": "Crash recovery and outage handling.",
+  "resilience": {
+    "recovery": {
+      "mode": "safe_only",
+      "side_effect_tools": []
+    },
+    "scheduler": { "catchup_window": "1h" },
+    "outage_threshold": 3,
+    "probe_interval": "1h"
+  },
+  "$comment_logging": "Logging configuration.",
+  "logging": {
+    "level": "info",
+    "rate_limit_warn_threshold": 5000,
+    "retention_days": 30
+  },
+  "$comment_heartbeat": "System heartbeat (periodic task check).",
+  "heartbeat": {
+    "enabled": false,
+    "interval": "every 5m",
+    "contextId": "main"
+  },
+  "$comment_skills": "Skill manager configuration.",
+  "skills": {
+    "permanent": [],
+    "ephemeral_ttl_minutes": 60,
+    "catalog_path": ""
+  },
+  "$comment_mcp": "MCP (Model Context Protocol) servers.",
+  "mcp": {
+    "servers": []
+  },
+  "$comment_permissions": "Permission violation handling.",
+  "permissions": {
+    "violations": { "log": true }
+  },
+  "$comment_security": "Security configuration (injection guard).",
+  "security": {
+    "injection_guard": {
+      "enabled": true,
+      "external_source_tools": ["fetch_url", "web_fetch"]
+    }
+  },
+  "$comment_contexts": "Multi-context routing. Default is 'main'.",
+  "contexts": [],
+  "$comment_sandbox": "Sandbox mode for tool execution.",
+  "sandbox": {
+    "mode": "os"
+  },
+  "$comment_server": "Server authentication token (optional).",
+  "server": {},
+  "$comment_extensions": "Bundled extension toggles.",
+  "extensions": {
+    "core": {
+      "sandbox": true,
+      "confirm_destructive": true,
+      "protected_paths": true,
+      "git_checkpoint": false,
+      "session_name": true,
+      "custom_compaction": true,
+      "scheduler_tool": true,
+      "token_meter": true,
+      "mcp": true,
+      "injection_guard": true
+    }
+  },
+  "$comment_routing": "Channel routing rules.",
+  "routing": {
+    "default": "main",
+    "rules": []
+  },
+  "$comment_session": "Session inactivity timeout (ms).",
+  "session": {
+    "inactivityTimeout": 14400000
+  },
+  "$comment_credentialProxy": "Credential proxy for API key delegation.",
+  "credentialProxy": {
+    "enabled": false,
+    "port": 3001
+  }
+}
