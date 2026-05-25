@@ -96,7 +96,7 @@ To disable:
 
 ## Destructive Action Confirmation
 
-The `confirm_destructive` extension (enabled by default) requires the agent to confirm before executing operations that could cause data loss (e.g. `rm -rf`, overwriting files without a backup).
+The `confirm_destructive` extension (enabled by default) detects dangerous commands before execution and blocks them. It covers destructive operations including `rm -rf`, file overwrites, `chmod 777`, `curl|sh`, SQL DROP/DELETE/TRUNCATE, `systemctl stop`, and other patterns that could cause data loss. Session operations (switch, fork) are also protected with confirmation prompts in interactive mode.
 
 To disable:
 

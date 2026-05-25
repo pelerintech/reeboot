@@ -17,6 +17,9 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createRequire } from 'module';
 import { parseHTML } from 'linkedom';
 import { getLogger } from '../observability/logger.js';
+import { isUrlSafe } from '../security/ssrf-guard.js';
+import { isDomainBlocked } from '../security/website-blocklist.js';
+import type { Config } from '../config.js';
 
 // CJS require for @mozilla/readability (it's a CommonJS module)
 const _require = createRequire(import.meta.url);
@@ -49,18 +52,88 @@ function stripTags(html: string): string {
 
 // ─── fetchAndExtract ─────────────────────────────────────────────────────────
 
-export async function fetchAndExtract(url: string): Promise<string> {
-  let res: Response;
+export async function fetchAndExtract(url: string, config?: Config): Promise<string> {
+  // Website blocklist check (cheap — no DNS)
+  const blocklist = config?.security?.website_blocklist;
+  if (blocklist?.enabled) {
+    try {
+      const hostname = new URL(url).hostname;
+      if (isDomainBlocked(hostname, blocklist)) {
+        return `Error fetching URL: URL blocked by website policy: domain '${hostname}' is in the blocklist`;
+      }
+    } catch {
+      // Invalid URL — let the fetch handle it
+    }
+  }
+
+  // SSRF guard check (may involve DNS)
+  const allowPrivate = config?.security?.allow_private_urls ?? false;
   try {
-    res = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (compatible; Reeboot/1.0; +https://github.com/mariozechner/reeboot)',
-      },
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return `Error fetching URL: ${msg}`;
+    const ssrfResult = await isUrlSafe(url, { allowPrivate });
+    if (!ssrfResult.safe) {
+      return `Error fetching URL: URL blocked by SSRF policy: ${ssrfResult.reason}`;
+    }
+  } catch {
+    // DNS error — fail closed: block the URL
+    return 'Error fetching URL: URL blocked by SSRF policy (DNS resolution failed)';
+  }
+
+  let res!: Response;
+  let currentUrl = url;
+  const maxRedirects = 10;
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    try {
+      res = await fetch(currentUrl, {
+        redirect: 'manual',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (compatible; Reeboot/1.0; +https://github.com/mariozechner/reeboot)',
+        },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Error fetching URL: ${msg}`;
+    }
+
+    // Check for redirect
+    if (res.status >= 300 && res.status < 400 && res.headers.has('location')) {
+      const location = res.headers.get('location');
+      if (!location) break;
+
+      // Resolve relative redirects
+      const redirectUrl = new URL(location, currentUrl).toString();
+
+      // Re-validate redirect target — website blocklist first (cheap)
+      if (blocklist?.enabled) {
+        try {
+          const hostname = new URL(redirectUrl).hostname;
+          if (isDomainBlocked(hostname, blocklist)) {
+            return `Error fetching URL: URL blocked by website policy (redirect target): domain '${hostname}' is in the blocklist`;
+          }
+        } catch { /* invalid URL in redirect — let it fail naturally */ }
+      }
+
+      // Re-validate redirect target — SSRF
+      try {
+        const ssrfResult = await isUrlSafe(redirectUrl, { allowPrivate });
+        if (!ssrfResult.safe) {
+          return `Error fetching URL: URL blocked by SSRF policy (redirect target): ${ssrfResult.reason}`;
+        }
+      } catch {
+        return 'Error fetching URL: URL blocked by SSRF policy (DNS resolution failed on redirect)';
+      }
+
+      currentUrl = redirectUrl;
+      continue;
+    }
+
+    // Not a redirect — process this response
+    break;
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    return `Error fetching URL: too many redirects`;
   }
 
   if (!res.ok) {
@@ -412,7 +485,7 @@ export default async function webSearchExtension(pi: ExtensionAPI, reebotConfig?
       url: Type.String({ description: 'The URL to fetch' }),
     }),
     execute: async (_id, params) => {
-      const result = await fetchAndExtract(params.url);
+      const result = await fetchAndExtract(params.url, reebotConfig);
       return {
         content: [{ type: 'text' as const, text: result }],
         details: undefined,

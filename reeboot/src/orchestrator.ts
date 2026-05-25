@@ -282,7 +282,7 @@ export class Orchestrator {
       mkdirSync(workspaceDir, { recursive: true });
       writeFileSync(
         join(workspaceDir, '.reeboot_turn_meta.json'),
-        JSON.stringify({ operationType, turnId })
+        JSON.stringify({ operationType, turnId, trust: msg.trust ?? 'owner' })
       );
     } catch { /* non-critical; skip silently */ }
     const turnStartMs = Date.now();

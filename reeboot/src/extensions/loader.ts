@@ -157,6 +157,18 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
     });
   }
 
+  // Trust-enforcer — always loaded (no feature flag).
+  // Hooks tool_call and blocks disallowed tools for end-user trust.
+  // No-op when trust is owner or no whitelist is configured.
+  factories.push(async (pi) => {
+    const mod = await importExt('trust-enforcer');
+    if (mod?.makeTrustEnforcerExtension) {
+      mod.makeTrustEnforcerExtension(pi, config);
+    } else if (mod?.default) {
+      await (mod.default as any)(pi, config);
+    }
+  });
+
   // Memory manager — always loaded so session_search is always available.
   // The extension itself gates the memory tool and system prompt injection
   // on config.memory.enabled internally.

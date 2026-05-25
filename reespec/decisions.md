@@ -1,3 +1,14 @@
+### Pi-runner injection scanner discarded modified toolResult — event.result passed instead of toolResult — 2026-05-25 (Request: security-hardening)
+
+During post-evaluation gap remediation, adding proper assertions to the pi-runner tool-scanning tests
+revealed a real bug: the injection scanner correctly computed WARNING-prefixed (owner) and BLOCKED-replaced
+(end-user) tool results, but the `onEvent(...)` call in the `tool_execution_end` handler passed `event.result`
+(the unmodified original) instead of `toolResult` (the modified copy). The scanner logic ran and computed
+the right output, but the modified result was silently discarded. Fixed by changing `result: event.result`
+to `result: toolResult` in `src/agent-runner/pi-runner.ts`. The existing non-assertion tests (which only
+checked `capturedEvents.length >= 0`) could not detect this — the new assertions (checking for WARNING/BLOCKED
+in the event) caught it immediately. See request artifacts and evaluation for full context.
+
 # Decisions
 
 Architectural and strategic decisions across all requests.

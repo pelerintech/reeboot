@@ -20,6 +20,65 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { Config, McpPermissions } from '../config.js';
 import { getLogger } from '../observability/logger.js';
 
+// ─── Safe environment variables for MCP subprocesses ──────────────────────────
+
+export const SAFE_ENV_VARS = [
+  'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM', 'SHELL', 'TMPDIR',
+];
+
+/**
+ * Filter an environment object to only safe variables.
+ * XDG_* vars are always passed through.
+ * Explicitly configured env vars override/add.
+ */
+export function filterEnv(
+  baseEnv: Record<string, string | undefined>,
+  explicitEnv?: Record<string, string>,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, val] of Object.entries(baseEnv)) {
+    if (val !== undefined && (SAFE_ENV_VARS.includes(key) || key.startsWith('XDG_'))) {
+      result[key] = val;
+    }
+  }
+  // Explicitly configured env overrides/adds on top
+  if (explicitEnv) {
+    Object.assign(result, explicitEnv);
+  }
+  return result;
+}
+
+// ─── Credential redaction ─────────────────────────────────────────────────────
+
+const REDACTION_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
+  // GitHub PAT: ghp_<36 chars>
+  { pattern: /ghp_[A-Za-z0-9]{36,}/g, replacement: '[REDACTED-GITHUB-TOKEN]' },
+  // OpenAI keys: sk-... and sk-proj-... (include hyphens in key)
+  { pattern: /sk-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED-OPENAI-KEY]' },
+  // Bearer tokens: Bearer <base64>
+  { pattern: /Bearer\s+[A-Za-z0-9._\-]+/g, replacement: 'Bearer [REDACTED]' },
+  // API_KEY=<value>
+  { pattern: /API_KEY=[^&\s]{8,}/gi, replacement: 'API_KEY=[REDACTED]' },
+  // token=<value>
+  { pattern: /token=[^&\s]{8,}/gi, replacement: 'token=[REDACTED]' },
+  // password=<value>
+  { pattern: /password=[^&\s]+/gi, replacement: 'password=[REDACTED]' },
+  // secret=<value>
+  { pattern: /secret=[^&\s]+/gi, replacement: 'secret=[REDACTED]' },
+];
+
+/**
+ * Redact credential patterns from text before returning to the LLM.
+ * Safe text is passed through unchanged.
+ */
+export function redactCredentials(text: string): string {
+  let result = text;
+  for (const { pattern, replacement } of REDACTION_PATTERNS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
 // ─── Sandbox helpers ──────────────────────────────────────────────────────────
 
 const SANDBOX_PROFILES_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../extensions/sandbox');
@@ -128,7 +187,7 @@ export class McpServerPool {
     const transport = new StdioClientTransport({
       command: wrapped.command,
       args: wrapped.args,
-      env: { ...process.env, ...serverCfg.env } as Record<string, string>,
+      env: filterEnv(process.env as Record<string, string | undefined>, serverCfg.env) as Record<string, string>,
     });
 
     const client = new Client({ name: 'reeboot', version: '1.0.0' });
@@ -260,7 +319,8 @@ Usage:
             details: null,
           };
         } catch (err: any) {
-          const message = err?.message ?? String(err);
+          const rawMessage = err?.message ?? String(err);
+          const message = redactCredentials(rawMessage);
           const serverCfg = servers.find((s) => s.name === params.server);
           const permissions = serverCfg?.permissions ?? { network: false, filesystem: false };
 

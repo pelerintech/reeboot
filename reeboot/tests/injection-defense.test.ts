@@ -158,7 +158,10 @@ describe('injection-guard extension', () => {
     };
     const { registeredHook } = await makeInjectionGuard(config);
     const result = await registeredHook({ systemPrompt: 'base prompt' });
-    expect(result).toBeUndefined();
+    // With content scanner, systemPrompt is always returned when enabled.
+    // The policy block is omitted when external_source_tools is empty.
+    expect(result?.systemPrompt).toBeDefined();
+    expect(result?.systemPrompt).not.toContain('<external_content_policy>');
   });
 });
 

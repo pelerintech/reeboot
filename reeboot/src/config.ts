@@ -180,8 +180,33 @@ const InjectionGuardConfigSchema = z.object({
   external_source_tools: z.array(z.string()).default(['fetch_url', 'web_fetch']),
 });
 
+const DangerousCommandsSchema = z.object({
+  mode: z.enum(['deny', 'manual', 'smart', 'off']).default('deny'),
+  yolo: z.boolean().default(false),
+  timeout: z.number().int().min(5).max(3600).default(60),
+});
+
+export type DangerousCommandsConfig = z.infer<typeof DangerousCommandsSchema>;
+
+const WebsiteBlocklistSchema = z.object({
+  enabled: z.boolean().default(false),
+  domains: z.array(z.string()).default([]),
+});
+
+export type WebsiteBlocklistConfig = z.infer<typeof WebsiteBlocklistSchema>;
+
+const AdvisoryConfigSchema = z.object({
+  acked_advisories: z.array(z.string()).default([]),
+});
+
+export type AdvisoryConfig = z.infer<typeof AdvisoryConfigSchema>;
+
 const SecurityConfigSchema = z.object({
   injection_guard: InjectionGuardConfigSchema.default({}),
+  dangerous_commands: DangerousCommandsSchema.default({}),
+  website_blocklist: WebsiteBlocklistSchema.default({}),
+  allow_private_urls: z.boolean().default(false),
+  advisories: AdvisoryConfigSchema.default({}),
 });
 
 const ContextToolsSchema = z.object({

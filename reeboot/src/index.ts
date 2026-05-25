@@ -288,10 +288,11 @@ program
   .command('doctor')
   .description('Run pre-flight diagnostics on your reeboot installation')
   .option('--skip-network', 'Skip network-dependent checks (API key, Signal version)')
+  .option('--ack <id>', 'Acknowledge a supply-chain advisory by ID')
   .action(async (opts) => {
     const { runDoctor, formatResult, doctorExitCode } = await import('./doctor.js');
     console.log('Running reeboot diagnostics...\n');
-    const results = await runDoctor({ skipNetwork: opts.skipNetwork ?? false });
+    const results = await runDoctor({ skipNetwork: opts.skipNetwork ?? false, ack: opts.ack });
     for (const r of results) {
       console.log(formatResult(r));
     }

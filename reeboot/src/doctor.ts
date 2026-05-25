@@ -6,7 +6,7 @@
  */
 
 import { execSync } from 'child_process';
-import { statfsSync, existsSync, readFileSync } from 'fs';
+import { statfsSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { loadProjectContextFiles } from '@earendil-works/pi-coding-agent';
@@ -28,6 +28,8 @@ export interface DoctorOptions {
   cwd?: string;
   /** Skip network-dependent checks (API key validation, Signal version check) */
   skipNetwork?: boolean;
+  /** Acknowledge a supply-chain advisory by ID */
+  ack?: string;
 }
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
@@ -290,6 +292,64 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]
   results.push(await checkApiKey(configPath, skipNetwork));
   results.push(await checkSignalDocker(configPath, skipNetwork));
   results.push(await checkContextFiles(reebotDir, cwd));
+  results.push(await checkAdvisories(opts));
 
   return results;
+}
+
+// ─── checkAdvisories ────────────────────────────────────────────────────────
+
+async function checkAdvisories(opts: DoctorOptions): Promise<CheckResult> {
+  try {
+    const { scanDependencies } = await import('./security/advisory-scanner.js');
+    const cwd = opts.cwd ?? process.cwd();
+    const reebotDir = opts.reebotDir ?? join(homedir(), '.reeboot');
+
+    // Find package-lock.json — try reeboot package root first, then CWD
+    const lockfilePath = join(import.meta.dirname, '..', 'package-lock.json');
+    const advisoriesPath = join(import.meta.dirname, '..', 'src', 'security', 'advisories.json');
+
+    // Check if ack was requested
+    if ((opts as any).ack) {
+      const configPath = opts.configPath ?? join(reebotDir, 'config.json');
+      const { loadConfig, saveConfig } = await import('./config.js');
+      const config = loadConfig(configPath);
+      const acked = config.security?.advisories?.acked_advisories ?? [];
+      if (!acked.includes((opts as any).ack)) {
+        acked.push((opts as any).ack);
+        config.security.advisories.acked_advisories = acked;
+        saveConfig(config, configPath);
+        return { name: 'Advisory ack', status: 'pass', message: `Acknowledged advisory ${(opts as any).ack}` };
+      }
+      return { name: 'Advisory ack', status: 'warn', message: `Advisory ${(opts as any).ack} already acknowledged` };
+    }
+
+    if (!existsSync(lockfilePath)) {
+      return { name: 'Advisories', status: 'warn', message: 'package-lock.json not found — skipping scan' };
+    }
+
+    const advisories = scanDependencies(lockfilePath, advisoriesPath);
+
+    if (advisories.length === 0) {
+      return { name: 'Advisories', status: 'pass', message: 'no known advisories for installed packages' };
+    }
+
+    // Check which advisories are already acked
+    const configPath = opts.configPath ?? join(reebotDir, 'config.json');
+    let acked: string[] = [];
+    try {
+      const { loadConfig } = await import('./config.js');
+      const config = loadConfig(configPath);
+      acked = config.security?.advisories?.acked_advisories ?? [];
+    } catch { /* config may not exist */ }
+
+    const lines = advisories.map(a => {
+      const ackMarker = acked.includes(a.id) ? ' [ACKED]' : '';
+      return `${a.id}${ackMarker} — ${a.package} v${a.version}: ${a.description}\n   Fix: ${a.remediation}\n   Acknowledge: reeboot doctor --ack ${a.id}`;
+    });
+
+    return { name: 'Advisories', status: 'warn', message: `\n${lines.join('\n\n')}` };
+  } catch (err: any) {
+    return { name: 'Advisories', status: 'warn', message: `could not run advisory scan: ${err.message ?? err}` };
+  }
 }

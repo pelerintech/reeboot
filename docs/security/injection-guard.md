@@ -13,9 +13,27 @@ Injection guard is **enabled by default**.
 
 ## How It Works
 
-When the agent calls a tool listed in `external_source_tools` (default: `fetch_url`, `web_fetch`), the injection guard scans the returned content for patterns that look like system-level instructions attempting to override the agent's behaviour.
+Injection guard operates in two layers:
 
-Detected content is flagged and the agent is warned before processing it. If the channel's trust level is `"end-user"`, the guard is applied more aggressively.
+**Layer 1 — Content Scanner:** When the agent calls a tool listed in `external_source_tools` (default: `fetch_url`, `web_fetch`), the returned content is scanned for known injection patterns:
+
+- Ignore/override prior instructions ("ignore all previous instructions", "your new mission is")
+- Hidden HTML comments with suspicious keywords
+- Credential exfiltration attempts (curl/wget with `.env`, `credentials`, `.netrc`)
+- Zero-width characters and bidirectional override Unicode
+- Data exfiltration URLs (curl/wget with POST/PUT)
+
+Context files (`AGENTS.md`) are also scanned at session start for the same patterns.
+
+**Layer 2 — External Content Policy:** A standing instruction is injected into the system prompt reminding the agent to treat results from external-source tools as data, not instructions. This catches novel attacks the pattern scanner misses.
+
+**Trust-level behavior:**
+
+| Trust | Scanner result | Behavior |
+|---|---|---|
+| `owner` | Flagged | Warning banner prepended; full content preserved |
+| `end-user` | Flagged | Content replaced with "BLOCKED" message |
+| Any | Clean | Content passed through unchanged |
 
 ---
 

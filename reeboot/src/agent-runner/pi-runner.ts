@@ -31,6 +31,7 @@ import type { AgentRunner, ContextConfig, RunnerEvent, MessageTrust } from './in
 import type { ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { Config } from '../config.js';
 import { getLogger } from '../observability/logger.js';
+import { scanContent } from '../security/injection-scanner.js';
 
 // ─── wrapUntrustedMessage ────────────────────────────────────────────────────
 
@@ -66,6 +67,19 @@ function resolveProviderEnvKey(provider: string): string {
   return envVar ? (process.env[envVar] ?? '') : '';
 }
 
+// ─── extractTextFromResult ───────────────────────────────────────────────────
+
+function extractTextFromResult(result: any): string | null {
+  const content = result?.content;
+  if (!Array.isArray(content)) return null;
+  return content
+    .filter((c: any) => c.type === 'text' && typeof c.text === 'string')
+    .map((c: any) => c.text)
+    .join('\n');
+}
+
+// ─── PiAgentRunner ───────────────────────────────────────────────────────────
+
 export class PiAgentRunner implements AgentRunner {
   private readonly context: ContextConfig;
   private readonly loader: ResourceLoader;
@@ -73,8 +87,6 @@ export class PiAgentRunner implements AgentRunner {
   private abortController: AbortController | null = null;
   private disposed = false;
   private _currentTrust: MessageTrust = 'owner';
-  private _toolWhitelist: string[] = [];
-  private _toolCallHookRegistered = false;
 
   // Lazily created on first prompt
   private _session: import('@earendil-works/pi-coding-agent').AgentSession | null = null;
@@ -83,20 +95,6 @@ export class PiAgentRunner implements AgentRunner {
     this.context = context;
     this.loader = loader;
     this.config = config ?? null;
-
-    // Load tool whitelist for this context (empty = no restriction)
-    const contextEntry = config?.contexts?.find(c => c.name === context.id);
-    this._toolWhitelist = contextEntry?.tools?.whitelist ?? [];
-  }
-
-  // ── tool call guard ────────────────────────────────────────────────────────
-
-  /** Enforce the tool whitelist for end-user sessions. */
-  private _toolCallGuard(event: { toolName: string }): { block: true; reason: string } | undefined {
-    if (this._currentTrust === 'owner') return undefined;
-    if (this._toolWhitelist.length === 0) return undefined;
-    if (this._toolWhitelist.includes(event.toolName)) return undefined;
-    return { block: true, reason: `Tool "${event.toolName}" is not available in this context` };
   }
 
   // ── prompt ─────────────────────────────────────────────────────────────────
@@ -110,14 +108,6 @@ export class PiAgentRunner implements AgentRunner {
     const wrappedContent = this._currentTrust === 'end-user' ? wrapUntrustedMessage(content) : content;
 
     const session = await this._getOrCreateSession();
-
-    // Register the tool_call guard once per session. The real AgentSession does
-    // not expose .on() — this hooks into test mocks. Production enforcement is
-    // provided by the trust-enforcer bundled extension registered in the loader.
-    if (!this._toolCallHookRegistered) {
-      (session as any).on?.('tool_call', (event: any) => this._toolCallGuard(event));
-      this._toolCallHookRegistered = true;
-    }
     const runId = nanoid();
     this.abortController = new AbortController();
     const { signal } = this.abortController;
@@ -140,11 +130,43 @@ export class PiAgentRunner implements AgentRunner {
             args: event.args,
           });
         } else if (event.type === 'tool_execution_end') {
+          // Scan tool output for prompt injection patterns (Layer 1 defense).
+          // Only checks tools listed in injection_guard.external_source_tools.
+          let toolResult = event.result;
+          const externalTools = this.config?.security?.injection_guard?.external_source_tools ?? [];
+          if (externalTools.includes(event.toolName)) {
+            try {
+              const resultText = extractTextFromResult(toolResult);
+              if (resultText) {
+                const scan = scanContent(resultText);
+                if (scan.flagged) {
+                  if (this._currentTrust === 'end-user') {
+                    toolResult = {
+                      content: [{ type: 'text' as const, text: `[BLOCKED: Content from ${event.toolName} contained potential prompt injection]` }],
+                    };
+                  } else {
+                    // owner trust: prepend warning, preserve content
+                    const warning = `[WARNING: Potential prompt injection detected in ${event.toolName} output]\n`;
+                    const content = toolResult?.content ?? [];
+                    toolResult = {
+                      ...toolResult,
+                      content: Array.isArray(content)
+                        ? content.map((c: any) => c.type === 'text' ? { ...c, text: warning + (c.text ?? '') } : c)
+                        : content,
+                    };
+                  }
+                }
+              }
+            } catch {
+              // Scanner unavailable — pass through unchanged
+            }
+          }
+
           onEvent({
             type: 'tool_call_end',
             toolCallId: event.toolCallId,
             toolName: event.toolName,
-            result: event.result,
+            result: toolResult,
             isError: event.isError,
           });
         } else if (event.type === 'agent_end') {
@@ -250,7 +272,6 @@ export class PiAgentRunner implements AgentRunner {
     }
     this._session = null;
     this.disposed = false;
-    this._toolCallHookRegistered = false; // re-register guard on next session
   }
 
   // ── reload ─────────────────────────────────────────────────────────────────
