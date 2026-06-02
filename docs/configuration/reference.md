@@ -28,9 +28,12 @@ LLM provider and credential configuration.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `agent.model.authMode` | `"own"` \| `"pi"` | `"own"` | `"own"`: reeboot uses the provider/id/apiKey fields below. `"pi"`: reeboot delegates to your personal pi installation (`~/.pi/agent/auth.json`) and ignores provider/id/apiKey. |
-| `agent.model.provider` | string | `""` | LLM provider name: `"anthropic"`, `"openai"`, `"google"`, `"groq"`, `"mistral"`, `"xai"`, `"openrouter"`, `"ollama"`. Ignored when `authMode: "pi"`. |
-| `agent.model.id` | string | `""` | Model identifier (e.g. `"claude-sonnet-4-5"`, `"gpt-4o"`). Ignored when `authMode: "pi"`. |
-| `agent.model.apiKey` | string | `""` | API key for the chosen provider. Ignored when `authMode: "pi"`. For Ollama, leave empty. |
+| `agent.model.provider` | string | `""` | LLM provider name: `"anthropic"`, `"openai"`, `"google"`, `"groq"`, `"mistral"`, `"xai"`, `"openrouter"`, `"ollama"`, `"llamacpp"`, `"lmstudio"`, `"custom"`. Ignored when `authMode: "pi"`. |
+| `agent.model.id` | string | `""` | Model identifier (e.g. `"claude-sonnet-4-5"`, `"gpt-4o"`, `"llama3"`). Ignored when `authMode: "pi"`. |
+| `agent.model.apiKey` | string | `""` | API key for the chosen provider. Ignored when `authMode: "pi"`. For local providers, use `"sk-local-proxy"` or set the relevant env var. |
+| `agent.model.baseUrl` | string | `""` | Base URL for the provider's API endpoint. Required for local providers (Ollama, llama.cpp, LM Studio, custom). Examples: `"http://localhost:11434/v1"` (Ollama), `"http://localhost:1234/v1"` (LM Studio). |
+| `agent.model.api` | string | `"openai-completions"` | API format. Use `"openai-completions"` for OpenAI-compatible endpoints (all local providers, LiteLLM, vLLM). |
+| `agent.model.providers` | array | `[]` | List of provider entries for multi-provider support. Each entry has: `name`, `provider`, `id`, `apiKey`, `baseUrl`, `api`, `default` (boolean). The entry with `default: true` is used at startup; if none is marked, the first entry is used. |
 
 **Example — own credentials:**
 
@@ -59,6 +62,55 @@ LLM provider and credential configuration.
   }
 }
 ```
+
+**Example — local endpoint (LM Studio):**
+
+```json
+{
+  "agent": {
+    "model": {
+      "authMode": "own",
+      "provider": "lmstudio",
+      "id": "llama3",
+      "apiKey": "sk-local-proxy",
+      "baseUrl": "http://localhost:1234/v1",
+      "api": "openai-completions"
+    }
+  }
+}
+```
+
+**Example — multi-provider setup:**
+
+```json
+{
+  "agent": {
+    "model": {
+      "authMode": "own",
+      "providers": [
+        {
+          "name": "LM Studio",
+          "provider": "lmstudio",
+          "id": "llama3",
+          "apiKey": "sk-local-proxy",
+          "baseUrl": "http://localhost:1234/v1",
+          "api": "openai-completions",
+          "default": true
+        },
+        {
+          "name": "Anthropic",
+          "provider": "anthropic",
+          "id": "claude-sonnet-4-5",
+          "apiKey": "sk-ant-...",
+          "default": false
+        }
+      ]
+    }
+  }
+}
+```
+
+> **Migration note:** If your config.json has flat `provider`/`id`/`apiKey` fields (no `providers` array), reeboot automatically migrates them to a single-entry `providers` array on first load. The flat fields are preserved for backward compatibility.
 
 ---
 

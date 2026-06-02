@@ -212,8 +212,17 @@ export async function runProviderStep(opts: {
       })
     }
 
+    // Prompt for API key (pre-filled with sk-local-proxy for local providers)
+    apiKey = (await prompter.input({
+      message: `API key for ${provider} (leave empty for default):`,
+      default: 'sk-local-proxy',
+    })) || 'sk-local-proxy';
+    if (!apiKey.trim()) {
+      apiKey = 'sk-local-proxy';
+    }
+
     // Write models.json
-    await writeOllamaModelsJson({ configDir, ollamaBaseUrl, modelId })
+    await writeOllamaModelsJson({ configDir, provider, ollamaBaseUrl, modelId, apiKey })
   } else {
     // Cloud provider: API key first, then model (enables live model fetch)
     // Exception: OpenRouter has a public models endpoint — fetch before API key
@@ -308,35 +317,29 @@ export async function runProviderStep(opts: {
 
 // ─── writeOllamaModelsJson ────────────────────────────────────────────────────
 
-async function writeOllamaModelsJson(opts: {
+export async function writeOllamaModelsJson(opts: {
   configDir: string
+  provider: string
   ollamaBaseUrl: string
   modelId: string
+  apiKey: string
 }): Promise<void> {
-  const { configDir, ollamaBaseUrl, modelId } = opts
-  const templatesDir = join(__dirname, '..', '..', '..', 'templates')
-  const templatePath = join(templatesDir, 'models-ollama.json')
+  const { configDir, provider, ollamaBaseUrl, modelId, apiKey } = opts
 
-  let template: string
-  if (existsSync(templatePath)) {
-    template = readFileSync(templatePath, 'utf-8')
-    template = template
-      .replace(/{{MODEL_ID}}/g, modelId)
-      .replace(/"baseUrl":\s*"[^"]*"/, `"baseUrl": "${ollamaBaseUrl}"`)
-  } else {
-    // Fallback inline template
-    template = JSON.stringify({
-      providers: [{
-        id: 'ollama',
-        name: 'Ollama (local)',
+  // Build models.json dynamically with the actual provider name
+  const modelsJson = JSON.stringify({
+    providers: {
+      [provider]: {
         baseUrl: ollamaBaseUrl,
+        api: 'openai-completions',
+        apiKey: apiKey || 'sk-local-proxy',
         models: [{ id: modelId, name: modelId, contextWindow: 8192 }],
-      }],
-    }, null, 2)
-  }
+      },
+    },
+  }, null, 2)
 
   mkdirSync(configDir, { recursive: true })
-  writeFileSync(join(configDir, 'models.json'), template, 'utf-8')
+  writeFileSync(join(configDir, 'models.json'), modelsJson, 'utf-8')
 }
 
 // ─── defaultFetchLocalModels ──────────────────────────────────────────────────

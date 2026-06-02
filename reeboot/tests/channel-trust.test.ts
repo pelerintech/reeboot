@@ -145,82 +145,135 @@ describe('PiAgentRunner per-turn trust', () => {
   });
 });
 
-// ─── Tasks 7 & 8: Tool whitelist enforcement ─────────────────────────────────
+// ─── Tasks 7 & 8: Tool whitelist enforcement via trust-enforcer extension ──
 
-describe('Tool whitelist enforcement', () => {
-  async function makeRunnerWithWhitelist(whitelist: string[]) {
-    const { PiAgentRunner } = await import('@src/agent-runner/pi-runner.js');
-    const loader = { reload: vi.fn().mockResolvedValue(undefined) } as any;
-    const config = { contexts: [{ name: 'main', tools: { whitelist } }] } as any;
-    const runner = new PiAgentRunner({ id: 'main', workspacePath: '/tmp' }, loader, config);
-    return runner;
-  }
-
-  function makeMockSession() {
-    return {
-      subscribe: vi.fn().mockImplementation((cb: any) => {
-        setTimeout(() => cb({ type: 'agent_end', messages: [] }), 0);
-        return () => {};
-      }),
-      prompt: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-      abort: vi.fn(),
-    };
-  }
-
-  async function getToolCallHook(mockSession: ReturnType<typeof makeMockSession>) {
-    // The hook was registered via on() — extract it
-    const call = (mockSession.on as any).mock.calls.find((c: any[]) => c[0] === 'tool_call');
-    return call?.[1] as ((event: any) => any) | undefined;
-  }
-
+describe('Tool whitelist enforcement (trust-enforcer)', () => {
   it('blocks non-whitelisted tool for end-user', async () => {
-    const runner = await makeRunnerWithWhitelist(['send_message']);
+    const { mkdtempSync, rmSync, writeFileSync, mkdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
 
-    const mockSession = makeMockSession();
-    (runner as any)._session = mockSession;
+    const tmpDir = mkdtempSync(join(tmpdir(), 'trust-test-'));
+    const workspacePath = join(tmpDir, 'contexts', 'main', 'workspace');
+    mkdirSync(workspacePath, { recursive: true });
+    writeFileSync(join(workspacePath, '.reeboot_turn_meta.json'), JSON.stringify({
+      trust: 'end-user',
+    }));
 
-    await runner.prompt('hello', () => {}, { trust: 'end-user' });
+    const { makeTrustEnforcerExtension } = await import('@src/extensions/trust-enforcer.js');
+    const config = {
+      contexts: [{ name: 'main', tools: { whitelist: ['send_message'] } }],
+    };
 
-    const toolCallHook = await getToolCallHook(mockSession);
-    expect(toolCallHook).toBeDefined();
-    const result = await toolCallHook!({ toolName: 'bash' });
+    let toolCallHandler: (event: any, ctx: any) => any;
+    const mockPi = {
+      on: vi.fn((event: string, handler: any) => {
+        if (event === 'tool_call') toolCallHandler = handler;
+      }),
+    };
+
+    makeTrustEnforcerExtension(mockPi as any, config);
+
+    expect(toolCallHandler).toBeDefined();
+    const result = await toolCallHandler!({ toolName: 'bash' }, { cwd: workspacePath });
     expect(result).toMatchObject({ block: true });
+
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('does NOT block whitelisted tool for end-user', async () => {
-    const runner = await makeRunnerWithWhitelist(['send_message']);
-    const mockSession = makeMockSession();
-    (runner as any)._session = mockSession;
+    const { mkdtempSync, rmSync, writeFileSync, mkdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
 
-    await runner.prompt('hello', () => {}, { trust: 'end-user' });
+    const tmpDir = mkdtempSync(join(tmpdir(), 'trust-test-'));
+    const workspacePath = join(tmpDir, 'contexts', 'main', 'workspace');
+    mkdirSync(workspacePath, { recursive: true });
+    writeFileSync(join(workspacePath, '.reeboot_turn_meta.json'), JSON.stringify({
+      trust: 'end-user',
+    }));
 
-    const toolCallHook = await getToolCallHook(mockSession);
-    const result = await toolCallHook!({ toolName: 'send_message' });
+    const { makeTrustEnforcerExtension } = await import('@src/extensions/trust-enforcer.js');
+    const config = {
+      contexts: [{ name: 'main', tools: { whitelist: ['send_message'] } }],
+    };
+
+    let toolCallHandler: (event: any, ctx: any) => any;
+    const mockPi = {
+      on: vi.fn((event: string, handler: any) => {
+        if (event === 'tool_call') toolCallHandler = handler;
+      }),
+    };
+
+    makeTrustEnforcerExtension(mockPi as any, config);
+
+    const result = await toolCallHandler!({ toolName: 'send_message' }, { cwd: workspacePath });
     expect(result).toBeUndefined();
+
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('does NOT block any tool for owner trust', async () => {
-    const runner = await makeRunnerWithWhitelist(['send_message']);
-    const mockSession = makeMockSession();
-    (runner as any)._session = mockSession;
+    const { mkdtempSync, rmSync, writeFileSync, mkdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
 
-    await runner.prompt('hello', () => {}, { trust: 'owner' });
+    const tmpDir = mkdtempSync(join(tmpdir(), 'trust-test-'));
+    const workspacePath = join(tmpDir, 'contexts', 'main', 'workspace');
+    mkdirSync(workspacePath, { recursive: true });
+    writeFileSync(join(workspacePath, '.reeboot_turn_meta.json'), JSON.stringify({
+      trust: 'owner',
+    }));
 
-    const toolCallHook = await getToolCallHook(mockSession);
-    const result = await toolCallHook!({ toolName: 'bash' });
+    const { makeTrustEnforcerExtension } = await import('@src/extensions/trust-enforcer.js');
+    const config = {
+      contexts: [{ name: 'main', tools: { whitelist: ['send_message'] } }],
+    };
+
+    let toolCallHandler: (event: any, ctx: any) => any;
+    const mockPi = {
+      on: vi.fn((event: string, handler: any) => {
+        if (event === 'tool_call') toolCallHandler = handler;
+      }),
+    };
+
+    makeTrustEnforcerExtension(mockPi as any, config);
+
+    const result = await toolCallHandler!({ toolName: 'bash' }, { cwd: workspacePath });
     expect(result).toBeUndefined();
+
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('does NOT block when whitelist is empty (opt-in restriction)', async () => {
-    const runner = await makeRunnerWithWhitelist([]);
-    const mockSession = makeMockSession();
-    (runner as any)._session = mockSession;
+    const { mkdtempSync, rmSync, writeFileSync, mkdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
 
-    await runner.prompt('hello', () => {}, { trust: 'end-user' });
+    const tmpDir = mkdtempSync(join(tmpdir(), 'trust-test-'));
+    const workspacePath = join(tmpDir, 'contexts', 'main', 'workspace');
+    mkdirSync(workspacePath, { recursive: true });
+    writeFileSync(join(workspacePath, '.reeboot_turn_meta.json'), JSON.stringify({
+      trust: 'end-user',
+    }));
 
-    const toolCallHook = await getToolCallHook(mockSession);
-    const result = await toolCallHook!({ toolName: 'bash' });
+    const { makeTrustEnforcerExtension } = await import('@src/extensions/trust-enforcer.js');
+    const config = {
+      contexts: [{ name: 'main', tools: { whitelist: [] } }],
+    };
+
+    let toolCallHandler: (event: any, ctx: any) => any;
+    const mockPi = {
+      on: vi.fn((event: string, handler: any) => {
+        if (event === 'tool_call') toolCallHandler = handler;
+      }),
+    };
+
+    makeTrustEnforcerExtension(mockPi as any, config);
+
+    const result = await toolCallHandler!({ toolName: 'bash' }, { cwd: workspacePath });
     expect(result).toBeUndefined();
+
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });

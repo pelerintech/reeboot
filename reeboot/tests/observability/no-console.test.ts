@@ -27,6 +27,7 @@ function collectSourceFiles(dir: string): string[] {
     resolve(SRC, 'skills-cli.ts'),
     resolve(SRC, 'index.ts'),
     resolve(SRC, 'daemon.ts'),
+    resolve(SRC, 'bootstrap.ts'),
   ]);
 
   const files: string[] = [];
