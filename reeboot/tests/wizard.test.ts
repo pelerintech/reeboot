@@ -555,7 +555,7 @@ describe('wizard orchestration', () => {
     }))
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
-    const prompter = new FakePrompter(['native'])
+    const prompter = new FakePrompter([]) // no answers needed — launch step throws before confirm
     await expect(runSetupWizard({ configPath, prompter })).rejects.toThrow('interrupted')
     expect(existsSync(configPath)).toBe(false)
   })
@@ -587,8 +587,8 @@ describe('wizard orchestration', () => {
     }))
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
-    // Provide prompter with deployment choice (steps are all mocked, only wizard-level prompts consume it)
-    const prompter = new FakePrompter(['native', false])
+    // Steps are all mocked — only wizard-level confirm (start now?) consumes an answer
+    const prompter = new FakePrompter([false])
     await runSetupWizard({ configPath, prompter })
     expect(existsSync(configPath)).toBe(true)
   })
@@ -623,7 +623,7 @@ describe('wizard authMode threading', () => {
     }))
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
-    const prompter = new FakePrompter(['native', false])
+    const prompter = new FakePrompter([false])
     await runSetupWizard({ configPath, prompter })
 
     const { loadConfig } = await import('@src/config.js')
@@ -660,7 +660,7 @@ describe('wizard authMode threading', () => {
     }))
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
-    const prompter = new FakePrompter(['native', false])
+    const prompter = new FakePrompter([false])
     await runSetupWizard({ configPath, prompter })
 
     const { loadConfig } = await import('@src/config.js')
@@ -727,7 +727,7 @@ describe('wizard "start now?" orchestrator prompt', () => {
   it('calls _deps.startAgent when startNow = true', async () => {
     mockAllSteps()
     const mockStartAgent = vi.fn().mockResolvedValue(undefined)
-    const prompter = new FakePrompter(['native', true]) // deployment + start-now
+    const prompter = new FakePrompter([true]) // start-now
     const configPath = join(tmpDir, 'config.json')
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
@@ -740,7 +740,7 @@ describe('wizard "start now?" orchestrator prompt', () => {
     mockAllSteps()
     const mockStartAgent = vi.fn().mockResolvedValue(undefined)
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-    const prompter = new FakePrompter(['native', false]) // deployment + decline start-now
+    const prompter = new FakePrompter([false]) // decline start-now
     const configPath = join(tmpDir, 'config.json')
 
     const { runSetupWizard } = await import('@src/wizard/index.js')
