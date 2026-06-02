@@ -133,7 +133,7 @@ describe('PROVIDERS list ordering and new local providers', () => {
         const firstReal = (opts.choices ?? []).find((c: any) => c.value && c.value !== '__custom__')
         return firstReal?.value ?? 'ollama'
       }),
-      input: vi.fn(async () => 'http://localhost:11434/v1'),
+      input: vi.fn(async () => 'http://localhost:11434/v1'), // base URL, then model ID, then API key
       password: vi.fn(async () => 'sk-test'),
       confirm: vi.fn(async () => false),
     }
@@ -162,7 +162,8 @@ describe('local model auto-detection', () => {
     vi.mocked(detectPiAuth).mockResolvedValue({ available: false })
 
     const mockFetch = vi.fn().mockResolvedValue(['llama3', 'mistral'])
-    const prompter = makePrompter(['llamacpp', 'http://localhost:8080/v1', 'llama3'])
+    // provider → base URL → model select → API key input
+    const prompter = makePrompter(['llamacpp', 'http://localhost:8080/v1', 'llama3', 'sk-local-proxy'])
 
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const result = await runProviderStep({
@@ -186,7 +187,8 @@ describe('local model auto-detection', () => {
     vi.mocked(detectPiAuth).mockResolvedValue({ available: false })
 
     const mockFetch = vi.fn().mockRejectedValue(new Error('server not reachable'))
-    const prompter = makePrompter(['llamacpp', 'http://localhost:8080/v1', 'phi3'])
+    // provider → base URL → model input → API key input
+    const prompter = makePrompter(['llamacpp', 'http://localhost:8080/v1', 'phi3', 'sk-local-proxy'])
 
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const result = await runProviderStep({
@@ -195,8 +197,8 @@ describe('local model auto-detection', () => {
       _deps: { fetchLocalModels: mockFetch },
     })
 
-    // input was called for model (not select)
-    expect(prompter.input).toHaveBeenCalledTimes(2) // base URL + model ID
+    // input was called for model + API key (base URL is also input)
+    expect(prompter.input).toHaveBeenCalledTimes(3) // base URL + model ID + API key
     expect(result.modelId).toBe('phi3')
   })
 })

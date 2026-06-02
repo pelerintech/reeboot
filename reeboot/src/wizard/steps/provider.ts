@@ -213,10 +213,10 @@ export async function runProviderStep(opts: {
     }
 
     // Prompt for API key (pre-filled with sk-local-proxy for local providers)
-    apiKey = await prompter.input({
+    apiKey = (await prompter.input({
       message: `API key for ${provider} (leave empty for default):`,
       default: 'sk-local-proxy',
-    })
+    })) || 'sk-local-proxy';
     if (!apiKey.trim()) {
       apiKey = 'sk-local-proxy';
     }
