@@ -57,6 +57,43 @@ export async function runLaunchStep(opts: {
   // Type-guard: ensure rawExisting is a Config or null
   const existing = (rawExisting && typeof rawExisting === 'object') ? (rawExisting as Config) : null;
 
+  // Build providers array: prepend new provider, preserve existing ones
+  const existingProviders = existing?.agent?.model?.providers ?? [];
+
+  // If adding a new provider entry, prepend it and ask about default
+  let providers = existingProviders;
+  if (draft.authMode !== 'pi' && draft.provider) {
+    const hasExistingDefault = existingProviders.some(p => p.default === true);
+    let setAsDefault = true;
+
+    if (hasExistingDefault) {
+      // Ask user whether the new provider should become the default
+      setAsDefault = await prompter.confirm({
+        message: 'Make this the default provider?',
+        default: true,
+      });
+    }
+
+    const newProviderEntry = {
+      name: draft.provider,
+      provider: draft.provider,
+      id: draft.modelId,
+      apiKey: draft.apiKey ?? 'sk-local-proxy',
+      baseUrl: draft.ollamaBaseUrl ?? '',
+      api: 'openai-completions',
+      default: setAsDefault,
+    };
+
+    if (setAsDefault) {
+      // Clear default from all existing entries
+      const cleared = existingProviders.map(p => ({ ...p, default: false }));
+      providers = [newProviderEntry, ...cleared];
+    } else {
+      // Preserve existing defaults — prepend without clearing
+      providers = [newProviderEntry, ...existingProviders];
+    }
+  }
+
   const config: Config = {
     ...fb(existing, defaultConfig),
     agent: {
@@ -67,6 +104,9 @@ export async function runLaunchStep(opts: {
         provider: draft.authMode === 'pi' ? '' : draft.provider,
         id: draft.authMode === 'pi' ? '' : draft.modelId,
         apiKey: draft.authMode === 'pi' ? '' : (draft.apiKey ?? ''),
+        baseUrl: draft.ollamaBaseUrl ?? '',
+        api: 'openai-completions',
+        providers,
       },
     },
     channels: {

@@ -88,8 +88,43 @@ Choose from 8 LLM providers during setup:
 | **xAI** | grok-2-latest |
 | **OpenRouter** | Any model via openrouter.ai |
 | **Ollama** | Any locally-running model |
+| **llama.cpp** | Any locally-running model |
+| **LM Studio** | Any locally-running model |
+| **Custom** | Any OpenAI-compatible endpoint (LiteLLM, vLLM, etc.) |
 
 Or set `authMode: "pi"` to reuse your existing pi provider credentials.
+
+---
+
+## Local Endpoints
+
+Run models locally with Ollama, llama.cpp, LM Studio, or any OpenAI-compatible server:
+
+```json
+{
+  "agent": {
+    "model": {
+      "authMode": "own",
+      "provider": "lmstudio",
+      "id": "llama3",
+      "apiKey": "sk-local-proxy",
+      "baseUrl": "http://localhost:1234/v1",
+      "api": "openai-completions"
+    }
+  }
+}
+```
+
+Supported local providers and their default base URLs:
+
+| Provider | Default URL |
+|---|---|
+| Ollama | `http://localhost:11434/v1` |
+| llama.cpp | `http://localhost:8080/v1` |
+| LM Studio | `http://localhost:1234/v1` |
+| Custom | Set `baseUrl` to your endpoint |
+
+> **Tip:** You can configure multiple providers using the `providers` array in config.json. The one marked `default: true` is used at startup.
 
 ---
 

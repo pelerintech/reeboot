@@ -168,6 +168,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
   const appConfig = opts.config;
   if (appConfig) {
+    // ── Generate models.json for authMode: "own" ──────────────────────
+    try {
+      const { generateModelsJson } = await import('./models.js');
+      const modelsJson = generateModelsJson(appConfig);
+      if (modelsJson) {
+        const { writeFileSync: wf, mkdirSync: mkd } = await import('fs');
+        const modelsDir = join(reebotDir, 'agent');
+        mkd(modelsDir, { recursive: true });
+        wf(join(modelsDir, 'models.json'), modelsJson, 'utf-8');
+        getLogger().info({ component: 'server' }, '[server] models.json generated');
+      }
+    } catch (err) {
+      getLogger().warn({ component: 'server', err }, '[server] models.json generation failed');
+    }
+
     try {
       await import('./channels/web.js');
       await import('./channels/whatsapp.js');

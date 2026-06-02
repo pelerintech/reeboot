@@ -50,7 +50,7 @@ function wrapUntrustedMessage(content: string): string {
 
 // ─── env var resolution for known providers ───────────────────────────────────
 
-const PROVIDER_ENV_VARS: Record<string, string> = {
+export const PROVIDER_ENV_VARS: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
   google: 'GEMINI_API_KEY',
@@ -60,9 +60,14 @@ const PROVIDER_ENV_VARS: Record<string, string> = {
   openrouter: 'OPENROUTER_API_KEY',
   minimax: 'MINIMAX_API_KEY',
   cerebras: 'CEREBRAS_API_KEY',
+  // Local providers
+  ollama: 'OLLAMA_API_KEY',
+  llamacpp: 'LLAMACPP_API_KEY',
+  lmstudio: 'LM_STUDIO_API_KEY',
+  custom: 'CUSTOM_API_KEY',
 };
 
-function resolveProviderEnvKey(provider: string): string {
+export function resolveProviderEnvKey(provider: string): string {
   const envVar = PROVIDER_ENV_VARS[provider.toLowerCase()];
   return envVar ? (process.env[envVar] ?? '') : '';
 }

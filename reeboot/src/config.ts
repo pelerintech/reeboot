@@ -5,11 +5,24 @@ import { z } from 'zod';
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
+const ProviderEntrySchema = z.object({
+  name: z.string().default(''),
+  provider: z.string().default(''),
+  id: z.string().default(''),
+  apiKey: z.string().default(''),
+  baseUrl: z.string().default(''),
+  api: z.string().default('openai-completions'),
+  default: z.boolean().default(false),
+});
+
 const ModelConfigSchema = z.object({
   authMode: z.enum(['pi', 'own']).default('own'),
   provider: z.string().default(''),
   id: z.string().default(''),
   apiKey: z.string().default(''),
+  baseUrl: z.string().default(''),
+  api: z.string().default('openai-completions'),
+  providers: z.array(ProviderEntrySchema).default([]),
 });
 
 const AgentConfigSchema = z.object({
@@ -330,6 +343,19 @@ export function loadConfig(configPath?: string): Config {
 
   // Parse with Zod (throws ZodError on schema violation, which includes field path)
   const result = ConfigSchema.parse(raw);
+
+  // Backward-compatible migration: flat provider/id/apiKey → providers array
+  if (result.agent.model.providers.length === 0 && result.agent.model.provider) {
+    result.agent.model.providers = [{
+      name: result.agent.model.provider,
+      provider: result.agent.model.provider,
+      id: result.agent.model.id,
+      apiKey: result.agent.model.apiKey,
+      baseUrl: result.agent.model.baseUrl,
+      api: result.agent.model.api,
+      default: true,
+    }];
+  }
 
   // Apply environment variable overrides
   if (process.env.REEBOOT_PORT) {
