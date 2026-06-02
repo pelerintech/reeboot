@@ -49,6 +49,7 @@ function fullWizardAnswers({
   if (provider === 'ollama') answers.push('http://localhost:11434/v1') // input: base url
   if (provider !== 'ollama') answers.push(model) // select model (AFTER api key)
   if (provider === 'ollama') answers.push(model) // input: model id
+  if (provider === 'ollama') answers.push('sk-local-proxy') // input: api key for local providers
   answers.push(agentName)    // input: agent name
   answers.push(channels)     // checkbox: channels
   answers.push(searchProvider) // select: search provider
@@ -165,37 +166,39 @@ describe('wizard provider setup', () => {
 const noServerFetch = async () => { throw new Error('no server') }
 
 describe('wizard provider setup: Ollama', () => {
-  it('skips API key prompt for Ollama', async () => {
+  it('prompts for API key for Ollama with default sk-local-proxy', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const prompter = new FakePrompter([
       'ollama',
       'http://localhost:11434/v1', // base URL
       'qwen2.5:7b',               // model ID (input fallback)
+      'sk-local-proxy',           // API key (pre-filled default)
     ])
     const result = await runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })
     expect(result.provider).toBe('ollama')
-    expect(result.apiKey).toBe('')
+    expect(result.apiKey).toBe('sk-local-proxy')
     expect(result.modelId).toBe('qwen2.5:7b')
     expect(result.ollamaBaseUrl).toBe('http://localhost:11434/v1')
   })
 
   it('uses default Ollama URL when Enter pressed', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['ollama', 'http://localhost:11434/v1', 'llama3:8b'])
+    const prompter = new FakePrompter(['ollama', 'http://localhost:11434/v1', 'llama3:8b', 'sk-local-proxy'])
     const result = await runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })
     expect(result.ollamaBaseUrl).toBe('http://localhost:11434/v1')
   })
 
   it('accepts custom Ollama URL', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['ollama', 'http://192.168.1.5:11434/v1', 'phi3'])
+    const prompter = new FakePrompter(['ollama', 'http://192.168.1.5:11434/v1', 'phi3', 'sk-custom-key'])
     const result = await runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })
     expect(result.ollamaBaseUrl).toBe('http://192.168.1.5:11434/v1')
+    expect(result.apiKey).toBe('sk-custom-key')
   })
 
   it('writes models.json with Ollama provider block', async () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    const prompter = new FakePrompter(['ollama', 'http://localhost:11434/v1', 'qwen2.5:7b'])
+    const prompter = new FakePrompter(['ollama', 'http://localhost:11434/v1', 'qwen2.5:7b', 'sk-local-proxy'])
     await runProviderStep({ prompter, configDir: tmpDir, _deps: { fetchLocalModels: noServerFetch } })
     const modelsPath = join(tmpDir, 'models.json')
     expect(existsSync(modelsPath)).toBe(true)
@@ -468,10 +471,12 @@ describe('wizard launch step', () => {
     const origLog = console.log
     console.log = (...args: unknown[]) => { logs.push(args.join(' ')) }
 
-    const prompter = new FakePrompter([]) // launch step no longer asks start-now
+    const configPath = join(tmpDir, 'config-launch-summary.json')
+    const prompter = new FakePrompter([]) // no existing config, so no default prompt
     try {
       await runLaunchStep({
         prompter,
+        configPath,
         draft: {
           provider: 'anthropic',
           modelId: 'claude-sonnet-4-5',
