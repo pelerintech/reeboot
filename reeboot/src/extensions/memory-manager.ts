@@ -278,6 +278,12 @@ export function runSessionSearch(
   limit: number
 ): SearchRow[] {
   try {
+    // Wrap the query in double quotes for a phrase match. This safely escapes
+    // all FTS5 special characters (dots, hyphens, brackets, colons, etc.)
+    // that previously caused SQLITE_ERROR crashes. Double quotes inside the
+    // query are doubled per FTS5 phrase-match escaping rules.
+    const escaped = query.replace(/"/g, '""');
+    const phraseQuery = `"${escaped}"`;
     const rows = db
       .prepare(
         `SELECT m.role, m.created_at,
@@ -288,7 +294,7 @@ export function runSessionSearch(
          ORDER BY rank
          LIMIT ?`
       )
-      .all(query, limit) as SearchRow[];
+      .all(phraseQuery, limit) as SearchRow[];
     return rows;
   } catch {
     return [];

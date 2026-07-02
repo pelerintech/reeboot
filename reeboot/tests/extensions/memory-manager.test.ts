@@ -328,6 +328,65 @@ describe('session_search — always registered', () => {
     const results = runSessionSearch(db, 'billing', 3);
     expect(results.length).toBeLessThanOrEqual(3);
   });
+
+  it('handles FTS5 special characters without crashing (regression)', async () => {
+    // Regression test: queries containing dots, hyphens, colons, brackets,
+    // etc. must not break FTS5 syntax. Previously these caused SQLITE_ERROR:
+    //   'no such column: 06'          ("2026-06")
+    //   'fts5: syntax error near "."' ("llama.cpp")
+    //   'no such column: Link'        ("TP-Link")
+    const Database = (await import('better-sqlite3')).default;
+    const { runMemoryMigration } = await import('../../src/db/schema.js');
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS contexts (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY,
+        context_id TEXT NOT NULL REFERENCES contexts(id),
+        channel TEXT NOT NULL DEFAULT 'web',
+        peer_id TEXT NOT NULL DEFAULT 'p',
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        tokens_used INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    runMemoryMigration(db);
+    db.exec(`INSERT INTO contexts (id, name) VALUES ('ctx1', 'T')`);
+
+    // Insert messages that contain FTS5-special characters
+    db.prepare(
+      `INSERT INTO messages (id, context_id, role, content) VALUES (?, 'ctx1', 'user', ?)`
+    ).run('msg1', 'Qwen llama.cpp inference deployment');
+    db.prepare(
+      `INSERT INTO messages (id, context_id, role, content) VALUES (?, 'ctx1', 'user', ?)`
+    ).run('msg2', 'cable networking switch TP-Link');
+    db.prepare(
+      `INSERT INTO messages (id, context_id, role, content) VALUES (?, 'ctx1', 'user', ?)`
+    ).run('msg3', 'session from 2026-06');
+    db.prepare(
+      `INSERT INTO messages (id, context_id, role, content) VALUES (?, 'ctx1', 'user', ?)`
+    ).run('msg4', 'query with [brackets] and (parens)');
+
+    // These queries previously crashed with SQLITE_ERROR
+    expect(() => runSessionSearch(db, 'llama.cpp', 10)).not.toThrow();
+    expect(() => runSessionSearch(db, 'TP-Link', 10)).not.toThrow();
+    expect(() => runSessionSearch(db, '2026-06', 10)).not.toThrow();
+    expect(() => runSessionSearch(db, '[brackets]', 10)).not.toThrow();
+
+    // And they should still return the correct results
+    const llamaResults = runSessionSearch(db, 'llama.cpp', 10);
+    expect(llamaResults.length).toBe(1);
+    expect(llamaResults[0].excerpt).toContain('llama.cpp');
+
+    const tpResults = runSessionSearch(db, 'TP-Link', 10);
+    expect(tpResults.length).toBe(1);
+    expect(tpResults[0].excerpt).toContain('TP-Link');
+
+    const bracketResults = runSessionSearch(db, '[brackets]', 10);
+    expect(bracketResults.length).toBe(1);
+    expect(bracketResults[0].excerpt).toContain('[brackets]');
+  });
 });
 
 

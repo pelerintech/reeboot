@@ -118,6 +118,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
           // fetchProps times out on every connect (WA server doesn't respond to
           // this query for our client fingerprint). Messaging works without it.
           fireInitQueries: false,
+          // Use phone number pairing code instead of QR — more reliable when
+          // WhatsApp blocks QR-based companion device linking (error 515).
+          // The user enters their phone number, gets a 6-digit code, and
+          // enters it in WhatsApp → Settings → Linked Devices.
+          pairingCode: true,
         });
 
         this._socket = sock;
