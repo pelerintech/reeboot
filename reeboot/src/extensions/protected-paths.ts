@@ -6,7 +6,7 @@
  */
 
 import { resolve } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from './extension-api.js';
 
 export default function (pi: ExtensionAPI) {
 	const protectedPaths = [
@@ -32,7 +32,7 @@ export default function (pi: ExtensionAPI) {
 			return undefined;
 		}
 
-		const rawPath = event.input.path as string;
+		const rawPath = event.args.path as string;
 		// Resolve against cwd to catch ../../ traversal attacks
 		const resolved = resolve(process.cwd(), rawPath);
 

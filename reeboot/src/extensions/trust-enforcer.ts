@@ -12,7 +12,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from './extension-api.js';
 import { getLogger } from '../observability/logger.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

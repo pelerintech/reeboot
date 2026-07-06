@@ -13,7 +13,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from './extension-api.js';
 import type { Config } from '../config.js';
 import { scanContent } from '../security/injection-scanner.js';
 

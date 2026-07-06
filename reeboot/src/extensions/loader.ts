@@ -9,10 +9,17 @@
  *
  * Bundled extension files live in <repoRoot>/extensions/ at the reeboot package root.
  * The loader resolves them relative to this source file's compiled location.
+ *
+ * SDK pluggability: the loader wraps pi's ExtensionAPI in a PiExtensionAdapter
+ * before passing it to extensions. Extensions depend on reeboot's ExtensionAPI
+ * interface, not pi directly. The adapter bridges pi events/methods to our
+ * typed event model.
  */
 
 import { DefaultResourceLoader, type ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
+import { PiExtensionAdapter } from './pi-adapter.js';
+import type { ExtensionContext } from './extension-api.js';
 import { homedir } from 'os';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -55,6 +62,30 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
 
   const factories: ExtensionFactory[] = [];
 
+  /**
+   * Create an extension context from pi's runtime context.
+   * The adapter will merge this with pi's ExtensionContext at runtime.
+   */
+  const createExtensionContext = (): ExtensionContext => ({
+    cwd: context.workspacePath,
+    workspacePath: context.workspacePath,
+    config,
+    ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
+    hasUI: false,
+  });
+
+  /**
+   * Wrap an extension factory to inject the PiExtensionAdapter.
+   * pi's DefaultResourceLoader passes pi's ExtensionAPI as `pi`.
+   * We wrap it in our adapter so extensions receive reeboot's ExtensionAPI.
+   */
+  const withAdapter = (init: (api: any) => void | Promise<void>) => {
+    return (pi: any) => {
+      const adapter = new PiExtensionAdapter(pi, createExtensionContext());
+      return init(adapter);
+    };
+  };
+
   // Note: sandbox requires its own npm install (has a package.json).
   // We load it as a factory only when enabled AND its index.ts is resolvable.
   // In test environments we skip sandbox gracefully.
@@ -81,124 +112,124 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
       .catch(() => null);
 
   if (confirmEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('confirm-destructive');
-      if (mod?.default) mod.default(pi);
-    });
+      if (mod?.default) mod.default(api);
+    }));
   }
 
   if (protectedEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('protected-paths');
-      if (mod?.default) mod.default(pi);
-    });
+      if (mod?.default) mod.default(api);
+    }));
   }
 
   if (sessionNameEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('session-name');
-      if (mod?.default) mod.default(pi);
-    });
+      if (mod?.default) mod.default(api);
+    }));
   }
 
   if (compactionEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('custom-compaction');
-      if (mod?.default) mod.default(pi);
-    });
+      if (mod?.default) mod.default(api);
+    }));
   }
 
   if (gitCheckpointEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('git-checkpoint');
-      if (mod?.default) mod.default(pi);
-    });
+      if (mod?.default) mod.default(api);
+    }));
   }
 
   if (schedulerEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('scheduler-tool');
-      if (mod?.default) mod.default(pi);
-    });
+      if (mod?.default) mod.default(api);
+    }));
   }
 
   if (tokenMeterEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('token-meter');
-      if (mod?.default) mod.default(pi);
-    });
+      if (mod?.default) mod.default(api);
+    }));
   }
 
   if (webSearchEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('web-search');
-      if (mod?.default) await (mod.default as any)(pi, config);
-    });
+      if (mod?.default) await (mod.default as any)(api, config);
+    }));
   }
 
   if (skillManagerEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('skill-manager');
-      if (mod?.default) await (mod.default as any)(pi, config);
-    });
+      if (mod?.default) await (mod.default as any)(api, config);
+    }));
   }
 
   if (mcpEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('mcp-manager');
-      if (mod?.default) await (mod.default as any)(pi, config);
-    });
+      if (mod?.default) await (mod.default as any)(api, config);
+    }));
   }
 
   if (injectionGuardEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('injection-guard');
-      if (mod?.default) await (mod.default as any)(pi, config);
-    });
+      if (mod?.default) await (mod.default as any)(api, config);
+    }));
   }
 
   // Trust-enforcer — always loaded (no feature flag).
   // Hooks tool_call and blocks disallowed tools for end-user trust.
   // No-op when trust is owner or no whitelist is configured.
-  factories.push(async (pi) => {
+  factories.push(withAdapter(async (api) => {
     const mod = await importExt('trust-enforcer');
     if (mod?.makeTrustEnforcerExtension) {
-      mod.makeTrustEnforcerExtension(pi, config);
+      mod.makeTrustEnforcerExtension(api, config);
     } else if (mod?.default) {
-      await (mod.default as any)(pi, config);
+      await (mod.default as any)(api, config);
     }
-  });
+  }));
 
   // Memory manager — always loaded so session_search is always available.
   // The extension itself gates the memory tool and system prompt injection
   // on config.memory.enabled internally.
-  factories.push(async (pi) => {
+  factories.push(withAdapter(async (api) => {
     const mod = await importExt('memory-manager');
-    if (mod?.default) await (mod.default as any)(pi, config);
-  });
+    if (mod?.default) await (mod.default as any)(api, config);
+  }));
 
   // Budget manager — always loaded (no feature flag).
   // Registers set_budget, check_budget, budget_status tools and turn_end/agent_end hooks.
-  factories.push(async (pi) => {
+  factories.push(withAdapter(async (api) => {
     const mod = await importExt('budget-manager');
     if (mod?.makeBudgetManagerExtension) {
       const { getDb } = await import('../db/index.js');
       try {
         const db = getDb();
-        mod.makeBudgetManagerExtension(pi, { workspacePath: context.workspacePath, config });
+        mod.makeBudgetManagerExtension(api, { workspacePath: context.workspacePath, config });
       } catch {
         // If DB not available, fall back to default export
-        if (mod?.default) mod.default(pi);
+        if (mod?.default) mod.default(api);
       }
     } else if (mod?.default) {
-      await (mod.default as any)(pi, config);
+      await (mod.default as any)(api, config);
     }
-  });
+  }));
 
   // Observability extension — always loaded (no feature flag).
   // Registers session_shutdown and after_provider_response hooks.
   // Uses getDb() singleton to access the database.
-  factories.push(async (pi) => {
+  factories.push(withAdapter(async (api) => {
     const mod = await importExt('observability');
     if (mod?.makeObservabilityExtension) {
       const { getDb } = await import('../db/index.js');
@@ -206,40 +237,40 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
         const db = getDb();
         const threshold = (config as any)?.logging?.rate_limit_warn_threshold ?? 5000;
         const configProvider: string = (config as any)?.agent?.model?.provider ?? 'unknown';
-        mod.makeObservabilityExtension(pi, db, { rateLimitWarnThreshold: threshold, configProvider });
+        mod.makeObservabilityExtension(api, db, { rateLimitWarnThreshold: threshold, configProvider });
       } catch {
         // DB not available yet — skip observability hooks silently
       }
     }
-  });
+  }));
 
   // Capabilities discovery extension — always loaded (no feature flag).
   // Discovers all registered tools and injects a capabilities block into
   // the system prompt on every session start. Must be loaded AFTER all
   // other extensions so getAllTools() sees the full tool set.
-  factories.push(async (pi) => {
+  factories.push(withAdapter(async (api) => {
     const mod = await importExt('capabilities');
-    if (mod?.default) await (mod.default as any)(pi, config);
-  });
+    if (mod?.default) await (mod.default as any)(api, config);
+  }));
 
   // Knowledge manager — loaded when knowledge.enabled=true (default false).
   // Registers knowledge_search, knowledge_ingest, and optionally wiki tools.
   if (knowledgeEnabled) {
-    factories.push(async (pi) => {
+    factories.push(withAdapter(async (api) => {
       const mod = await importExt('knowledge-manager');
       if (mod?.makeKnowledgeExtension) {
         const { getDb } = await import('../db/index.js');
         try {
           const db = getDb();
-          mod.makeKnowledgeExtension(pi, config, db);
+          mod.makeKnowledgeExtension(api, config, db);
         } catch {
           // DB not available — call without DB
-          mod.makeKnowledgeExtension(pi, config);
+          mod.makeKnowledgeExtension(api, config);
         }
       } else if (mod?.default) {
-        await (mod.default as any)(pi);
+        await (mod.default as any)(api);
       }
-    });
+    }));
   }
 
   return factories;

@@ -12,7 +12,7 @@
  *   - before_agent_start — discovers tools, builds block, appends to system prompt
  */
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from './extension-api.js';
 import { emitEvent } from '../observability/events.js';
 import { getDb } from '../db/index.js';
 

@@ -54,7 +54,7 @@ describe('approval modes — deny', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/stuff' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/stuff' } },
       { hasUI: false },
     );
     expect(result).toBeDefined();
@@ -73,7 +73,7 @@ describe('approval modes — manual (with UI)', () => {
     const handler = mockPi._handlers['tool_call'];
     const ctx = { hasUI: true, ui: { confirm: confirmFn } };
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/stuff' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/stuff' } },
       ctx,
     );
     expect(confirmFn).toHaveBeenCalled();
@@ -92,7 +92,7 @@ describe('approval modes — manual (with UI)', () => {
     const handler = mockPi._handlers['tool_call'];
     const ctx = { hasUI: true, ui: { confirm: confirmFn } };
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/stuff' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/stuff' } },
       ctx,
     );
     expect(confirmFn).toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe('approval modes — manual (with UI)', () => {
     const handler = mockPi._handlers['tool_call'];
     const ctx = { hasUI: true, ui: { confirm: confirmFn } };
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf /' } },
+      { toolName: 'bash', args: { command: 'rm -rf /' } },
       ctx,
     );
     expect(result).toBeDefined();
@@ -138,7 +138,7 @@ describe('approval modes — manual (headless)', () => {
     const handler = mockPi._handlers['tool_call'];
     const ctx = { hasUI: false, cwd: workspaceDir };
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/stuff' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/stuff' } },
       ctx,
     );
     expect(result).toBeDefined();
@@ -165,7 +165,7 @@ describe('approval modes — smart', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf ./node_modules' } },
+      { toolName: 'bash', args: { command: 'rm -rf ./node_modules' } },
       { hasUI: false },
     );
     expect(assessRiskFn).toHaveBeenCalledWith('rm -rf ./node_modules');
@@ -183,7 +183,7 @@ describe('approval modes — smart', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf / --no-preserve-root' } },
+      { toolName: 'bash', args: { command: 'rm -rf / --no-preserve-root' } },
       { hasUI: false },
     );
     // Hardline would catch this, but let's test with a non-hardline command that's high risk
@@ -204,7 +204,7 @@ describe('approval modes — smart', () => {
       mod.default(mockPi, config);
       const handler = mockPi._handlers['tool_call'];
       const result = await handler(
-        { toolName: 'bash', input: { command: 'rm -rf /tmp/data' } },
+        { toolName: 'bash', args: { command: 'rm -rf /tmp/data' } },
         { hasUI: false, cwd: workspaceDir },
       );
       expect(result).toBeDefined();
@@ -230,15 +230,15 @@ describe('approval modes — smart', () => {
     const ctx = { hasUI: false, cwd: undefined };
 
     // First call — should trigger LLM
-    await handler({ toolName: 'bash', input: { command: 'rm -rf ./node_modules' } }, ctx);
+    await handler({ toolName: 'bash', args: { command: 'rm -rf ./node_modules' } }, ctx);
     expect(assessRiskFn).toHaveBeenCalledTimes(1);
 
     // Second call with same command — should use cache
-    await handler({ toolName: 'bash', input: { command: 'rm -rf ./node_modules' } }, ctx);
+    await handler({ toolName: 'bash', args: { command: 'rm -rf ./node_modules' } }, ctx);
     expect(assessRiskFn).toHaveBeenCalledTimes(1); // still 1, cached
 
     // Different command — should trigger new LLM call
-    await handler({ toolName: 'bash', input: { command: 'rm -rf ./dist' } }, ctx);
+    await handler({ toolName: 'bash', args: { command: 'rm -rf ./dist' } }, ctx);
     expect(assessRiskFn).toHaveBeenCalledTimes(2);
   });
 });
@@ -299,7 +299,7 @@ describe('approval modes — headless approval flow (yes/no processing)', () => 
     // Step 5: The approved command should now be auto-approved
     const toolHandler = mockPi._handlers['tool_call'];
     const toolResult = await toolHandler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/old-data' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/old-data' } },
       { hasUI: false, cwd: workspaceDir },
     );
     expect(toolResult).toBeUndefined(); // auto-approved, no block
@@ -340,7 +340,7 @@ describe('approval modes — headless approval flow (yes/no processing)', () => 
     // Step 5: The command should still be blocked (not in allowlist)
     const toolHandler = mockPi._handlers['tool_call'];
     const toolResult = await toolHandler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/old-data' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/old-data' } },
       { hasUI: false, cwd: workspaceDir },
     );
     expect(toolResult).toBeDefined();
@@ -421,14 +421,14 @@ describe('approval modes — headless approval flow (yes/no processing)', () => 
 
     // Step 3: Same command → auto-approved
     const r1 = await toolHandler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/build' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/build' } },
       { hasUI: false, cwd: workspaceDir },
     );
     expect(r1).toBeUndefined();
 
     // Step 4: Different dangerous command → still requires approval
     const r2 = await toolHandler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/other' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/other' } },
       { hasUI: false, cwd: workspaceDir },
     );
     expect(r2).toBeDefined();
@@ -470,7 +470,7 @@ describe('approval modes — off', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf /tmp/stuff' } },
+      { toolName: 'bash', args: { command: 'rm -rf /tmp/stuff' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined(); // no block in off mode
@@ -483,7 +483,7 @@ describe('approval modes — off', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf /' } },
+      { toolName: 'bash', args: { command: 'rm -rf /' } },
       { hasUI: false },
     );
     expect(result).toBeDefined();

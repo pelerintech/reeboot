@@ -16,7 +16,7 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Type } from 'typebox';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from './extension-api.js';
 import type { Config, McpPermissions } from '../config.js';
 import { getLogger } from '../observability/logger.js';
 

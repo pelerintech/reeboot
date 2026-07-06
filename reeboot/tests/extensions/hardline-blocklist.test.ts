@@ -36,7 +36,7 @@ describe('hardline blocklist', () => {
     if (!handler) throw new Error('Expected tool_call handler to be registered');
 
     return handler(
-      { toolName: 'bash', input: { command } },
+      { toolName: 'bash', args: { command } },
       { hasUI: false },
     );
   }
