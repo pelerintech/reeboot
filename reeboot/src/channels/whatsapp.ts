@@ -110,7 +110,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
         const baileysLogger = getLogger().child({ component: 'whatsapp' });
         baileysLogger.level = 'warn';
-        const sock = makeWASocket({
+        // Build socket config — pairingCode exists at runtime but Baileys
+        // types lag behind, so we cast the whole object.
+        const sockConfig: any = {
           version,
           auth: state,
           browser: Browsers.ubuntu('Chrome'),
@@ -123,7 +125,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
           // The user enters their phone number, gets a 6-digit code, and
           // enters it in WhatsApp → Settings → Linked Devices.
           pairingCode: true,
-        });
+        };
+        const sock = makeWASocket(sockConfig);
 
         this._socket = sock;
 

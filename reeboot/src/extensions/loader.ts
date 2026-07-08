@@ -276,6 +276,65 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
   return factories;
 }
 
+// ─── getReeFactories ─────────────────────────────────────────────────────────
+// Returns the list of ExtensionFactory functions for ree mode (TanStack AI).
+// Unlike getBundledFactories, these factories take (api: ExtensionAPI) => void
+// directly — NO withAdapter wrapper. The ReeRuntime calls each factory with
+// a ReeExtensionAdapter directly.
+//
+// Four extensions run through the ree adapter:
+// 1. observability — session_shutdown, after_provider_response
+// 2. session-name — registerCommand, setSessionName/getSessionName
+// 3. token-meter — agent_end
+// 4. capabilities — before_agent_start, getAllTools (loaded LAST)
+
+export function getReeFactories(config: Config): import('./extension-api.js').ExtensionFactory[] {
+  const factories: import('./extension-api.js').ExtensionFactory[] = [];
+
+  // Helper: try compiled .js first (production dist/extensions/),
+  // fall back to .ts (vitest runs from src/extensions/ without compilation)
+  const importExt = (name: string) =>
+    import(join(BUNDLED_EXTENSIONS_DIR, `${name}.js`))
+      .catch(() => import(join(BUNDLED_EXTENSIONS_DIR, `${name}.ts`)))
+      .catch(() => null);
+
+  // 1. observability — makeObservabilityExtension(api, db, opts)
+  factories.push(async (api) => {
+    const mod = await importExt('observability');
+    if (mod?.makeObservabilityExtension) {
+      try {
+        const { getDb } = await import('../db/index.js');
+        const db = getDb();
+        const threshold = (config as any)?.logging?.rate_limit_warn_threshold ?? 5000;
+        const configProvider: string = (config as any)?.agent?.model?.provider ?? 'unknown';
+        mod.makeObservabilityExtension(api, db, { rateLimitWarnThreshold: threshold, configProvider });
+      } catch {
+        // DB not available — skip observability hooks silently
+      }
+    }
+  });
+
+  // 2. session-name — default(api)
+  factories.push(async (api) => {
+    const mod = await importExt('session-name');
+    if (mod?.default) mod.default(api);
+  });
+
+  // 3. token-meter — default(api)
+  factories.push(async (api) => {
+    const mod = await importExt('token-meter');
+    if (mod?.default) mod.default(api);
+  });
+
+  // 4. capabilities — default(api, config) — loaded LAST (sees full tool set)
+  factories.push(async (api) => {
+    const mod = await importExt('capabilities');
+    if (mod?.default) await (mod.default as any)(api, config);
+  });
+
+  return factories;
+}
+
 // ─── createLoader ─────────────────────────────────────────────────────────────
 
 export function createLoader(context: ContextConfig, config: Config): ResourceLoader {

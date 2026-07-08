@@ -4,8 +4,9 @@ FROM node:22-slim AS builder
 WORKDIR /app
 
 # Install dependencies first (better layer caching)
+# --legacy-peer-deps: TanStack AI packages have zod v4 peer dep conflicting with our zod v3
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # Copy source and build
 COPY . .
@@ -36,7 +37,7 @@ COPY --from=builder --chown=reeboot:reeboot /app/package.json ./package.json
 COPY --from=builder --chown=reeboot:reeboot /app/package-lock.json ./package-lock.json
 
 # Install production dependencies only
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --legacy-peer-deps
 
 # Make entrypoint executable
 RUN chmod +x ./container/entrypoint.sh
