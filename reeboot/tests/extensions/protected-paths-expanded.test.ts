@@ -39,7 +39,7 @@ describe('protected-paths expanded', () => {
   it('blocks write to ~/.ssh', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: '/home/user/.ssh/authorized_keys' } },
+      { toolName: 'write', args: { path: '/home/user/.ssh/authorized_keys' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "/home/user/.ssh/authorized_keys" is protected` });
@@ -48,7 +48,7 @@ describe('protected-paths expanded', () => {
   it('blocks write to ~/.aws', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'edit', input: { path: '/home/user/.aws/credentials' } },
+      { toolName: 'edit', args: { path: '/home/user/.aws/credentials' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "/home/user/.aws/credentials" is protected` });
@@ -57,7 +57,7 @@ describe('protected-paths expanded', () => {
   it('blocks write to ~/.gnupg', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: '/home/user/.gnupg/private-keys-v1.d/xxx.key' } },
+      { toolName: 'write', args: { path: '/home/user/.gnupg/private-keys-v1.d/xxx.key' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "/home/user/.gnupg/private-keys-v1.d/xxx.key" is protected` });
@@ -66,7 +66,7 @@ describe('protected-paths expanded', () => {
   it('blocks write to system /etc/', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'edit', input: { path: '/etc/hosts' } },
+      { toolName: 'edit', args: { path: '/etc/hosts' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "/etc/hosts" is protected` });
@@ -75,7 +75,7 @@ describe('protected-paths expanded', () => {
   it('blocks write to /usr/', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: '/usr/local/bin/evil' } },
+      { toolName: 'write', args: { path: '/usr/local/bin/evil' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "/usr/local/bin/evil" is protected` });
@@ -84,7 +84,7 @@ describe('protected-paths expanded', () => {
   it('blocks write to /System/', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: '/System/foo' } },
+      { toolName: 'write', args: { path: '/System/foo' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "/System/foo" is protected` });
@@ -95,7 +95,7 @@ describe('protected-paths expanded', () => {
   it('still blocks .env', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: '.env' } },
+      { toolName: 'write', args: { path: '.env' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path ".env" is protected` });
@@ -104,7 +104,7 @@ describe('protected-paths expanded', () => {
   it('still blocks .git/', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'edit', input: { path: '.git/config' } },
+      { toolName: 'edit', args: { path: '.git/config' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path ".git/config" is protected` });
@@ -113,7 +113,7 @@ describe('protected-paths expanded', () => {
   it('still blocks node_modules/', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: 'node_modules/evil/index.js' } },
+      { toolName: 'write', args: { path: 'node_modules/evil/index.js' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "node_modules/evil/index.js" is protected` });
@@ -122,7 +122,7 @@ describe('protected-paths expanded', () => {
   it('still blocks config.json', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: 'config.json' } },
+      { toolName: 'write', args: { path: 'config.json' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "config.json" is protected` });
@@ -131,7 +131,7 @@ describe('protected-paths expanded', () => {
   it('blocks ~/.reeboot/config.json (documented path)', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: '/home/user/.reeboot/config.json' } },
+      { toolName: 'write', args: { path: '/home/user/.reeboot/config.json' } },
       { hasUI: false },
     );
     expect(result).toEqual({ block: true, reason: `Path "/home/user/.reeboot/config.json" is protected` });
@@ -142,7 +142,7 @@ describe('protected-paths expanded', () => {
   it('allows write to safe path notes.md', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: 'notes.md' } },
+      { toolName: 'write', args: { path: 'notes.md' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();
@@ -151,7 +151,7 @@ describe('protected-paths expanded', () => {
   it('allows write to /tmp', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: '/tmp/output.txt' } },
+      { toolName: 'write', args: { path: '/tmp/output.txt' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();
@@ -160,7 +160,7 @@ describe('protected-paths expanded', () => {
   it('allows write to src/', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: 'src/index.ts' } },
+      { toolName: 'write', args: { path: 'src/index.ts' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();
@@ -176,7 +176,7 @@ describe('protected-paths expanded', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(subDir);
 
     const result = await toolCallHandler(
-      { toolName: 'write', input: { path: '../../.ssh/config' } },
+      { toolName: 'write', args: { path: '../../.ssh/config' } },
       { hasUI: false },
     );
     expect(result?.block).toBe(true);
@@ -189,7 +189,7 @@ describe('protected-paths expanded', () => {
   it('does not block bash tool', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'bash', input: { command: 'echo .ssh' } },
+      { toolName: 'bash', args: { command: 'echo .ssh' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();
@@ -198,7 +198,7 @@ describe('protected-paths expanded', () => {
   it('does not block read tool', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'read', input: { path: '.ssh/config' } },
+      { toolName: 'read', args: { path: '.ssh/config' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();
@@ -207,7 +207,7 @@ describe('protected-paths expanded', () => {
   it('does not block grep tool', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'grep', input: { path: '.ssh/config' } },
+      { toolName: 'grep', args: { path: '.ssh/config' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();
@@ -219,7 +219,7 @@ describe('protected-paths expanded', () => {
     const { toolCallHandler } = await loadExtension();
     const mockCtx: any = { hasUI: true, ui: { notify: vi.fn() } };
     await toolCallHandler(
-      { toolName: 'write', input: { path: '/home/user/.ssh/config' } },
+      { toolName: 'write', args: { path: '/home/user/.ssh/config' } },
       mockCtx,
     );
     expect(mockCtx.ui.notify).toHaveBeenCalledWith(

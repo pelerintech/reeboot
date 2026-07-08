@@ -9,7 +9,7 @@
  *      actions (clear, switch, fork).
  */
 
-import type { ExtensionAPI, SessionBeforeSwitchEvent, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionBeforeSwitchEvent, SessionMessageEntry } from './extension-api.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { getLogger } from '../observability/logger.js';
@@ -113,7 +113,7 @@ export default function (pi: ExtensionAPI, config?: Record<string, any>) {
     // Only check bash tool calls
     if (event.toolName !== 'bash') return undefined;
 
-    const command: string = (event.input as any)?.command ?? '';
+    const command: string = (event.args as any)?.command ?? '';
     if (!command) return undefined;
 
     // Check hardline patterns first — no override possible
@@ -327,7 +327,7 @@ export default function (pi: ExtensionAPI, config?: Record<string, any>) {
     // reason === "resume" - check if there are unsaved changes (messages since last assistant response)
     const entries = ctx.sessionManager.getEntries();
     const hasUnsavedWork = entries.some(
-      (e): e is SessionMessageEntry => e.type === "message" && e.message.role === "user",
+      (e: any): e is SessionMessageEntry => e.type === "message" && e.message?.role === "user",
     );
 
     if (hasUnsavedWork) {

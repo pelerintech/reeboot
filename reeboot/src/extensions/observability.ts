@@ -1,24 +1,9 @@
 import { nanoid } from 'nanoid';
 import type { Database } from 'better-sqlite3';
+import type { ExtensionAPI, SessionShutdownEvent, AfterProviderResponseEvent } from './extension-api.js';
 import { getOpenJournals } from '../resilience/turn-journal.js';
 import { getLogger } from '../observability/logger.js';
 import { emitEvent } from '../observability/events.js';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface SessionShutdownEvent {
-  reason: string;
-  contextId?: string;
-  targetSessionFile?: string;
-  [key: string]: unknown;
-}
-
-interface AfterProviderResponseEvent {
-  headers?: Record<string, string>;
-  contextId?: string;
-  provider?: string;
-  [key: string]: unknown;
-}
 
 // ─── Options ─────────────────────────────────────────────────────────────────
 
@@ -37,12 +22,13 @@ export interface ObservabilityOptions {
  * Registers session_shutdown and after_provider_response hooks.
  * Always-on (no feature flag).
  */
-export function makeObservabilityExtension(pi: any, db: Database, opts: ObservabilityOptions = {}): void {
+export function makeObservabilityExtension(api: ExtensionAPI, db: Database, opts: ObservabilityOptions = {}): void {
   // ── session_shutdown hook ─────────────────────────────────────────────────
 
-  pi.on('session_shutdown', (event: SessionShutdownEvent) => {
+  api.on('session_shutdown', (event: SessionShutdownEvent) => {
     try {
-      const contextId = event.contextId ?? 'unknown';
+      // sessionId is the context ID in reeboot's adapter (derived from workspace path)
+      const contextId = event.sessionId ?? 'unknown';
       const sessionPath = event.targetSessionFile ?? null;
 
       // Check for open turn journal rows (crash evidence)
@@ -77,7 +63,7 @@ export function makeObservabilityExtension(pi: any, db: Database, opts: Observab
 
   // ── after_provider_response hook ──────────────────────────────────────────
 
-  pi.on('after_provider_response', (event: AfterProviderResponseEvent) => {
+  api.on('after_provider_response', (event: AfterProviderResponseEvent) => {
     try {
       const headers = event.headers ?? {};
       const remainingTokens = headers['x-ratelimit-remaining-tokens']

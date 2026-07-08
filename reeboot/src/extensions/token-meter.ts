@@ -9,7 +9,7 @@
  * (from .reeboot_turn_meta.json written by the orchestrator before dispatch).
  */
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from './extension-api.js';
 
 export default function (pi: ExtensionAPI) {
   pi.on('agent_end', async (event, ctx) => {
