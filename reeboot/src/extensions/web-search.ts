@@ -13,7 +13,7 @@
  */
 
 import { Type } from 'typebox';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from './extension-api.js';
 import { createRequire } from 'module';
 import { parseHTML } from 'linkedom';
 import { getLogger } from '../observability/logger.js';

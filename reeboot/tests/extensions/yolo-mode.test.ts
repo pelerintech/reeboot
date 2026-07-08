@@ -53,7 +53,7 @@ describe('YOLO mode', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf ./node_modules' } },
+      { toolName: 'bash', args: { command: 'rm -rf ./node_modules' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined(); // auto-approved by YOLO
@@ -66,7 +66,7 @@ describe('YOLO mode', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf /' } },
+      { toolName: 'bash', args: { command: 'rm -rf /' } },
       { hasUI: false },
     );
     expect(result).toBeDefined();
@@ -82,7 +82,7 @@ describe('YOLO mode', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf ./node_modules' } },
+      { toolName: 'bash', args: { command: 'rm -rf ./node_modules' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined(); // auto-approved by env var YOLO
@@ -95,7 +95,7 @@ describe('YOLO mode', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'rm -rf ./node_modules' } },
+      { toolName: 'bash', args: { command: 'rm -rf ./node_modules' } },
       { hasUI: false },
     );
     expect(result).toBeDefined();
@@ -111,7 +111,7 @@ describe('YOLO mode', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'bash', input: { command: 'ls -la' } },
+      { toolName: 'bash', args: { command: 'ls -la' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();
@@ -124,7 +124,7 @@ describe('YOLO mode', () => {
     mod.default(mockPi, config);
     const handler = mockPi._handlers['tool_call'];
     const result = await handler(
-      { toolName: 'read', input: { path: '/etc/passwd' } },
+      { toolName: 'read', args: { path: '/etc/passwd' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();

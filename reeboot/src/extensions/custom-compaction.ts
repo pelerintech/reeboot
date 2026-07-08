@@ -13,7 +13,7 @@
  *   pi --extension examples/extensions/custom-compaction.ts
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from './extension-api.js';
 import { generateSummary } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {

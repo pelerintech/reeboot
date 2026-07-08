@@ -26,7 +26,7 @@ async function callToolCallHandler(
   if (!handlerList || handlerList.length === 0) throw new Error('no tool_call handler');
   // Use the first (and only) tool_call handler
   return handlerList[0](
-    { toolName: 'bash', input: { command } },
+    { toolName: 'bash', args: { command } },
     { hasUI: false },
   );
 }
@@ -239,7 +239,7 @@ describe('dangerous commands — blocking', () => {
     const { handlers } = await loadConfirmDestructive();
     const handlerList = handlers.tool_call;
     const result = await handlerList[0](
-      { toolName: 'write', input: { path: 'rm -rf /' } },
+      { toolName: 'write', args: { path: 'rm -rf /' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();
@@ -249,7 +249,7 @@ describe('dangerous commands — blocking', () => {
     const { handlers } = await loadConfirmDestructive();
     const handlerList = handlers.tool_call;
     const result = await handlerList[0](
-      { toolName: 'read', input: { path: '/etc/hosts' } },
+      { toolName: 'read', args: { path: '/etc/hosts' } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();

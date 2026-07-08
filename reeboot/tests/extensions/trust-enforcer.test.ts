@@ -56,7 +56,7 @@ async function loadTrustEnforcer(config: any, trust: string) {
     async callToolCall(toolName: string) {
       const list = handlers.tool_call;
       if (!list || list.length === 0) return null;
-      return list[0]({ toolName, input: {} }, ctx);
+      return list[0]({ toolName, args: {} }, ctx);
     },
   };
 }
@@ -148,7 +148,7 @@ describe('trust-enforcer', () => {
 
     const ctx = { cwd: '/nonexistent/path' };
     const list = handlers.tool_call;
-    const result = await list[0]({ toolName: 'bash', input: {} }, ctx);
+    const result = await list[0]({ toolName: 'bash', args: {} }, ctx);
     expect(result).toBeUndefined(); // owner → no block
   });
 

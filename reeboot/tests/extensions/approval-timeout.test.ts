@@ -180,7 +180,7 @@ describe('approval timeout — CLI mode', () => {
     const handler = mockPi._handlers['tool_call'];
     const ctx = { hasUI: true, ui: { confirm: confirmFn } };
     await handler(
-      { toolName: 'bash', input: { command: 'rm -rf ./node_modules' } },
+      { toolName: 'bash', args: { command: 'rm -rf ./node_modules' } },
       ctx,
     );
 
