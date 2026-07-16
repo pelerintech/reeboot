@@ -326,9 +326,16 @@ export function getReeFactories(config: Config): import('./extension-api.js').Ex
     if (mod?.default) mod.default(api);
   });
 
-  // 4. capabilities — default(api, config) — loaded LAST (sees full tool set)
+  // 4. capabilities — default(api, config) — loads BEFORE session_search so
+  //    session_search sees the full tool set from capabilities
   factories.push(async (api) => {
     const mod = await importExt('capabilities');
+    if (mod?.default) await (mod.default as any)(api, config);
+  });
+
+  // 5. ree-session-search — session_search tool (ree mode only, scoped to current chat)
+  factories.push(async (api) => {
+    const mod = await importExt('ree-session-search');
     if (mod?.default) await (mod.default as any)(api, config);
   });
 

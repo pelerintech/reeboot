@@ -31,9 +31,11 @@ import {
 import { nanoid } from 'nanoid';
 import { migratePackages } from './packages.js';
 import { homedir } from 'os';
-import type { ChannelAdapter } from './channels/interface.js';
+import type { ChannelAdapter, MessageBus } from './channels/interface.js';
 import type { Orchestrator } from './orchestrator.js';
 import { broadcastToAllChannels } from './utils/broadcast.js';
+import { webAdapter } from './channels/web.js';
+import { createIncomingMessage } from './channels/interface.js';
 import type { Scheduler } from './scheduler.js';
 import { streamSSE } from 'hono/streaming';
 import { getLogger, initLogger } from './observability/logger.js';
@@ -73,8 +75,8 @@ export interface ServerOptions {
 
 let _server: ServerType | null = null;
 
-// Active runners: contextId → AgentRunner
-const _activeRunners = new Map<string, AgentRunner>();
+// MessageBus (set during startServer, used by WS handler)
+let _bus: MessageBus | null = null;
 
 // Channel adapters (set during startServer)
 let _channelAdapters = new Map<string, ChannelAdapter>();
@@ -110,13 +112,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
   const app = new Hono();
 
-  // ── Static file serving for webchat ──────────────────────────────────────
-  const webchatDir = resolve(__dirname, '../webchat');
-  try {
-    app.use('*', serveStatic({ root: webchatDir, index: 'index.html' }));
-  } catch {
-    // webchat dir may not exist in test environments — that's OK
-  }
+  // ── Static file serving for webchat SPA (configured after API routes) ──
 
   // Get or set up the DB
   let db: Database.Database;
@@ -192,9 +188,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
       const { MessageBus } = await import('./channels/interface.js');
       const { Orchestrator: OrchestratorClass } = await import('./orchestrator.js');
 
-      const bus = new MessageBus();
+      _bus = new MessageBus();
 
-      _channelAdapters = await globalRegistry.initChannels(appConfig as any, bus);
+      _channelAdapters = await globalRegistry.initChannels(appConfig as any, _bus);
 
       const { scanSessionForUnansweredMessage } = await import('./resilience/startup.js');
 
@@ -227,7 +223,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
       _orchestrator = new OrchestratorClass(
         appConfig as any,
-        bus,
+        _bus,
         _channelAdapters,
         orchestratorRunners,
         db
@@ -244,7 +240,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           appConfig as any,
           _channelAdapters,
           (contextId: string, prompt: string) => {
-            bus.publish(
+            _bus!.publish(
               createIncomingMessage({
                 channelType: 'recovery',
                 peerId: contextId,
@@ -282,7 +278,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
             const { createIncomingMessage } = await import('./channels/interface.js');
             const { buildScheduledPrompt } = await import('./scheduler.js');
             const enrichedPrompt = buildScheduledPrompt(task);
-            bus.publish(
+            _bus!.publish(
               createIncomingMessage({
                 channelType: 'scheduler',
                 peerId: 'scheduler',
@@ -310,7 +306,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
         // ── Heartbeat init ───────────────────────────────────────────
         if (appConfig.heartbeat) {
-          startHeartbeat(appConfig.heartbeat, db, bus);
+          startHeartbeat(appConfig.heartbeat, db, _bus);
           if (appConfig.heartbeat.enabled) {
             getLogger().info({ component: 'server' }, '[server] System heartbeat started');
           }
@@ -325,9 +321,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
   // ── Routes ──────────────────────────────────────────────────────────────
 
-  // GET / — serve WebChat (fallback if serveStatic missed it)
+  // GET / — serve WebChat SPA (fallback if static serving missed it)
   app.get('/', async (c) => {
-    const webchatPath = resolve(__dirname, '../webchat/index.html');
+    const webchatPath = resolve(__dirname, '../webchat/dist/index.html');
     try {
       const html = readFileSync(webchatPath, 'utf-8');
       return c.text(html, 200, { 'Content-Type': 'text/html' });
@@ -437,15 +433,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
     // Schedule shutdown after response is sent
     setTimeout(async () => {
-      const DRAIN_TIMEOUT_MS = 30_000;
-      const drainStart = Date.now();
-
       if (_orchestrator) {
         _orchestrator.stop();
-      }
-
-      while (_activeRunners.size > 0 && Date.now() - drainStart < DRAIN_TIMEOUT_MS) {
-        await new Promise(r => setTimeout(r, 100));
       }
 
       for (const adapter of _channelAdapters.values()) {
@@ -469,6 +458,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   // ── REST: Task API ──────────────────────────────────────────────────────
 
   app.get('/api/tasks', (c) => {
+    // Ree mode doesn't use the scheduler — return empty array
+    if ((opts.config as any)?.sdk === 'ree') {
+      return c.json([]);
+    }
     const tasks = db
       .prepare('SELECT id, context_id as contextId, schedule, prompt, enabled, last_run as lastRun, created_at as createdAt FROM tasks')
       .all();
@@ -527,6 +520,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   // ── REST: Context API ───────────────────────────────────────────────────
 
   app.get('/api/contexts', (c) => {
+    // Ree mode uses chats table, not contexts — return empty array
+    if ((opts.config as any)?.sdk === 'ree') {
+      return c.json([]);
+    }
     return c.json(listContexts(db));
   });
 
@@ -546,6 +543,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   });
 
   app.get('/api/contexts/:id/sessions', async (c) => {
+    // Ree mode doesn't have pi-style sessions — return empty array
+    if ((opts.config as any)?.sdk === 'ree') {
+      return c.json([]);
+    }
     const ctx = getContextById(db, c.req.param('id'));
     if (!ctx) {
       return c.json({ error: 'Context not found' }, 404);
@@ -645,8 +646,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           return;
         }
 
-        // Generate session ID
+        // Generate unique session ID per connection for peer routing
+        // contextId is used for runner resolution, sessionId for reply routing
         const sessionId = nanoid();
+
+        // Register peer with WebAdapter for reply routing
+        // wsSend is a no-op — streaming events deliver everything via sendEvent
+        const wsSend = async () => {};
+        const wsEvent = (event: any) => {
+          try { ws.send(JSON.stringify(event)); } catch { /* connection may be closed */ }
+        };
+        webAdapter.registerPeer(sessionId, wsSend, wsEvent);
+
+        // Send connected event with unique sessionId
         ws.send(JSON.stringify({ type: 'connected', contextId, sessionId }));
       },
 
@@ -660,66 +672,48 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
         }
 
         if (msg.type === 'cancel') {
-          const runner = _activeRunners.get(contextId);
-          if (runner) {
-            runner.abort();
-            _activeRunners.delete(contextId);
-            ws.send(JSON.stringify({ type: 'cancelled' }));
+          // Publish a cancellation signal to the bus.
+          // The orchestrator detects action: 'cancel' and calls runner.abort().
+          if (_bus) {
+            _bus.publish(createIncomingMessage({
+              channelType: 'web',
+              peerId: sessionId,
+              content: '',
+              raw: null,
+              action: 'cancel',
+            }));
           }
+          ws.send(JSON.stringify({ type: 'cancelled' }));
           return;
         }
 
         if (msg.type === 'message') {
-          // Check if a turn is already in-flight
-          if (_activeRunners.has(contextId)) {
-            ws.send(JSON.stringify({
-              type: 'error',
-              message: 'Agent is busy. Cancel the current turn first.',
-            }));
+          if (!_bus) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Server not fully initialized' }));
             return;
           }
-
-          const runId = nanoid();
-
-          // Get or create runner
-          let runner: AgentRunner;
-          try {
-            const { defaultConfig } = await import('./config.js');
-            const cfg = opts.config ?? defaultConfig;
-            runner = createRunner(
-              { id: contextId, workspacePath: join(reebotDir, 'contexts', contextId, 'workspace') },
-              cfg
-            );
-          } catch (err: any) {
-            ws.send(JSON.stringify({ type: 'error', message: String(err?.message ?? err) }));
-            return;
-          }
-
-          _activeRunners.set(contextId, runner);
-
-          try {
-            await runner.prompt(msg.content ?? '', (event) => {
-              ws.send(JSON.stringify(event));
-            });
-          } catch (err: any) {
-            if (err?.name !== 'AbortError') {
-              ws.send(JSON.stringify({ type: 'error', message: String(err?.message ?? err) }));
-            }
-          } finally {
-            _activeRunners.delete(contextId);
-          }
+          _bus.publish(createIncomingMessage({
+            channelType: 'web',
+            peerId: sessionId,
+            content: msg.content ?? '',
+            raw: null,
+          }));
         }
       },
 
       onClose(_event, ws) {
-        const runner = _activeRunners.get(contextId);
-        if (runner) {
-          runner.abort();
-          _activeRunners.delete(contextId);
-        }
+        webAdapter.unregisterPeer(sessionId);
       },
     };
   }));
+
+  // ── Serve built WebChat SPA (catches all non-API routes) ────────────────
+  try {
+    const webchatDist = resolve(__dirname, '../webchat/dist');
+    app.use('*', serveStatic({ root: webchatDist, index: 'index.html' }));
+  } catch {
+    // webchat/dist may not exist in test environments — that's OK
+  }
 
   // Custom 404 handler
   app.notFound((c) => {
@@ -772,12 +766,6 @@ export async function stopServer(): Promise<void> {
     try { await adapter.stop(); } catch { /* ignore */ }
   }
   _channelAdapters.clear();
-
-  // Abort all active runners before closing
-  for (const runner of _activeRunners.values()) {
-    try { runner.abort(); } catch { /* ignore */ }
-  }
-  _activeRunners.clear();
 
   if (_server) {
     await new Promise<void>((resolve) => {

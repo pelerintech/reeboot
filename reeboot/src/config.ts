@@ -281,7 +281,21 @@ const BudgetConfigSchema = z.object({
 
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 
+const ReeConfigSchema = z.object({
+  maxChats: z.number().int().positive().default(200),
+  idleTtlMs: z.number().int().positive().default(1_800_000),
+  maxHistoryPerChat: z.number().int().positive().default(50),
+  systemPrompt: z.string().default(''),
+  maxIterations: z.number().int().positive().default(5),
+  model: ModelConfigSchema.optional(),
+  mcp: McpConfigSchema.optional(),
+});
+
+export type ReeConfig = z.infer<typeof ReeConfigSchema>;
+
 export const ConfigSchema = z.object({
+  sdk: z.enum(['pi', 'ree']).default('pi'),
+  ree: ReeConfigSchema.default({}),
   agent: AgentConfigSchema.default({}),
   channels: ChannelsConfigSchema.default({}),
   sandbox: SandboxConfigSchema.default({}),

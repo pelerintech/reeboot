@@ -45,6 +45,11 @@ export interface IncomingMessage {
    * Web and CLI leave this undefined — all their messages are implicitly from the owner.
    */
   fromSelf?: boolean;
+  /**
+   * If set to 'cancel', signals the orchestrator to abort the running turn
+   * instead of queuing the message as a normal turn.
+   */
+  action?: 'cancel';
 }
 
 /**

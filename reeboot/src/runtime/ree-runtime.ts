@@ -215,7 +215,7 @@ export class ReeRuntime {
       this._chats.delete(chatId);
 
       // Persisted-history lifecycle. Idle eviction prunes; explicit dispose keeps.
-      const db = this._getHistoryDb();
+      const db = this.getHistoryDb();
       if (db) {
         try {
           if (reason === 'idle') {
@@ -285,11 +285,12 @@ export class ReeRuntime {
   }
 
   /**
+  /**
    * Synchronous accessor for the resolved history-store DB handle.
    * Returns undefined when no DB is available (construction-provided handle,
    * or after initHistoryDb resolved/failed). Callers must tolerate undefined.
    */
-  private _getHistoryDb(): Database.Database | undefined {
+  getHistoryDb(): Database.Database | undefined {
     return this._historyDb;
   }
 
@@ -298,7 +299,7 @@ export class ReeRuntime {
    * Called on chat creation (including resume after explicit dispose).
    */
   private _loadHistoryIntoChat(chat: ReeChat): void {
-    const db = this._getHistoryDb();
+    const db = this.getHistoryDb();
     if (!db) return;
     try {
       const rows = loadHistory(db, chat.chatId, this._maxHistoryPerChat);
@@ -322,7 +323,7 @@ export class ReeRuntime {
     userMsg: { role: string; content: unknown },
     assistantMsg: { role: string; content: unknown },
   ): void {
-    const db = this._getHistoryDb();
+    const db = this.getHistoryDb();
     if (!db) return;
     try {
       upsertChat(db, chatId);
@@ -360,8 +361,8 @@ export class ReeRuntime {
    * Translated to TanStack stdio transport: { type: 'stdio', command, args, env }.
    */
   private _initMcpClientsSync(): void {
-    const reeConfig = (this.config as any)?.ree ?? {};
-    const servers = reeConfig.mcp?.servers ?? (this.config as any)?.mcp?.servers ?? [];
+    const ree = (this.config as any)?.ree as import('../config.js').ReeConfig | undefined;
+    const servers = ree?.mcp?.servers ?? (this.config as any)?.mcp?.servers ?? [];
     if (!Array.isArray(servers) || servers.length === 0) return;
 
     // Build MCP client promises — each is async (connects to the server)
@@ -420,8 +421,8 @@ export class ReeRuntime {
    * Extra client options (baseURL, fetch, etc.) pass through from config.
    */
   createTanStackClient(): unknown {
-    const reeConfig = (this.config as any)?.ree ?? {};
-    const modelConfig = reeConfig.model ?? (this.config as any)?.agent?.model ?? {};
+    const ree = (this.config as any)?.ree as import('../config.js').ReeConfig | undefined;
+    const modelConfig = ree?.model ?? (this.config as any)?.agent?.model ?? {};
     const provider = String(modelConfig.provider ?? 'openai').toLowerCase();
     const modelId = String(modelConfig.id ?? 'gpt-4o');
     const apiKey = modelConfig.apiKey ?? resolveProviderEnvKey(provider) ?? 'no-key';

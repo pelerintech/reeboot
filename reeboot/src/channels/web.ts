@@ -13,6 +13,7 @@
  */
 
 import type { ChannelAdapter, ChannelConfig, MessageBus, MessageContent, ChannelStatus } from './interface.js';
+import type { RunnerEvent } from '../agent-runner/interface.js';
 import { registerChannel } from './registry.js';
 import { emitEvent } from '../observability/events.js';
 import { getDb } from '../db/index.js';
@@ -23,6 +24,8 @@ export class WebAdapter implements ChannelAdapter {
   private _bus: MessageBus | null = null;
   // Map of peerId → send function (registered by the WS handler)
   private _senders = new Map<string, (content: MessageContent) => Promise<void>>();
+  // Map of peerId → onEvent callback for streaming RunnerEvents
+  private _eventCallbacks = new Map<string, (event: RunnerEvent) => void>();
 
   async init(_config: ChannelConfig, bus: MessageBus): Promise<void> {
     this._bus = bus;
@@ -72,12 +75,27 @@ export class WebAdapter implements ChannelAdapter {
    * Register a sender function for a connected WebSocket peer.
    * Called by the WS chat handler when a client connects.
    */
-  registerPeer(peerId: string, sender: (content: MessageContent) => Promise<void>): void {
+  registerPeer(peerId: string, sender: (content: MessageContent) => Promise<void>, onEvent?: (event: RunnerEvent) => void): void {
     this._senders.set(peerId, sender);
+    if (onEvent) {
+      this._eventCallbacks.set(peerId, onEvent);
+    }
   }
 
   unregisterPeer(peerId: string): void {
     this._senders.delete(peerId);
+    this._eventCallbacks.delete(peerId);
+  }
+
+  /**
+   * Forward a RunnerEvent to a specific peer.
+   * Silently no-ops if the peer has no event callback registered.
+   */
+  sendEvent(peerId: string, event: RunnerEvent): void {
+    const cb = this._eventCallbacks.get(peerId);
+    if (cb) {
+      cb(event);
+    }
   }
 
   getBus(): MessageBus | null {

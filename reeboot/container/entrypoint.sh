@@ -4,18 +4,16 @@
 # Behaviour:
 #   1. If REEBOOT_AGENTS_MD is set, write it to ~/.reeboot/agent/AGENTS.md
 #      (persona injection — done before start so pi picks it up as agentDir context)
-#   2. If ~/.reeboot/config.json already exists (volume-mounted from host setup),
-#      skip env var translation and start directly.
-#   3. Otherwise, translate REEBOOT_* env vars into --no-interactive flags
-#      and generate config.json on first boot.
+#   2. If ~/.reeboot/config.json exists (volume-mounted from host setup), start directly.
+#   3. If no config.json, print error and exit — config file is the single source of truth.
+#
+# The config file is the only supported configuration mechanism for containers.
+# Create a config.json and mount it via:
+#   docker run -v /path/to/config-dir:/home/reeboot/.reeboot ...
+# Or use docker-compose with a bind mount (see docker-compose.yml).
 #
 # Supported env vars:
-#   REEBOOT_PROVIDER    → --provider
-#   REEBOOT_API_KEY     → --api-key
-#   REEBOOT_MODEL       → --model
-#   REEBOOT_NAME        → --name
-#   REEBOOT_AUTH_MODE   → --auth-mode  ("pi" | "own", default "own")
-#   REEBOOT_AGENTS_MD   → written to ~/.reeboot/agent/AGENTS.md
+#   REEBOOT_AGENTS_MD   → written to ~/.reeboot/agent/AGENTS.md (persona injection)
 #   REEBOOT_HOST        → bind address (default 0.0.0.0)
 #
 # Knowledge / embedding cache:
@@ -42,27 +40,11 @@ if [ -f "${CONFIG_FILE}" ]; then
   exec node dist/index.js start --no-interactive "$@"
 fi
 
-# ── Step 3: no config — translate env vars and generate config on first boot ──
-FLAGS=""
-
-if [ -n "${REEBOOT_PROVIDER}" ]; then
-  FLAGS="${FLAGS} --provider ${REEBOOT_PROVIDER}"
-fi
-
-if [ -n "${REEBOOT_API_KEY}" ]; then
-  FLAGS="${FLAGS} --api-key ${REEBOOT_API_KEY}"
-fi
-
-if [ -n "${REEBOOT_MODEL}" ]; then
-  FLAGS="${FLAGS} --model ${REEBOOT_MODEL}"
-fi
-
-if [ -n "${REEBOOT_NAME}" ]; then
-  FLAGS="${FLAGS} --name ${REEBOOT_NAME}"
-fi
-
-if [ -n "${REEBOOT_AUTH_MODE}" ]; then
-  FLAGS="${FLAGS} --auth-mode ${REEBOOT_AUTH_MODE}"
-fi
-
-exec node dist/index.js start --no-interactive ${FLAGS} "$@"
+# ── Step 3: no config — print error and exit ────────────────────────────────
+echo "Error: No config.json found at ${CONFIG_FILE}"
+echo ""
+echo "To deploy reeboot:"
+echo "  1. Create a config file at ${CONFIG_FILE} with your settings"
+echo "  2. Or mount your config directory: docker run -v /path/to/config:${HOME}/.reeboot ..."
+echo "  3. Or run 'reeboot init' interactively on a native install"
+exit 1

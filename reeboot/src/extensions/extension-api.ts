@@ -550,6 +550,9 @@ export interface ExtensionAPI {
   /** Get the current session name (used by session-name extension) */
   getSessionName?(): string | undefined;
 
+  /** Get the current chat ID (ree mode) or undefined (pi mode) */
+  getCurrentChatId?(): string | undefined;
+
   /** Send a custom message to the session (used by scheduler-tool extension) */
   sendMessage?(
     message: { customType: string; content?: unknown; display?: unknown; details?: unknown },

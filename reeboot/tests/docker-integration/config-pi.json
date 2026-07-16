@@ -1,0 +1,20 @@
+{
+  "sdk": "pi",
+  "agent": {
+    "name": "Reeboot",
+    "model": {
+      "authMode": "own",
+      "provider": "custom",
+      "id": "ornith-35b-vllm",
+      "baseUrl": "http://100.107.230.26:3000/v1",
+      "apiKey": "sk-local-proxy"
+    }
+  },
+  "channels": {
+    "web": { "enabled": true, "port": 3000, "trust": "owner" },
+    "whatsapp": { "enabled": false },
+    "signal": { "enabled": false }
+  },
+  "memory": { "enabled": false },
+  "knowledge": { "enabled": false }
+}

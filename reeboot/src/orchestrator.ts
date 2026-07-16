@@ -191,6 +191,12 @@ export class Orchestrator {
     this._resetInactivityTimer(contextId, state);
 
     if (state.busy) {
+      // Cancel signal — abort the running turn instead of queuing
+      if (msg.action === 'cancel') {
+        const runner = this._runners.get(contextId);
+        if (runner) runner.abort();
+        return;
+      }
       // Queue or drop
       if (state.queue.length >= MAX_QUEUE_DEPTH) {
         this._reply(msg, QUEUE_FULL_REPLY);
@@ -198,6 +204,11 @@ export class Orchestrator {
         state.queue.push(msg);
         this._reply(msg, BUSY_REPLY);
       }
+      return;
+    }
+
+    // Cancel on idle context — silently ignore
+    if (msg.action === 'cancel') {
       return;
     }
 
@@ -348,6 +359,10 @@ export class Orchestrator {
               : JSON.stringify(event.tool_output ?? null),
             isError: !!(event.is_error ?? event.isError),
           });
+        }
+        // Forward event to channel adapter for streaming (e.g., WebAdapter.sendEvent)
+        if (presenceAdapter && typeof (presenceAdapter as any).sendEvent === 'function') {
+          (presenceAdapter as any).sendEvent(msg.peerId, event);
         }
       };
       // Inject channel context header for real channel turns

@@ -10,7 +10,7 @@ Tab/panel navigation with left sidebar, collapsing on mobile.
 **WHEN** the page loads
 **THEN** the navigation bar shows tabs: Chat (active), Channels, Logs, Settings
 **AND** the Chat panel is displayed as the default view
-**AND** the navigation bar is at the top of the page with a horizontal layout
+**AND** the navigation bar is a left sidebar with a vertical layout
 **AND** the active tab is highlighted with the accent color (#4f9cf9)
 
 ### GIVEN the user clicks on the Channels tab
@@ -57,6 +57,6 @@ Tab/panel navigation with left sidebar, collapsing on mobile.
 
 ### GIVEN the user is on a desktop viewport (>768px)
 **WHEN** the user switches tabs
-**THEN** the navigation bar remains at the top
-**AND** the content area is centered with max-width for readability
+**THEN** the sidebar remains on the left
+**AND** the content area fills the remaining space
 **AND** the tab transitions are smooth (fade or slide)
