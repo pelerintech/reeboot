@@ -11,33 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`sdk` and `ree` config fields** — `config.json` now supports `"sdk": "ree"` to select the multi-user support runtime. The `ree` block configures `maxChats`, `idleTtlMs`, `maxHistoryPerChat`, `systemPrompt`, `maxIterations`, optional `ree.model` (falls back to `agent.model`), and optional `ree.mcp` (falls back to `mcp`). Existing pi configs are unaffected — `sdk` defaults to `"pi"`. (Request: beta-stabilisation)
-- **`action: 'cancel'` bus signal** — cancel messages no longer use the `__cancel__` magic string. The `IncomingMessage` interface gains an optional `action?: 'cancel'` field. The orchestrator detects cancellation signals on busy contexts and calls `runner.abort()` instead of queuing them as normal messages. (Request: beta-stabilisation)
-- **`session_search` in ree mode** — the `session_search` tool is now available in ree mode, scoped to the current chat's `chat_messages` table. A new `ree-session-search` extension is registered as a fifth factory in `getReeFactories`. The `ExtensionAPI` gains `getCurrentChatId()` — `ReeExtensionAdapter` returns the chat ID, `PiExtensionAdapter` returns `undefined`. (Request: beta-stabilisation)
-- **`ReeRuntime.getHistoryDb()`** — public accessor for the per-chat history store database handle, used by the ree session_search tool. (Request: beta-stabilisation)
-- **API route guards for ree mode** — `/api/contexts`, `/api/tasks`, and `/api/contexts/:id/sessions` return empty arrays in ree mode instead of querying pi-specific tables. Health, status, channels, budget, logs, and reload continue to work in both modes. (Request: beta-stabilisation)
+- **Ree SDK** — new multi-user chat runtime powered by TanStack AI, enabled via `sdk: "ree"` in config. Supports concurrent isolated conversations with per-chat history, idle eviction, and a dedicated session_search tool scoped to the current chat.
+- **Revamped WebChat UI** — new React SPA with streaming message rendering, tool call indicators, connection status, budget settings panel, channel status page, and live log streaming.
+- **Improved Docker support** — streamlined entrypoint with config file as single source of truth. Docker Compose full-stack deployment with SearXNG, Signal CLI, and optional Caddy reverse proxy.
 
 ### Changed
 
-- **WebSocket streaming bridge — no more duplicate events** — the `wsSend` function in the WS handler is now a no-op. Streaming events (`text_delta`, `tool_call_*`, `message_end`) are delivered exclusively through the `sendEvent` path via the orchestrator's event forwarding. Previously `wsSend` fabricated synthetic `text_delta` + `message_end` events from `MessageContent`, causing every text response to appear twice in the SPA. (Request: beta-stabilisation)
-- **Per-connection peer IDs** — each WebSocket connection now gets a unique `nanoid()` session ID for peer registration instead of using `contextId` (always `"main"`). Two browser tabs no longer overwrite each other's reply routing. The `sessionId` is sent in the `connected` event and used in `onMessage` and `onClose` for all peer operations. (Request: beta-stabilisation)
-- **Docker entrypoint simplified** — the env-var-to-config generation path (Step 3) has been removed. The entrypoint now either starts the server if `config.json` exists, or prints an error with setup instructions and exits 1. `REEBOOT_AGENTS_MD` injection and `REEBOOT_HOST` are preserved. The config file is the single source of truth for all deployments. (Request: beta-stabilisation)
+- WebSocket streaming now delivers events through the orchestrator's event-forwarding path — no more duplicate text_delta or message_end events.
+- Each WS connection gets a unique session ID for peer routing, allowing multiple concurrent browser tabs.
+- Cancel messages are now sent as a proper bus signal and actually abort the running turn.
 
 ### Fixed
 
-- **Config schema silently stripped `sdk` and `ree` fields** — Zod's default strip-unknown-keys behaviour dropped `sdk` and `ree` from the parsed config, making ree mode unreachable through any production deployment path. The Zod `ConfigSchema` now declares both fields: `sdk: z.enum(['pi', 'ree']).default('pi')` and `ree: ReeConfigSchema.default({})`. All `(config as any)` casts in the ree runtime are updated to typed access. (Request: beta-stabilisation)
-- **Cancel message was queued as a normal user turn** — the `__cancel__` magic string was published as a regular `IncomingMessage`, which the orchestrator queued when the context was busy. The LLM would process `"__cancel__"` as normal user text when the queue drained. Now sends an `action: 'cancel'` signal that calls `runner.abort()` directly. (Request: beta-stabilisation)
-
-### Tests
-
-- **108 new tests across 12 test files** — covers config schema validation, cancel signal orchestration, WebSocket streaming bridge, peer ID isolation, ree session_search extension, API route guards, and docker-integration end-to-end scenarios. (Request: beta-stabilisation)
-  - `tests/config-schema-ree.test.ts` (11 tests)
-  - `tests/cancel-signal.test.ts` (5 tests)
-  - `tests/web-channel-routing.test.ts` — expanded (13 tests)
-  - `tests/ws-peer-id.test.ts` (3 tests)
-  - `tests/ree-session-search.test.ts` (3 tests)
-  - `tests/api-ree-guards.test.ts` (1 test)
-  - `tests/docker-integration/` — pi (14 tests) + ree (16 tests)
+- **Ree mode was unreachable in production** — the `sdk` and `ree` config fields were silently stripped by Zod. Both are now declared in the config schema.
+- Pi-specific API endpoints (`/api/contexts`, `/api/tasks`, `/api/contexts/:id/sessions`) now return empty results in ree mode instead of querying pi-only tables.
 
 ---
 
