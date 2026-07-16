@@ -60,6 +60,43 @@ export function runReeHistoryMigration(db: Database.Database): boolean {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(chat_id, created_at DESC)`);
   }
 
+  // FTS5 virtual table for full-text search over chat messages
+  const hasChatMessagesFts = tablesBefore.some((t) => t.name === 'chat_messages_fts');
+  if (!hasChatMessagesFts) {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
+        content, content=chat_messages, content_rowid=id
+      )
+    `);
+
+    // Sync triggers: keep FTS in sync with chat_messages
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS chat_messages_ai
+      AFTER INSERT ON chat_messages BEGIN
+        INSERT INTO chat_messages_fts(rowid, content)
+        VALUES (new.id, new.content);
+      END;
+    `);
+
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS chat_messages_ad
+      AFTER DELETE ON chat_messages BEGIN
+        INSERT INTO chat_messages_fts(chat_messages_fts, rowid, content)
+        VALUES ('delete', old.id, old.content);
+      END;
+    `);
+
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS chat_messages_au
+      AFTER UPDATE ON chat_messages BEGIN
+        INSERT INTO chat_messages_fts(chat_messages_fts, rowid, content)
+        VALUES ('delete', old.id, old.content);
+        INSERT INTO chat_messages_fts(rowid, content)
+        VALUES (new.id, new.content);
+      END;
+    `);
+  }
+
   return !hasChats || !hasChatMessages;
 }
 

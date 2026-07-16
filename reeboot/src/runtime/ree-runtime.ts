@@ -361,8 +361,8 @@ export class ReeRuntime {
    * Translated to TanStack stdio transport: { type: 'stdio', command, args, env }.
    */
   private _initMcpClientsSync(): void {
-    const ree = (this.config as any)?.ree as import('../config.js').ReeConfig | undefined;
-    const servers = ree?.mcp?.servers ?? (this.config as any)?.mcp?.servers ?? [];
+    const ree = this.config?.ree as import('../config.js').ReeConfig | undefined;
+    const servers = ree?.mcp?.servers ?? this.config?.mcp?.servers ?? [];
     if (!Array.isArray(servers) || servers.length === 0) return;
 
     // Build MCP client promises — each is async (connects to the server)
@@ -421,8 +421,8 @@ export class ReeRuntime {
    * Extra client options (baseURL, fetch, etc.) pass through from config.
    */
   createTanStackClient(): unknown {
-    const ree = (this.config as any)?.ree as import('../config.js').ReeConfig | undefined;
-    const modelConfig = ree?.model ?? (this.config as any)?.agent?.model ?? {};
+    const ree = this.config?.ree as import('../config.js').ReeConfig | undefined;
+    const modelConfig = ree?.model ?? this.config?.agent?.model ?? {};
     const provider = String(modelConfig.provider ?? 'openai').toLowerCase();
     const modelId = String(modelConfig.id ?? 'gpt-4o');
     const apiKey = modelConfig.apiKey ?? resolveProviderEnvKey(provider) ?? 'no-key';

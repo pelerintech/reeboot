@@ -101,7 +101,7 @@ export class ReeAgentRunner implements AgentRunner {
     const adapter = this._runtime.createTanStackClient();
 
     // Read agent loop options from config
-    const ree = (this._config as any)?.ree as import('../config.js').ReeConfig | undefined;
+    const ree = this._config?.ree as import('../config.js').ReeConfig | undefined;
     const systemPrompt = ree?.systemPrompt ?? '';
     const maxIterations = ree?.maxIterations ?? 5;
     // Initialize MCP clients from config (no-op if already initialized or none configured)

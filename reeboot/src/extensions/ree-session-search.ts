@@ -59,12 +59,13 @@ export default async function(api: ExtensionAPI, _config: Record<string, any>): 
           };
         }
 
-        // FTS5 query on chat_messages, scoped to current chat
+        // FTS5 query on chat_messages_fts, scoped to current chat
         const rows = db.prepare(`
-          SELECT role, content, created_at
-          FROM chat_messages
-          WHERE chat_id = ? AND content MATCH ?
-          ORDER BY created_at DESC
+          SELECT m.role, m.content, m.created_at
+          FROM chat_messages_fts f
+          JOIN chat_messages m ON m.id = f.rowid
+          WHERE m.chat_id = ? AND chat_messages_fts MATCH ?
+          ORDER BY m.created_at DESC
           LIMIT ?
         `).all(chatId, query, limit) as Array<{ role: string; content: string; created_at: string }>;
 
@@ -92,17 +93,32 @@ export default async function(api: ExtensionAPI, _config: Record<string, any>): 
 /**
  * Get the ree history DB from the runtime singleton.
  * Returns null if the ree runtime hasn't been initialised.
+ *
+ * Caches the resolved DB once found, but does NOT cache a null result
+ * so subsequent calls retry if the runtime initialises later.
  */
 let _cachedDb: any = null;
+let _pendingDb: Promise<any> | null = null;
 
 async function getReeHistoryDb(): Promise<any> {
   if (_cachedDb) return _cachedDb;
-  try {
-    const { getReeRuntime } = await import('../agent-runner/index.js');
-    const runtime = getReeRuntime();
-    _cachedDb = runtime?.getHistoryDb?.() ?? null;
-    return _cachedDb;
-  } catch {
-    return null;
-  }
+  if (_pendingDb) return _pendingDb;
+
+  _pendingDb = (async () => {
+    try {
+      const { getReeRuntime } = await import('../agent-runner/index.js');
+      const runtime = getReeRuntime();
+      if (runtime?.getHistoryDb) {
+        _cachedDb = runtime.getHistoryDb();
+        return _cachedDb;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      _pendingDb = null;
+    }
+  })();
+
+  return _pendingDb;
 }
