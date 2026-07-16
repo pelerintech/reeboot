@@ -25,12 +25,14 @@ describe('ExtensionAPI — getCurrentChatId', () => {
     expect(adapter.getCurrentChatId()).toBe('test-chat');
   });
 
-  it('PiExtensionAdapter does not expose getCurrentChatId', async () => {
+  it('PiExtensionAdapter.getCurrentChatId returns undefined (pi mode has no chat concept)', async () => {
     const { PiExtensionAdapter } = await import('../src/extensions/pi-adapter.js');
     const mockSession = {} as any;
     const adapter = new PiExtensionAdapter(mockSession);
 
-    expect((adapter as any).getCurrentChatId).toBeUndefined();
+    // The method must exist and return undefined (not throw)
+    expect(typeof adapter.getCurrentChatId).toBe('function');
+    expect(adapter.getCurrentChatId()).toBeUndefined();
   });
 });
 

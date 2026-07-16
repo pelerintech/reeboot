@@ -112,3 +112,46 @@ reason:   Three fixes applied. (1) `ree-history.ts` now creates a `chat_messages
 ✅ All capabilities satisfied — no action required.
 
 ---
+
+## Evaluation — 2026-07-16 13:50
+
+### config-schema
+verdict:  ✅ SATISFIED
+reason:   spec requires `sdk` and `ree` fields declared in Zod so they survive `loadConfig()`. `reeboot/src/config.ts` declares `sdk: z.enum(['pi','ree']).default('pi')` and a fully-typed `ReeConfigSchema` (maxChats/idleTtlMs/maxHistoryPerChat/systemPrompt/maxIterations/model/mcp). `createRunner` (`agent-runner/index.ts`) routes `sdk === 'ree'` → `ReeAgentRunner`. S5 fallback `ree.model ?? agent.model` is present in `ree-runtime.ts:createTanStackClient()` via typed `as import('../config.js').ReeConfig` access. `tests/config-schema-ree.test.ts` (11 tests) and `tests/runtime/ree-extension-wiring.test.ts` pass.
+
+### entrypoint
+verdict:  ✅ SATISFIED
+reason:   spec S1–S4 all matched by `reeboot/container/entrypoint.sh`: `exec node dist/index.js start --no-interactive "$@"` when config exists (S1); prints `Error: No config.json found` and `mount your config` then `exit 1` when absent (S2); writes `REEBOOT_AGENTS_MD` to `~/.reeboot/agent/AGENTS.md` before start (S3); exports `REEBOOT_HOST` (S4). No env-var-to-config translation path remains.
+
+### cancel-signal
+verdict:  ✅ SATISFIED
+reason:   `IncomingMessage.action?: 'cancel'` declared in `channels/interface.ts`; `createIncomingMessage` preserves it (S1). Orchestrator (`orchestrator.ts:195,211`) calls `runner.abort()` on busy contexts and returns without queuing (S2), silently ignores cancel on idle (S3). WS handler (`server.ts:674-686`) publishes `createIncomingMessage({..., action:'cancel'})` — no `__cancel__` magic string — and sends `{ type:'cancelled' }` (S4, S5). `tests/cancel-signal.test.ts` (5 tests) passes.
+
+### ws-streaming
+verdict:  ✅ SATISFIED
+reason:   spec S1 requires `wsSend` to be a no-op. `server.ts:655` defines `const wsSend = async () => {};` and `wsEvent` does exactly one `ws.send(JSON.stringify(event))` per event (S1, S2). Orchestrator forwards each RunnerEvent once via `WebAdapter.sendEvent(peerId, event)` (`orchestrator.ts:363-365`), adding no synthetic `message_end`/`text_delta` (S2, S3). Covered by `tests/web-channel-routing.test.ts` (no-op wsSend, wsEvent forwarding, orchestrator event forwarding) — 13 tests pass.
+
+### spa-peer-id
+verdict:  ✅ SATISFIED
+reason:   spec S1: `server.ts:651` generates `const sessionId = nanoid()` per `onOpen`, calls `webAdapter.registerPeer(sessionId, wsSend, wsEvent)` (not `contextId`), and sends `{ type:'connected', contextId, sessionId }`. S2/S4: `WebAdapter` keeps per-peer `_eventCallbacks` and `sendEvent` routes to exactly one peer. S3: `onClose` calls `webAdapter.unregisterPeer(sessionId)`. `tests/ws-peer-id.test.ts` (3 tests) passes.
+
+### ree-session-search
+verdict:  ⚠️ PARTIAL
+reason:   S1 (`session_search` registered via `getReeFactories`, 5th factory in `loader.ts:336`), S2 (FTS5 query scoped `WHERE m.chat_id = ?` on `chat_messages`, not `messages`), S3 (empty array on no match), and the ree half of S4 (`ReeExtensionAdapter.getCurrentChatId()` returns `chatId`) are all present and tested in `tests/ree-session-search.test.ts` (5 tests pass). However, the pi half of S4 — "GIVEN a pi mode extension that calls `api.getCurrentChatId()` … THEN it returns `undefined` or `null`" — is NOT met: `PiExtensionAdapter` (`pi-adapter.ts`) defines no `getCurrentChatId` method, so a direct call `api.getCurrentChatId()` throws `TypeError`, not returns `undefined`/`null`. The test only asserts `(adapter as any).getCurrentChatId` is `undefined` (property absence), not that invoking it returns undefined.
+focus:    `reeboot/src/extensions/pi-adapter.ts` — `getCurrentChatId` is absent; a direct call throws rather than returning undefined/null as S4 states.
+
+### api-route-guards
+verdict:  ✅ SATISFIED
+reason:   spec S1–S3: `server.ts` guards `GET /api/contexts` (line 524), `GET /api/tasks` (line 462), and `GET /api/contexts/:id/sessions` (line 547) with `if ((opts.config as any)?.sdk === 'ree') return c.json([])`. S4: `/api/health`, `/api/status`, `/api/channels`, `/api/settings/budget`, `/api/logs/stream`, `POST /api/reload` are unguarded by sdk and run identically in both modes. Note: there is no ree-mode test exercising these guards (existing `rest-api.test.ts` runs in default pi mode), but the implementation satisfies every scenario.
+
+### ws-integration-tests
+verdict:  ✅ SATISFIED
+reason:   spec S1 (WS→bus publish with `channelType:'web'`, no `createRunner` in handler), S2 (cancel via `action:'cancel'` + `{type:'cancelled'}`, no `__cancel__`), S3 (same runner reused across two messages), S4 (orchestrator forwards `text_delta`/`tool_call_start`/`tool_call_end` via `sendEvent` with correct peerId) are all covered by `tests/web-channel-routing.test.ts` (13 tests pass).
+
+## Triage
+
+✅ Safe to skip:   config-schema, entrypoint, cancel-signal, ws-streaming, spa-peer-id, api-route-guards, ws-integration-tests
+⚠️  Worth a look:  ree-session-search — pi-mode half of S4: `PiExtensionAdapter.getCurrentChatId` is absent, so a literal `api.getCurrentChatId()` call throws TypeError rather than returning undefined/null; either add a no-op `getCurrentChatId(): undefined` to `pi-adapter.ts` or amend the spec to require optional-chaining access (`api.getCurrentChatId?.()`).
+❓  Human call:    (none)
+
+---

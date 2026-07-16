@@ -137,6 +137,14 @@ export class PiExtensionAdapter implements ExtensionAPI {
   }
 
   /**
+   * Get the current chat ID.
+   * Pi mode has no per-chat concept — always returns undefined.
+   */
+  getCurrentChatId(): string | undefined {
+    return undefined;
+  }
+
+  /**
    * Get the current session name.
    * Forwards to pi's getSessionName if available.
    */
