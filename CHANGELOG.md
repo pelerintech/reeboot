@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Multi-user support for the ree SDK** — a single process can now serve many concurrent, mutually-private customer conversations, each an isolated chat with its own history, created on demand from a client-supplied conversation id.
+- **Observability audit view** — a new turn-grouped Activity page (backed by a `GET /api/events` endpoint) that gives the operator a window into what the agent did over time and why each task succeeded or failed.
+
+### Fixed
+
+- **Extensive ree and subsystem hardening** — a large batch of correctness, security, and budget bug fixes: the ree runtime (abort/reset wedge, token metering, tool-error surfacing, extension hooks), security (SSRF IPv6/loopback blocking, injection-guard and trust-enforcer wired into ree), budget scoping, and the memory-consolidation, knowledge-index, scheduler, and crash-recovery subsystems.
+
+---
+
 ## [2.7.0] - 2026-07-16
 
 ### Added
