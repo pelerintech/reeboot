@@ -82,6 +82,23 @@ export function pruneObservabilityData(db: Database, retentionDaysOrOpts: number
   pruneLogFiles(retentionDays);
 }
 
+// ─── armRetentionTimer ────────────────────────────────────────────────────────
+
+/**
+ * Arms a periodic retention sweep and returns the interval handle so the caller
+ * can clear it on shutdown. Extracted from the server bootstrap so the periodic
+ * behavior (a prune pass runs on each tick, and stops once cleared) is
+ * deterministically unit-testable with fake timers — rather than only assertable
+ * by reading the source.
+ */
+export function armRetentionTimer(
+  db: Database,
+  opts: PruneOptions,
+  intervalMs: number,
+): ReturnType<typeof setInterval> {
+  return setInterval(() => pruneObservabilityData(db, opts), intervalMs);
+}
+
 // ─── pruneLogFiles ────────────────────────────────────────────────────────────
 
 function pruneLogFiles(retentionDays: number): void {

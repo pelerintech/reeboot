@@ -170,3 +170,164 @@ BEHAVIORAL and solid: all of ssrf-ip-blocklist, budget-session-window, budget-wa
 ree-abort-reset; plus S1/S3 of ree-token-usage, ree-before-agent-start-hooks and S2 of ree-tool-errors.
 
 ---
+
+## Re-evaluation — 2026-07-17 21:2x (post-remediation)
+
+Contract: `brief.md` + 14 specs. Re-run after the remediation batch landed (new files
+`src/llm/one-shot.ts`, `src/scheduler-dispatch.ts`, plus behavioral-test rewrites). Every named
+test file was run and its assertions read and classified BEHAVIORAL vs CHEAT; impl verified in code.
+**Headline: 9 previously PARTIAL/BROKEN capabilities → now 12 SATISFIED, 1 PARTIAL, 1 BROKEN.** Full
+suite: 1597 passed / 4 failed / 2 skipped (1603). The 4 failures are non-contract flakes (see bottom).
+
+### ssrf-ip-blocklist
+verdict:  ✅ SATISFIED
+reason:   `ssrf-guard.ts` still blocks 0.0.0.0, fc00::/7, fe80::/10, IPv4-mapped decode; all scenarios
+          behavioral (real guard, DNS mocked at boundary). Re-ran green.
+
+### budget-session-window
+verdict:  ✅ SATISFIED
+reason:   session queries filter `created_at >= sessionStartTs`; 3/3 behavioral (real :memory: db,
+          controlled timestamps). Re-ran green.
+
+### budget-warning-ordering
+verdict:  ✅ SATISFIED
+reason:   hard limits evaluated before `pendingWarning`; behavioral. Re-ran green (budget-guard 9/9).
+
+### ree-abort-reset
+verdict:  ✅ SATISFIED
+reason:   controller recreated per prompt; behavioral (mock SSE, real reset/abort). Cluster green.
+
+### pi-memory-consolidation-wiring   (was ❌ BROKEN — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   `createLlmCall` (`one-shot.ts:23-79`) does a real POST and returns assistant text.
+          `scheduler-dispatch.ts:39-77` intercepts `taskId==='__memory_consolidation__'` → calls
+          `runConsolidation` and returns (no bus publish); normal tasks publish `channelType:'scheduler'`.
+          Wired into production: `server.ts:298-313` builds the handler and passes it to `new Scheduler`,
+          and `registerJob` inserts the row with `id='__memory_consolidation__'` so the interceptor
+          matches at runtime. All 4 scenarios behavioral (mocked fetch return, spy counts, real
+          `memory_log` row + `MEMORY.md` write, no bus publish). 6/6 pass. The discovery-miss bug is
+          closed.
+
+### memory-consolidation-removal   (ree-only)
+verdict:  ✅ SATISFIED
+reason:   `bootstrap.ts:33-40` gates the memory job on `sdk !== 'ree'`; S1 (ree schedules none), S3 (pi
+          still registers), S4 (callable) behavioral against real `bootstrapServerJobs`/`registerServerJobs`.
+          Blemish: the S4-named test (`memory-consolidation-not-scheduled.test.ts:53-56`) is a bare
+          `typeof === 'function'` CHEAT, but S4 is redundantly proven by the e2e that actually runs
+          `runConsolidation`. Not a gap.
+
+### knowledge-source-delete   (was ⚠️ PARTIAL — S3 unimplemented — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   `deleteKnowledgeSource` is now CALLED in production from `watcher.ts:81` (the fs-watch
+          unlink/stat-fail path), no longer dead code. S1/S2 behavioral against real DB rows; S3 drives
+          the real watcher end-to-end (unlink → debounce → row gone), and its load-bearing assertion
+          (`watcher-unlink.test.ts:69-70`, path-based) genuinely proves deletion. Minor: a secondary
+          assertion (`:64-65`) queries `id='doc1'` but the row's id is `src1` (doc1 is the doc_id column)
+          so it is always-true/vacuous — harmless, the path assertion carries the test.
+
+### resilience-abort-journal   (was ⚠️ 100% CHEAT — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   fully rewritten behavioral (`abort-closes-journal.test.ts`): real Orchestrator + DB, runner
+          rejects AbortError → asserts 0 `status='open'` rows AND real `getOpenJournals` exclusion (S1/S2);
+          a timing-out runner leaves the journal open (S3 regression). No source-regex remains.
+
+### ree-token-usage   (was ⚠️ PARTIAL — S2 missing — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   S1 (agent_end usage `{12,7}`) and S2's message_end half are loop-driven through a real
+          `prompt()` with a mock SSE stream carrying `usage` (`ree-runner.test.ts:1015-1053, 1217-1263`);
+          S3 writes the `usage` row. Core defect (hardcoded zeros) is behaviorally disproven.
+focus:    residual test-quality note (not a functional gap): S2's `turn_end` half is proven only by a
+          direct `emitTurnEnd` with hand-set values (`ree-chat.test.ts:137`), not driven through the loop.
+
+### ree-before-agent-start-hooks   (was ⚠️ PARTIAL — S2 missing — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   S2 now captures the actual model request body and asserts the injected `## INJECTED` text is
+          on the wire via a real `prompt()` (`ree-runner.test.ts:1265-1315`). S1 merge + S3 no-regression
+          behavioral. The previously-missing end-to-end assertion exists.
+
+### ree-tool-errors   (was ⚠️ PARTIAL — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   S1 now asserts BOTH the `tool_result` event and the `tool_call_end` RunnerEvent carry
+          `isError:true`, driven through the loop with a real SSE tool-call stream
+          (`ree-runner.test.ts:1069-1176, 1317-1388`); S3 drives a success tool through the loop asserting
+          both events `isError:false` (`:1391-1466`); S2 asserts `toTanStackTool.execute` throws.
+
+### ree-security-extensions   (was ⚠️ PARTIAL — still ⚠️ PARTIAL, improved)
+verdict:  ⚠️ PARTIAL
+reason:   Real progress: the compose (not last-wins) merge of multiple `before_agent_start` returns is
+          correct in impl (`ree-chat.ts:194-205`) and proven behaviorally — `extension-subset.test.ts:234-235`
+          asserts the injection-guard policy block AND a tool block coexist in the merged prompt; and the
+          generic before_agent_start→request-body path is now proven (see ree-before-agent-start S2). BUT
+          spec S2's own assertion — injection-guard specifically wired into a ree chat and its
+          `<external_content_policy>` text captured on the serialized model request via a real `prompt()`
+          — is still not directly asserted (the "S2" test asserts `emitBeforeAgentStart`'s return, not the
+          wire; the one `prompt()` test never inspects the request body). And S1/S3 plus trust-enforcer's
+          `tool_call` ENFORCEMENT still rest on listener-count / `factories.length` / typeof (CHEAT-class):
+          no test proves trust-enforcer actually gates or blocks a tool call.
+focus:    tests/runtime/ree-security-end-to-end.test.ts — add a real ree `prompt()` with injection-guard
+          wired asserting the policy text on the model request; add a behavioral trust-enforcer test that
+          a disallowed tool call is actually blocked. Assert factory identity, not counts.
+
+### scheduler-inflight   (was ⚠️ 100% CHEAT — mostly FIXED)
+verdict:  ✅ SATISFIED
+reason:   S1 (hanging handler + two polls → dispatched exactly once) and S2 (completion clears `_inFlight`,
+          re-dispatch) are genuine behavioral tests against a real `Scheduler`+DB with dispatch-count
+          assertions (`inflight-no-double-dispatch.test.ts:37-94`). The source-regex cheat is gone.
+focus:    residual: S3 (`:96-120`) only asserts `cancelJob(...).not.toThrow()` and never inspects
+          `_inFlight`, so a no-op cancel would also pass — the scenario's specific effect is unproven.
+          (Impl at `scheduler.ts:313` is correct; the test is hollow.)
+
+### retention-periodic   (was ⚠️ 100% CHEAT — NOT fixed)
+verdict:  ❌ UNSATISFIED  (impl correct; verification is still pure CHEAT)
+reason:   `retention-wired.test.ts` is unchanged in spirit — all assertions are `readFileSync(server.ts)`
+          + regex/`toContain` (lines 9,14,28,33,38), and the file carries a NOTE (lines 20-25) admitting
+          the behavioral test was deliberately skipped. S1/S3 are pure source-string cheats; S2 (the
+          load-bearing proof — tiny interval override + over-age row inserted AFTER boot + advance timers
+          → row pruned) is entirely MISSING. The impl is correct (`server.ts:163-168` arms the interval,
+          `:791` clears it) and the *boot-time* single prune is behaviorally covered by
+          `events-retention-wired.test.ts`, but the *periodic* claim this spec is about has zero
+          behavioral coverage. A periodic-sweep regression would not be caught.
+focus:    the periodic timer is inline in `startServer`, making it awkward to test — extract the arming
+          into a small function (e.g. `armRetentionTimer(db, opts, intervalMs)` in `retention.ts`) and
+          write a fake-timer test: arm with a tiny interval, insert an over-age row, advance timers,
+          assert it is pruned, then clear and assert no further prune. Delete the readFileSync cheats.
+
+## Triage
+
+✅ Fixed since last eval:   pi-memory-consolidation-wiring (BROKEN→SATISFIED), knowledge-source-delete
+   (PARTIAL→SATISFIED), resilience-abort-journal (CHEAT→SATISFIED), ree-token-usage, ree-before-agent-start-hooks,
+   ree-tool-errors (all PARTIAL→SATISFIED), scheduler-inflight (CHEAT→SATISFIED).
+
+✅ Safe to skip:   ssrf-ip-blocklist, budget-session-window, budget-warning-ordering, ree-abort-reset,
+   memory-consolidation-removal.
+
+⚠️  Worth a look:
+  1. retention-periodic — ❌ still 100% source-regex cheat; the periodic-sweep behavioral test (S2) is
+     missing. Impl correct, verification absent. This is the one remediation item that did NOT land.
+  2. ree-security-extensions — ⚠️ S2 on-the-wire injection-guard policy assertion and trust-enforcer
+     tool-blocking enforcement are still structural (counts/typeof), not behavioral.
+  3. scheduler-inflight S3 — hollow (asserts only `.not.toThrow()`); ree-token-usage turn_end half —
+     hand-set, not loop-driven. Minor residues; capabilities otherwise solid.
+
+❓  Human call:    none.
+
+### Non-contract test failures observed in the full run (flagged, not scored)
+  - `tests/knowledge/watcher.test.ts` (2) — pass in isolation; fail only under full-suite parallel load
+    (500ms `delay()` timing). Load-sensitive flakiness, not a regression.
+  - `tests/agent-runner/pi-runner-isolation.test.ts` (2) — fails in isolation too; `setTimeout(500)` race
+    on `capturedOptions`. Pre-existing timing flake, outside this contract. Worth de-flaking separately.
+
+---
+### retention-periodic — RESOLVED (2026-07-17, follow-up)
+The cheat file was replaced with a solid behavioral test. A `armRetentionTimer(db, opts, intervalMs)`
+seam was extracted from `startServer` (behavior-preserving — `server.ts` arms and `stopServer` clears
+the identical handle), letting the periodic sweep be driven deterministically with fake timers:
+`tests/observability/retention-wired.test.ts` now (a) advances the interval and asserts an over-age INFO
+row is pruned on the tick, and again on the next tick (proves periodic, not one-shot); (b) asserts a
+fresh in-window row survives; (c) after `clearInterval`, asserts a new over-age row is NOT pruned across
+5 intervals (teardown/no-leak). Determinism: SQLite's `datetime('now',…)` uses the real clock so seeded
+rows are genuinely over-age regardless of fake JS timers; `retentionDays:365` protects real log files.
+3 tests, green, typechecks, stable across repeated runs. **retention-periodic verdict flips ❌ → ✅.**
+The `events-retention-wired.test.ts` server-boot tests still pass, confirming the extraction is inert.
+
+---

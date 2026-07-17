@@ -153,19 +153,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
   // ── Observability retention pruning ──────────────────────────────────────
   {
-    const { pruneObservabilityData } = await import('./observability/retention.js');
+    const { pruneObservabilityData, armRetentionTimer } = await import('./observability/retention.js');
     const logging = (opts.config as any)?.logging ?? {};
     const retentionDays = logging.retention_days ?? 30;
     const eventsInfoRetentionDays = logging.events_info_retention_days ?? 7;
     const eventsMaxRowsPerContext = logging.events_max_rows_per_context ?? 8000;
-    pruneObservabilityData(db, { retentionDays, eventsInfoRetentionDays, eventsMaxRowsPerContext });
+    const pruneOpts = { retentionDays, eventsInfoRetentionDays, eventsMaxRowsPerContext };
+    pruneObservabilityData(db, pruneOpts);
 
     // Arm periodic retention timer (default daily, overridable via env var)
     const intervalMs = parseInt(process.env['REEBOOT_RETENTION_INTERVAL_MS'] ?? String(24 * 60 * 60 * 1000), 10);
-    _retentionTimer = setInterval(
-      () => pruneObservabilityData(db, { retentionDays, eventsInfoRetentionDays, eventsMaxRowsPerContext }),
-      intervalMs,
-    );
+    _retentionTimer = armRetentionTimer(db, pruneOpts, intervalMs);
   }
 
   // ── Re-initialise logger with DB so warn+ records persist to operational_logs ──
