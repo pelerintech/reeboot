@@ -246,6 +246,56 @@ describe('ree-dynamic-runner — lazy create/reuse (task 6)', () => {
 
     orc.stop();
   });
+
+  it('S4 — runner uses conversationId as chatId (getOrCreateChat called with correct id)', async () => {
+    // Use a real ReeRuntime + ReeAgentRunner to verify that the runner drives
+    // getOrCreateChat(chatId) where chatId === conversationId.
+    const tmpDir = join(tmpdir(), `reeboot-s4-${Date.now()}`);
+    mkdirSync(tmpDir, { recursive: true });
+    const ldb = new Database(join(tmpDir, 'test.db'));
+    const ReeRuntime = (await import('@src/runtime/ree-runtime.js')).ReeRuntime;
+    const ReeAgentRunner = (await import('@src/agent-runner/ree-runner.js')).ReeAgentRunner;
+
+    const fetchImpl = vi.fn().mockImplementation(() =>
+      Promise.resolve(new Response(
+        new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            const frames = [
+              'data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+              'data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"reply"},"finish_reason":null}]}\n\n',
+              'data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+              'data: [DONE]\n\n',
+            ];
+            for (const f of frames) controller.enqueue(encoder.encode(f));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } }
+      ))
+    );
+
+    const runtime = new ReeRuntime({
+      config: {
+        agent: { model: { provider: 'openai' } },
+        ree: { model: { provider: 'custom', id: 'm', baseUrl: 'http://x/v1', apiKey: 'k', fetch: fetchImpl } },
+      },
+      maxChats: 10,
+      idleTtlMs: 60000,
+      maxHistoryPerChat: 50,
+      db: ldb,
+    });
+    vi.spyOn(runtime, 'getOrCreateChat');
+
+    const runner = new ReeAgentRunner(runtime, { id: 'A', workspacePath: tmpDir }, { agent: { model: { provider: 'openai' } } } as any);
+    await runner.prompt('hello', () => {});
+
+    expect(runtime.getOrCreateChat).toHaveBeenCalledWith('A', expect.anything());
+
+    runner.dispose();
+    ldb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
 
 // ─── Task 7: server registers ree runner-factory (shared workspace) ─────────
@@ -360,6 +410,64 @@ describe('ree-shared-workspace — turn-meta skip (task 8)', () => {
 
     a.ws.close();
   });
+
+  it('S2b — the ree token-meter records the turn with the default operationType (no meta file)', async () => {
+    // S2 (above) proves the ree orchestrator writes NO .reeboot_turn_meta.json.
+    // This proves the spec's second half: given that no-meta condition, the
+    // token-meter (extension #3 in getReeFactories) STILL records the turn, and
+    // its operation_type falls back to the default 'user_message'.
+    //
+    // The token-meter writes via the global getDb() and only inserts when usage
+    // is non-zero (token-meter.ts:38). So point getDb() at a test DB and drive
+    // its REAL agent_end handler with a non-zero-usage event and a cwd that has
+    // no meta file (the ree condition). No server → deterministic, no timing wait.
+    const meterDb = new Database(':memory:');
+    meterDb.exec(`CREATE TABLE usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      context_id TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      model TEXT NOT NULL DEFAULT '',
+      cost_usd REAL NOT NULL DEFAULT 0,
+      operation_type TEXT NOT NULL DEFAULT 'user_message'
+    )`);
+    vi.doMock('@src/db/index.js', () => ({ getDb: () => meterDb }));
+
+    try {
+      const handlers: Record<string, Function[]> = {};
+      const pi = { on(ev: string, h: Function) { (handlers[ev] ??= []).push(h); } };
+      const tokenMeter = await import('@src/extensions/token-meter.js');
+      (tokenMeter.default as any)(pi);
+
+      // A shared ree workspace dir with NO .reeboot_turn_meta.json (ree skips it).
+      const reeWorkspace = join(tmpDir, 'contexts', '__ree__', 'workspace');
+      mkdirSync(reeWorkspace, { recursive: true });
+      const { existsSync } = await import('fs');
+      expect(existsSync(join(reeWorkspace, '.reeboot_turn_meta.json'))).toBe(false);
+
+      // Real agent_end event carrying non-zero usage on the last assistant message.
+      const event = {
+        messages: [
+          { role: 'user', content: 'hi' },
+          {
+            role: 'assistant', content: 'hello', model: 'test-model',
+            usage: { inputTokens: 12, outputTokens: 7, cost: { total: 0.001 } },
+          },
+        ],
+      };
+      await handlers['agent_end'][0](event, { cwd: reeWorkspace });
+
+      // The turn WAS recorded, with the default operationType and real token counts.
+      const row = meterDb.prepare('SELECT * FROM usage ORDER BY id DESC LIMIT 1').get() as any;
+      expect(row).toBeDefined();
+      expect(row.operation_type).toBe('user_message');
+      expect(row.input_tokens).toBe(12);
+      expect(row.output_tokens).toBe(7);
+    } finally {
+      vi.doUnmock('@src/db/index.js');
+      meterDb.close();
+    }
+  });
 });
 
 // ─── Task 9: Skip messages-table writes in ree ────────────────────────────────
@@ -423,7 +531,7 @@ describe('ree-messages-skip (task 9)', () => {
     bus.publish(makeMsg({ peerId: 'sess1', content: 'hi' }));
     await new Promise(r => setTimeout(r, 50));
 
-    const rows = db.prepare('SELECT role FROM messages ORDER BY id').all() as any[];
+    const rows = db.prepare('SELECT role FROM messages ORDER BY rowid').all() as any[];
     expect(rows.length).toBe(2);
     expect(rows.map(r => r.role)).toEqual(['user', 'assistant']);
 

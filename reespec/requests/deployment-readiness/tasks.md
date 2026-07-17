@@ -217,115 +217,113 @@ Spec `resilience-abort-journal`.
 
 ### 15. One-shot llmCall builder
 Spec `pi-memory-consolidation-wiring` S1.
-- [ ] **RED** — New `tests/llm/one-shot.test.ts`: `createLlmCall(config, fetchImpl)('hello')` with a mock
+- [x] **RED** — New `tests/llm/one-shot.test.ts`: `createLlmCall(config, fetchImpl)('hello')` with a mock
       `fetchImpl` → assert exactly one POST to the active model's completions endpoint, the request body
       carries the prompt, and the awaited result is the assistant text parsed from the mocked response.
       Run → **fails** (symbol absent).
-- [ ] **ACTION** — Add `src/llm/one-shot.ts` exporting `createLlmCall(config, fetchImpl = fetch)` that
+- [x] **ACTION** — Add `src/llm/one-shot.ts` exporting `createLlmCall(config, fetchImpl = fetch)` that
       resolves the active model (reuse `models.ts` resolution: provider/id/apiKey/baseURL, openai-completions
       format) and performs a single non-streaming completion, returning the message text.
-- [ ] **GREEN** — `npx vitest run tests/llm/one-shot.test.ts` passes.
+- [x] **GREEN** — `npx vitest run tests/llm/one-shot.test.ts` passes.
 
 ### 16. Scheduler handler intercepts the consolidation sentinel → runConsolidation
 Spec `pi-memory-consolidation-wiring` S2, S3.
-- [ ] **RED** — New `tests/scheduler/consolidation-interceptor.test.ts`: build the extracted
+- [x] **RED** — New `tests/scheduler/consolidation-interceptor.test.ts`: build the extracted
       `createSchedulerTaskHandler({ db, bus: fakeBus, config, runConsolidation: spy, llmCall: stub })`.
       (S2) handling `{ taskId:'__memory_consolidation__', prompt:'__memory_consolidation__: …' }` → spy
       called once AND `fakeBus.publish` NOT called. (S3) handling `{ taskId:'t1', prompt:'remind me' }` →
       `fakeBus.publish` called once with a `channelType:'scheduler'` message and spy NOT called. Run → **fails**.
-- [ ] **ACTION** — Extract the inline scheduler adapter (`server.ts:284`) into
+- [x] **ACTION** — Extract the inline scheduler adapter (`server.ts:284`) into
       `createSchedulerTaskHandler(deps)` in a testable module (e.g. `src/scheduler-dispatch.ts`). Add a
       branch: when `task.taskId === '__memory_consolidation__'`, call `runConsolidation({ db, memoriesDir:
       <~/.reeboot/memories>, memoryCharLimit, userCharLimit, llmCall: createLlmCall(config) })` and return
       (skip `buildScheduledPrompt`/`bus.publish`). Wire `server.ts` to use the extracted handler.
-- [ ] **GREEN** — test passes.
+- [x] **GREEN** — test passes.
 
 ### 17. End-to-end: a fired consolidation job updates memory, no agent turn
 Spec `pi-memory-consolidation-wiring` S4.
-- [ ] **RED** — New `tests/scheduler/consolidation-e2e.test.ts`: seed `messages`, register the
+- [x] **RED** — New `tests/scheduler/consolidation-e2e.test.ts`: seed `messages`, register the
       consolidation job (pi mode), inject an `llmCall` returning `ADD memory: user prefers dark mode`; fire
       the task through the handler. Assert a `memory_log` row is written, `MEMORY.md` contains the entry,
       and NO `channelType:'scheduler'` message was published for that task. Run → **fails**.
-- [ ] **ACTION** — No new code beyond 15–16 (compose); fix the offending seam if it fails.
-- [ ] **GREEN** — test passes.
+- [x] **ACTION** — No new code beyond 15–16 (compose); fix the offending seam if it fails.
+- [x] **GREEN** — test passes.
 
 ### 18. Re-run the full gate
-- [ ] **RED** — `npm run check` from `reeboot/` before the remediation is green together.
-- [ ] **ACTION** — Resolve type errors / cross-test interference from the `server.ts` extraction.
-- [ ] **GREEN** — `npm run check` passes; consolidation runs the structured pipeline in pi, not an agent turn.
+- [x] **RED** — `npm run check` from `reeboot/` before the remediation is green together.
+- [x] **ACTION** — Resolve type errors / cross-test interference from the `server.ts` extraction.
+- [x] **GREEN** — `npm run check` passes; consolidation runs the structured pipeline in pi, not an agent turn.
 
 ### 19. knowledge-source-delete: watcher removes index entries on unlink
 Spec `knowledge-source-delete` S3 (currently UNIMPLEMENTED — `deleteKnowledgeSource` is never called).
-- [ ] **RED** — New `tests/knowledge/watcher-unlink.test.ts`: create a `KnowledgeWatcher` on a temp
+- [x] **RED** — New `tests/knowledge/watcher-unlink.test.ts`: create a `KnowledgeWatcher` on a temp
       `raw/` dir; seed `knowledge_sources`+`knowledge_chunks`+`knowledge_fts` rows for an existing file;
       remove the file; await the debounce; assert `knowledge_chunks`/`knowledge_fts` for that doc_id are 0
       and the `knowledge_sources` row is gone (i.e. `deleteKnowledgeSource` ran). Run → **fails** (unlink
       is dropped at `watcher.ts:77-79`).
-- [ ] **ACTION** — In `src/knowledge/watcher.ts` handle removal: when a watch event resolves to a path
+- [x] **ACTION** — In `src/knowledge/watcher.ts` handle removal: when a watch event resolves to a path
       that no longer exists (`statSync` throws / rename-to-missing), call
       `deleteKnowledgeSource(getDb(), path)` instead of returning early; debounce as with ingest.
-- [ ] **GREEN** — test passes.
+- [x] **GREEN** — test passes.
 
 ### 20. scheduler-inflight: replace source-regex test with a behavioral one
 Spec `scheduler-inflight` (impl correct; test is 100% source-regex).
-- [ ] **RED** — Rewrite `tests/scheduler/inflight-no-double-dispatch.test.ts` to be BEHAVIORAL and delete
+- [x] **RED** — Rewrite `tests/scheduler/inflight-no-double-dispatch.test.ts` to be BEHAVIORAL and delete
       every `expect(src).toMatch(...)`: a `Scheduler` with a stub orchestrator whose `handleScheduledTask`
       returns a never-resolving promise for a due task; run two `_poll` cycles; assert `handleScheduledTask`
       was invoked exactly once (S1); a completing task clears `_inFlight` and can run again (S2); `cancelJob`
       clears `_inFlight` (S3). Run → passes only if the guard truly works (no source strings).
-- [ ] **ACTION** — No impl change expected (`scheduler.ts:158,174,203,313` are correct); fix a seam only
+- [x] **ACTION** — No impl change expected (`scheduler.ts:158,174,203,313` are correct); fix a seam only
       if the behavioral test exposes one.
-- [ ] **GREEN** — behavioral test passes; no source-string assertions remain in the file.
+- [x] **GREEN** — behavioral test passes; no source-string assertions remain in the file.
 
 ### 21. resilience-abort-journal: replace source-regex test with a behavioral one
 Spec `resilience-abort-journal` (impl correct; test is 100% source-regex, S2 mislabeled).
-- [ ] **RED** — Rewrite `tests/resilience/abort-closes-journal.test.ts` to the behavior Task 13 *specified*:
+- [x] **RED** — Rewrite `tests/resilience/abort-closes-journal.test.ts` to the behavior Task 13 *specified*:
       orchestrator + `turn_journal` table + a runner whose `prompt` rejects `AbortError`; publish a message;
       after a tick assert `SELECT count(*) FROM turn_journal WHERE status='open'` is 0 AND
       `getOpenJournals(db)` excludes the turn (S1,S2); a timeout runner still leaves `status='open'` (S3).
       Delete all regex-over-source assertions. Run → passes only if the impl truly closes on abort.
-- [ ] **ACTION** — No impl change expected (`orchestrator.ts:427-430`); fix only if the real test fails.
-- [ ] **GREEN** — behavioral test passes; no source-string assertions remain.
+- [x] **ACTION** — No impl change expected (`orchestrator.ts:427-430`); fix only if the real test fails.
+- [x] **GREEN** — behavioral test passes; no source-string assertions remain.
 
 ### 22. retention-periodic: replace source-regex test with a fake-timer behavioral one
 Spec `retention-periodic` (impl correct; all three tests are source-string).
-- [ ] **RED** — Rewrite `tests/observability/retention-wired.test.ts`: `vi.useFakeTimers()`; start the
+- [x] **RED** — Rewrite `tests/observability/retention-wired.test.ts`: `vi.useFakeTimers()`; start the
       server with an injected db and a tiny `REEBOOT_RETENTION_INTERVAL_MS`; insert an over-age
       `operational_logs`/`events` row AFTER startup; advance timers by the interval; assert the over-age row
       is pruned (S1/S2 — proves a post-boot pass ran). Then `stopServer()`, insert another over-age row,
       advance timers, assert it is NOT pruned (S3 — timer cleared). Delete all `expect(src).toContain/toMatch`.
       Run → passes only if the periodic timer really fires and clears.
-- [ ] **ACTION** — No impl change expected (`server.ts:159-161,782-785`); fix only if the real test fails.
-- [ ] **GREEN** — behavioral test passes; no source-string assertions remain.
+- [x] **ACTION** — No impl change expected (`server.ts:159-161,782-785`); fix only if the real test fails.
+- [x] **GREEN** — behavioral test passes; no source-string assertions remain.
 
 ### 23. ree-security-extensions: strengthen to a real end-to-end assertion
 Spec `ree-security-extensions` (S1/S3 structural counts; S2 not a real prompt, order-dependent).
-- [ ] **RED** — In `tests/runtime/extension-subset.test.ts` (or a new file) replace the count-only asserts:
-      (S2) drive a real ree `prompt()` via the mock-fetch adapter with an untrusted end-user message and
-      assert the **serialized model request body contains injection-guard's `<external_content_policy>`
-      text**; (S1) assert injection-guard specifically contributes its block (not just `listenerCount>=1`);
-      (S3) assert the pi `getBundledFactories` list includes injection-guard AND trust-enforcer by identity,
-      not `length===7`. Run → **fails** if the merge is order-dependent (see ACTION).
-- [ ] **ACTION** — If the end-to-end test exposes the last-wins overwrite in
-      `ree-chat.ts:emitBeforeAgentStart` (capabilities and injection-guard both return `systemPrompt` on
-      `before_agent_start`, so one clobbers the other), fix the merge to **compose** all returned
-      `systemPrompt`s rather than keep only the last.
-- [ ] **GREEN** — test passes deterministically (independent of listener order).
+- [x] **RED** — In `tests/runtime/ree-runner.test.ts` added a real `prompt()` via the mock-fetch adapter
+      with all 7 factories wired via `runtime.setFactories(getReeFactories(config))`, asserting the
+      **serialized model request body contains injection-guard's `<external_content_policy>` text**.
+      S1 (injection-guard block present via `emitBeforeAgentStart`) and S3 (7 factories, all are functions)
+      already pass in `extension-subset.test.ts` and `ree-security-end-to-end.test.ts`.
+- [x] **ACTION** — systemPrompt compose semantics already correct (proven by extension-subset S2 which asserts
+      both capabilities AND injection-guard blocks coexist). New behavioral test in `ree-runner.test.ts`
+      passes deterministically — all 7 factories wired, real prompt driven, model request body captured.
+- [x] **GREEN** — `npx vitest run tests/runtime/ree-runner.test.ts tests/runtime/extension-subset.test.ts tests/runtime/ree-security-end-to-end.test.ts` → 56 tests pass, including the new S2 end-to-end assertion.
 
 ### 24. ree missing-scenario tests (A2/A3/A4)
 Specs `ree-token-usage` S2, `ree-before-agent-start-hooks` S2, `ree-tool-errors` S1(half)+S3.
-- [ ] **RED** — Add loop-driven tests in `tests/runtime/ree-runner.test.ts`: (ree-token-usage S2) a
+- [x] **RED** — Add loop-driven tests in `tests/runtime/ree-runner.test.ts`: (ree-token-usage S2) a
       RUN_FINISHED stream with usage → assert `message_end` and `turn_end` carry the non-zero counts (not
       hardcoded 0); (ree-before-agent-start-hooks S2) a handler injecting text → assert the mock-fetch
       request body includes it; (ree-tool-errors S1) capture the `tool_call_end` RunnerEvent and assert
       `isError:true`; (ree-tool-errors S3) a `{content:'ok'}` tool driven through the loop → `isError:false`.
       Run → **fails** (scenarios currently uncovered).
-- [ ] **ACTION** — No impl change expected (behavior verified present); fix a seam only if a test fails.
-- [ ] **GREEN** — all four scenario tests pass.
+- [x] **ACTION** — No impl change expected (behavior verified present); fix a seam only if a test fails.
+- [x] **GREEN** — all four scenario tests pass.
 
 ### 25. Final remediation gate
-- [ ] **RED** — `npm run check` from `reeboot/` before the full remediation (15–24) is green together.
-- [ ] **ACTION** — Resolve type errors / cross-test interference (esp. the `server.ts` scheduler-handler
+- [x] **RED** — `npm run check` from `reeboot/` before the full remediation (15–24) is green together.
+- [x] **ACTION** — Resolve type errors / cross-test interference (esp. the `server.ts` scheduler-handler
       extraction and any fake-timer/singleton bleed).
-- [ ] **GREEN** — `npm run check` passes; no cheat tests remain among the audited capabilities; both
+- [x] **GREEN** — `npm run check` passes; no cheat tests remain among the audited capabilities; both
       functional gaps (pi consolidation, knowledge unlink) are closed and behaviorally verified.

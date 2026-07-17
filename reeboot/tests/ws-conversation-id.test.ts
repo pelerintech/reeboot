@@ -160,3 +160,32 @@ describe('ws-conversation-ingress (ree mode)', () => {
     invalid.ws.close();
   });
 });
+
+// ─── Pi mode: WS still context-gated, no conversationId stamped ────────────────
+
+describe('ws-conversation-ingress (pi mode)', () => {
+  it('S4 — known context connects and routes to main; unknown context gets 4004', async () => {
+    const { port } = await startServer({
+      port: 0, logLevel: 'silent', db, reebotDir: tmpDir, config: defaultConfig,
+    });
+
+    // Known context 'main' connects successfully
+    const main = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
+    await waitForMessage(main.messages, m => m.type === 'connected');
+    expect(main.messages.some(m => m.type === 'connected')).toBe(true);
+
+    main.ws.send(JSON.stringify({ type: 'message', content: 'hi from pi' }));
+    await new Promise(r => setTimeout(r, 150));
+
+    // Published message has NO conversationId in pi mode
+    const piMsg = published.find(m => m.channelType === 'web' && m.content === 'hi from pi');
+    expect(piMsg).toBeDefined();
+    expect(piMsg.conversationId).toBeUndefined();
+
+    main.ws.close();
+
+    // Unknown context 'never-heard-of' closes with 4004
+    const code = await waitForClose(`ws://localhost:${port}/ws/chat/never-heard-of`);
+    expect(code).toBe(4004);
+  });
+});

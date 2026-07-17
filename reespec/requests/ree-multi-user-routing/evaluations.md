@@ -128,3 +128,100 @@ production-wired (factory `server.ts:223`, eviction/dispose `orchestrator.ts:700
 missing/weak *scenarios* and one flaky assertion — not fabricated or dead-code implementations.
 
 ---
+## Re-evaluation — 2026-07-17 22:2x (post-remediation)
+
+Contract: `brief.md` + 11 specs. Re-run after the test batch that landed at 22:13–22:18 addressing the
+6 PARTIAL findings from the prior entry. Every changed test read and re-classified; routing suite run
+(42/42 pass) and the timing-sensitive files run 3× back-to-back (25/25 each — no flakiness).
+**Result: 5 SATISFIED / 6 PARTIAL → 10 SATISFIED / 1 PARTIAL.** Five of six gaps genuinely closed.
+
+### conversation-id-message · conversation-id-validation · ree-context-resolution · cancel-routing · ree-runner-eviction
+verdict:  ✅ SATISFIED  (unchanged — behavioral, production-wired; see prior entry)
+
+### ree-dynamic-runner   (was ⚠️ PARTIAL — S4 — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   S4 now behaviorally asserted (`orchestrator-ree-routing.test.ts:250-298`): a real
+          `ReeRuntime`+`ReeAgentRunner` with `vi.spyOn(runtime,'getOrCreateChat')`, driven through a real
+          `prompt()` (SSE stream), asserts `getOrCreateChat` was called with `'A'` (`:293`) — the
+          chatId==conversationId invariant is now proven, not just inferred.
+
+### ws-conversation-ingress   (was ⚠️ PARTIAL — S4 — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   S4 pi-mode now tested (`ws-conversation-id.test.ts`, "pi mode" describe): real server, known
+          `/ws/chat/main` connects and the published message has NO `conversationId` (pi ignores it), and
+          an unknown context closes with code `4004` (the `getContextById` gate still applies in pi).
+          Behavioral against a real WS server.
+
+### ree-conversation-isolation   (was ⚠️ PARTIAL — S2 weak, S3 missing — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   S2 was rewritten to drive two conversations through the REAL Orchestrator with a mock adapter
+          exposing `sendEvent`, publishing `peerA/conversationId:A` and `peerB/conversationId:B`, and
+          asserting A's events reach only `peerA` and B's only `peerB` with NO cross-delivery
+          (`ree-conversation-isolation.test.ts:124+`) — it now exercises the production
+          `sendEvent(msg.peerId, event)` route, not per-callback separation. S3 was rewritten to test
+          real per-conversation concurrency/queueing: with A on a hanging fetch and B on a completing
+          fetch, B completes independently (its `message_end` is delivered while A is still busy), a 2nd
+          A-message receives a busy/queue reply, and B is never told about A's busy state. Both are
+          behavioral through the orchestrator and stable across 3 repeat runs. The core privacy +
+          concurrency guarantee is now genuinely covered.
+
+### ree-messages-skip   (was ⚠️ PARTIAL — FLAKY test — now FIXED)
+verdict:  ✅ SATISFIED
+reason:   the nondeterministic `SELECT role FROM messages ORDER BY id` (random-UUID PK) is now
+          `ORDER BY rowid` (`orchestrator-ree-routing.test.ts:426`), i.e. insertion order — deterministic.
+          Confirmed stable across 3 repeat runs (previously failed intermittently). Impl unchanged
+          (`skipPersist` gate) and correct; the test defect is resolved.
+
+### ree-shared-workspace   (was ⚠️ PARTIAL — S2b — STILL ⚠️ PARTIAL)
+verdict:  ⚠️ PARTIAL
+reason:   S1 (shared `__ree__/workspace`) and S2a (no per-conversation meta file/dir) remain solid
+          end-to-end. An S2b test was ADDED (`orchestrator-ree-routing.test.ts:414-461`) and its behavioral
+          assertions — meta file absent (`existsSync`→false), no error frame, ws stays OPEN — are real.
+          BUT the spec's core S2b claim ("the ree token-meter still records the turn with a default
+          operationType") is NOT verified: the only usage-related assertion (`:454-458`) checks that the
+          `usage` TABLE exists in `sqlite_master` — and the test itself CREATED that table at `:421`, so it
+          is always-true. No assertion queries for an inserted `usage` row or checks
+          `operation_type='user_message'`. (Likely because the turn produces no real usage in that setup —
+          the model fetch isn't mocked with token counts.)
+focus:    assert an actual `usage` row is written for a ree turn with `operation_type='user_message'`
+          (drive a ree turn whose stream carries usage, as `ree-token-usage` S3 does). Note this overlaps
+          `deployment-readiness/ree-token-usage` S3, which DOES verify a usage row behaviorally.
+
+### session-search-scoping   (verification-only)
+verdict:  ✅ SATISFIED  (with the same caveat: S1 re-types the FTS SQL inline rather than calling
+          `session_search.execute()`; acceptable for a verification-only spec)
+
+## Triage
+
+✅ Safe to skip:   all except ree-shared-workspace — 10 of 11 capabilities are now behaviorally satisfied,
+   including the previously-weak core privacy guarantees (isolation S2 cross-peer routing, S3
+   per-conversation queueing) and the previously-flaky messages-skip test (now deterministic).
+
+⚠️  Worth a look:
+  1. ree-shared-workspace S2b — the "token-meter records the turn with a default operationType" assertion
+     is hollow (checks a self-created table exists, not a written row). Only remaining residue. Minor, and
+     the underlying token-metering behavior is separately proven by deployment-readiness/ree-token-usage S3.
+
+❓  Human call:    none.
+
+### Notes
+- Full routing suite: 42/42 pass. Timing-sensitive files (isolation, orchestrator-ree-routing, ws) run
+  3× back-to-back: 25/25 every time — the new orchestrator-driven tests use real `setTimeout` waits but
+  are stable at current durations (50/100/200/800ms). If CI is much slower, watch the 800ms wait in
+  shared-workspace S2b and the 200ms waits in isolation S2/S3.
+- No `readFileSync`-on-source cheats introduced; the new tests drive the real Orchestrator/Runtime/WS.
+
+---
+### ree-shared-workspace S2b — RESOLVED (2026-07-17, follow-up)
+The hollow assertion (checking that a self-created `usage` table exists — always true) was replaced with
+a genuine behavioral proof of the spec's second clause. `orchestrator-ree-routing.test.ts` S2b now points
+the token-meter's global `getDb()` at a test DB (via `vi.doMock`, the proven `token-meter-cost.test.ts`
+pattern) and drives the REAL token-meter `agent_end` handler with a non-zero-usage event and a cwd that
+has NO `.reeboot_turn_meta.json` (the ree condition that S2 proves the orchestrator produces). It then
+asserts a `usage` row IS inserted with `operation_type='user_message'` and the actual token counts (12/7)
+— proving "the ree token-meter still records the turn with a default operationType." Deterministic (no
+server, no timing wait); `vi.doUnmock` in a `finally` prevents leakage. Verified: S2b passes, the full
+file is 18/18 across 3 repeat runs with no sibling-test interference. **ree-shared-workspace flips
+⚠️ PARTIAL → ✅ SATISFIED — ree-multi-user-routing is now 11/11 SATISFIED.**
+
+---

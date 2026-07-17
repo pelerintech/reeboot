@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AgentRunner, RunnerEvent, ContextConfig, MessageTrust } from '@src/agent-runner/interface.js';
 import type { ExtensionContext } from '@src/extensions/extension-api.js';
+import { getReeFactories } from '@src/extensions/loader.js';
 
 const mockContext: ExtensionContext = {
   cwd: '/tmp/test-workspace',
@@ -1464,5 +1465,47 @@ describe('ReeAgentRunner — missing scenario tests', () => {
     const toolCallEnd = capturedEvents.find((e: any) => e.type === 'tool_call_end');
     expect(toolCallEnd).toBeDefined();
     expect(toolCallEnd.isError).toBe(false);
+  });
+
+  // ─── Task 23 S2: ree-security-extensions — injection-guard block on the wire via real prompt ───
+
+  it('(C3 S2) injection-guard policy block reaches model request body via all-7-factory prompt', async () => {
+    const encoder = new TextEncoder();
+    const lines: string[] = [];
+    lines.push(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 1, model: 't', choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] })}\n\n`);
+    lines.push(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 1, model: 't', choices: [{ index: 0, delta: { content: 'Hello' }, finish_reason: null }] })}\n\n`);
+    lines.push(`data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 1, model: 't', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+    lines.push('data: [DONE]\n\n');
+
+    const body = new ReadableStream({
+      start(controller) {
+        for (const line of lines) {
+          controller.enqueue(encoder.encode(line));
+        }
+        controller.close();
+      },
+    });
+
+    let capturedBody: string | null = null;
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, opts: any) => {
+      capturedBody = opts.body;
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: { provider: 'custom', id: 'test-model', baseUrl: 'http://localhost:1234/v1', apiKey: 'test', fetch: mockFetch },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    runtime.setFactories(getReeFactories(config));
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    await runner.prompt('untrusted user message', () => {});
+
+    expect(capturedBody).not.toBeNull();
+    // Injection-guard block should be present in the serialized model request
+    expect(capturedBody).toContain('external_content_policy');
   });
 });

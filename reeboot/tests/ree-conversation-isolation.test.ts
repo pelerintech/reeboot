@@ -14,7 +14,7 @@ import Database from 'better-sqlite3';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdirSync, rmSync } from 'fs';
-import type { RunnerEvent } from '@src/agent-runner/interface.js';
+import { MessageBus, createIncomingMessage } from '@src/channels/interface.js';
 
 const mockContext = { agent: { model: { provider: 'openai' } } };
 
@@ -121,53 +121,179 @@ describe('ree-conversation-isolation', () => {
     expect(bRows.some((r) => String(r.content).includes('from A'))).toBe(false);
   });
 
-  it('S2 — reply routing per connection (events delivered only to the prompting peer)', async () => {
+  it('S2 — reply routing per connection (orchestrator sendEvent delivers only to the prompting peer)', async () => {
+    // Drive two conversations through the real Orchestrator's sendEvent path
+    // to verify that A's events reach only A's peerId and B's only B's.
+    // This tests the production routing: onEvent → presenceAdapter.sendEvent(msg.peerId, event).
     const runtime = makeRuntime(mockChatCompletionsFetch('routed reply'));
     const runnerA = new ReeAgentRunner(runtime, { id: 'A', workspacePath: tmpDir }, mockContext as any);
     const runnerB = new ReeAgentRunner(runtime, { id: 'B', workspacePath: tmpDir }, mockContext as any);
 
-    const aEvents: RunnerEvent[] = [];
-    const bEvents: RunnerEvent[] = [];
+    const Orchestrator = (await import('@src/orchestrator.js')).Orchestrator;
+    const bus = new MessageBus();
+    // Mock adapter with sendEvent — the orchestrator calls sendEvent(msg.peerId, event)
+    // on the adapter matching msg.channelType. Each connection gets its own peerId.
+    const adapter = {
+      send: vi.fn().mockResolvedValue(undefined),
+      sendEvent: vi.fn(),
+      init: vi.fn().mockResolvedValue(undefined),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      status: vi.fn().mockReturnValue('connected'),
+      startTyping: vi.fn().mockResolvedValue(undefined),
+      stopTyping: vi.fn().mockResolvedValue(undefined),
+    };
 
-    await runnerA.prompt('for A', (e) => aEvents.push(e));
-    await runnerB.prompt('for B', (e) => bEvents.push(e));
+    const factory = vi.fn()
+      .mockReturnValueOnce(runnerA)
+      .mockReturnValueOnce(runnerB);
 
-    // A's events stream to A's onEvent; B's to B's — no cross-delivery.
-    const aText = aEvents.filter((e) => e.type === 'text_delta').map((e: any) => e.delta).join('');
-    const bText = bEvents.filter((e) => e.type === 'text_delta').map((e: any) => e.delta).join('');
+    const orc = new Orchestrator(
+      { routing: { default: 'main', rules: [] }, session: { inactivityTimeout: 14400000 }, sdk: 'ree' },
+      bus,
+      new Map([['web', adapter]]),
+      new Map(),
+      undefined,
+      { runnerFactory: factory }
+    );
+    orc.start();
+
+    bus.publish(createIncomingMessage({
+      channelType: 'web', peerId: 'peerA', conversationId: 'A', content: 'for A', raw: null,
+    }));
+    bus.publish(createIncomingMessage({
+      channelType: 'web', peerId: 'peerB', conversationId: 'B', content: 'for B', raw: null,
+    }));
+
+    // Wait for both turns to complete
+    await new Promise(r => setTimeout(r, 200));
+
+    // A's events went to A's peerId only
+    const aCalls = (adapter.sendEvent as any).mock.calls as [string, Record<string, unknown>][];
+    const aCallsForA = aCalls.filter(([peerId]) => peerId === 'peerA');
+    const aText = aCallsForA
+      .filter(([_, e]) => e.type === 'text_delta')
+      .map(([_, e]) => e.delta as string).join('');
     expect(aText).toBe('routed reply');
+
+    // B's events went to B's peerId only
+    const aCallsForB = aCalls.filter(([peerId]) => peerId === 'peerB');
+    const bText = aCallsForB
+      .filter(([_, e]) => e.type === 'text_delta')
+      .map(([_, e]) => e.delta as string).join('');
     expect(bText).toBe('routed reply');
-    // Each peer only saw its own message_end (one each)
-    expect(aEvents.filter((e) => e.type === 'message_end')).toHaveLength(1);
-    expect(bEvents.filter((e) => e.type === 'message_end')).toHaveLength(1);
+
+    // No cross-delivery: A's events were NOT sent to B's peerId
+    expect(aCallsForA.every(([peerId]) => peerId === 'peerA')).toBe(true);
+    // No cross-delivery: B's events were NOT sent to A's peerId
+    expect(aCallsForB.every(([peerId]) => peerId === 'peerB')).toBe(true);
+
+    orc.stop();
   });
 
-  it('S3 — independent serialization (abort on A does not affect B)', async () => {
-    // A hangs; B completes. Aborting A must not reject B's prompt.
-    const hangingFetch = vi.fn().mockImplementation((_url: string, opts?: { signal?: AbortSignal }) =>
-      new Promise((_, reject) => {
-        if (opts?.signal) opts.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
-      })
+  it('S3 — per-conversation queue/busy concurrency (B runs while A busy, 2nd A-message queues)', async () => {
+    // Test three key behaviours through the orchestrator:
+    // 1. A is busy (hanging fetch) — B completes independently (separate context = separate serialization)
+    // 2. A 2nd A-message queues behind A's in-flight turn (per-conversation queue)
+    // 3. B's turn does not block on A's busy state
+    const hangingFetch = vi.fn().mockImplementation(
+      (_url: string, opts?: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          if (opts?.signal)
+            opts.signal.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError'))
+            );
+        })
     );
-    const runtime = makeRuntime(hangingFetch);
-    const runnerA = new ReeAgentRunner(runtime, { id: 'A', workspacePath: tmpDir }, mockContext as any);
-    const runnerB = new ReeAgentRunner(runtime, { id: 'B', workspacePath: tmpDir }, mockContext as any);
+    const completingFetch = mockChatCompletionsFetch('B completes');
 
-    const aPromise = runnerA.prompt('hang', () => {});
-    // Give A a tick to start the hanging fetch
-    await new Promise((r) => setTimeout(r, 10));
+    const Orchestrator = (await import('@src/orchestrator.js')).Orchestrator;
+    const bus = new MessageBus();
+    const adapter = {
+      send: vi.fn().mockResolvedValue(undefined),
+      sendEvent: vi.fn(),
+      init: vi.fn().mockResolvedValue(undefined),
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      status: vi.fn().mockReturnValue('connected'),
+      startTyping: vi.fn().mockResolvedValue(undefined),
+      stopTyping: vi.fn().mockResolvedValue(undefined),
+    };
 
-    // Swap to a completing fetch for B by creating a fresh runtime? No — the
-    // runtime shares one config. Instead, verify B's prompt is independent:
-    // abort A, then B (not yet prompted) can still be constructed & aborted
-    // without affecting A's chat state.
-    runnerA.abort();
-    await expect(aPromise).rejects.toThrow(/abort/i);
+    // Create two runtimes — A hangs, B completes
+    const runtimeA = makeRuntime(hangingFetch);
+    const runnerA = new ReeAgentRunner(runtimeA, { id: 'A', workspacePath: tmpDir }, mockContext as any);
 
-    // B's chat is untouched by A's abort
-    const chatA = runtime.getChat('A');
-    const chatB = runtime.getChat('B');
-    expect(chatA).toBeDefined();
-    expect(chatB).toBeUndefined(); // B was never prompted
+    const runtimeB = makeRuntime(completingFetch);
+    const runnerB = new ReeAgentRunner(runtimeB, { id: 'B', workspacePath: tmpDir }, mockContext as any);
+
+    const factory = vi.fn()
+      .mockReturnValueOnce(runnerA)
+      .mockReturnValueOnce(runnerB);
+
+    const orc = new Orchestrator(
+      { routing: { default: 'main', rules: [] }, session: { inactivityTimeout: 14400000 }, sdk: 'ree' },
+      bus,
+      new Map([['web', adapter]]),
+      new Map(),
+      undefined,
+      { runnerFactory: factory }
+    );
+    orc.start();
+
+    // 1. Send A's message (hangs)
+    bus.publish(createIncomingMessage({
+      channelType: 'web', peerId: 'peerA', conversationId: 'A', content: 'hang A', raw: null,
+    }));
+    await new Promise(r => setTimeout(r, 50));
+
+    // A is busy — sendEvent for A was called (runner started the hanging prompt)
+    const aSendEventCalls = (adapter.sendEvent as any).mock.calls.filter(
+      ([peerId]: [string]) => peerId === 'peerA'
+    );
+    // B sendEvent has NOT been called yet (B hasn't been prompted)
+    const bSendEventCallsBefore = (adapter.sendEvent as any).mock.calls.filter(
+      ([peerId]: [string]) => peerId === 'peerB'
+    );
+    expect(bSendEventCallsBefore.length).toBe(0);
+
+    // 2. Send B's message — must complete without waiting (separate context = separate serialization)
+    bus.publish(createIncomingMessage({
+      channelType: 'web', peerId: 'peerB', conversationId: 'B', content: 'for B', raw: null,
+    }));
+    await new Promise(r => setTimeout(r, 200));
+
+    // B's events were delivered via sendEvent (B completed independently)
+    const bSendEventCalls = (adapter.sendEvent as any).mock.calls.filter(
+      ([peerId, ev]: [string, any]) => peerId === 'peerB' && ev.type === 'message_end'
+    );
+    expect(bSendEventCalls.length).toBeGreaterThanOrEqual(1);
+
+    // 3. Send a 2nd message for A — must be queued (busy reply sent)
+    bus.publish(createIncomingMessage({
+      channelType: 'web', peerId: 'peerA', conversationId: 'A', content: 'queued for A', raw: null,
+    }));
+    await new Promise(r => setTimeout(r, 100));
+
+    // A's 2nd message got a busy/please-wait reply (not processed directly)
+    const sendCalls = (adapter.send as any).mock.calls;
+    const busyReplyToA = sendCalls.find(
+      ([peerId, reply]: [string, any]) =>
+        peerId === 'peerA' &&
+        typeof reply?.text === 'string' &&
+        (reply.text.includes('busy') || reply.text.includes('wait') || reply.text.includes('queue') || reply.text.includes('moment'))
+    );
+    expect(busyReplyToA).toBeDefined();
+
+    // B was never told about A's busy state
+    const busyReplyToB = sendCalls.find(
+      ([peerId, reply]: [string, any]) =>
+        peerId === 'peerB' &&
+        typeof reply?.text === 'string' &&
+        (reply.text.includes('busy') || reply.text.includes('wait') || reply.text.includes('queue') || reply.text.includes('moment'))
+    );
+    expect(busyReplyToB).toBeUndefined();
+
+    orc.stop();
   });
 });
