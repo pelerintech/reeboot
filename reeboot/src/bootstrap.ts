@@ -12,8 +12,8 @@
 
 import type Database from 'better-sqlite3';
 import { getLogger } from './observability/logger.js';
-import { registerServerJobs as memoryServerJobs } from './extensions/memory-manager.js';
 import { registerServerJobs as knowledgeServerJobs } from './extensions/knowledge-manager.js';
+import { registerServerJobs as memoryServerJobs } from './extensions/memory-manager.js';
 import { scanDependencies } from './security/advisory-scanner.js';
 import { join } from 'path';
 import type { Scheduler } from './scheduler.js';
@@ -29,12 +29,14 @@ function getPackageRoot(): string {
 export function bootstrapServerJobs(db: Database.Database, scheduler: Scheduler, config: any): void {
   const log = getLogger();
 
-  // Memory consolidation
-  try {
-    memoryServerJobs(db, scheduler, config);
-    log.info({ component: 'bootstrap' }, 'Registered memory consolidation job');
-  } catch (err: unknown) {
-    log.error({ component: 'bootstrap', err }, 'Failed to register memory consolidation job');
+  // Memory consolidation (only in full pi mode — not ree)
+  if (config?.sdk !== 'ree') {
+    try {
+      memoryServerJobs(db, scheduler, config);
+      log.info({ component: 'bootstrap' }, 'Registered memory consolidation job');
+    } catch (err: unknown) {
+      log.error({ component: 'bootstrap', err }, 'Failed to register memory consolidation job');
+    }
   }
 
   // Knowledge wiki lint

@@ -31,7 +31,7 @@ describe('Observability extension — session lifecycle', () => {
     const pi = makePi(db);
     makeObservabilityExtension(pi as any, db);
 
-    pi.emit('session_shutdown', { reason: 'quit', contextId: 'main' });
+    pi.emit('session_shutdown', { reason: 'quit', sessionId: 'main' });
     await new Promise(r => setTimeout(r, 20));
 
     const row = db.prepare("SELECT * FROM session_events LIMIT 1").get() as any;
@@ -53,7 +53,7 @@ describe('Observability extension — session lifecycle', () => {
       `INSERT INTO turn_journal (turn_id, context_id, prompt) VALUES ('open-turn-1', 'main', 'test prompt')`
     ).run();
 
-    pi.emit('session_shutdown', { reason: 'quit', contextId: 'main' });
+    pi.emit('session_shutdown', { reason: 'quit', sessionId: 'main' });
     await new Promise(r => setTimeout(r, 20));
 
     const row = db.prepare("SELECT * FROM session_events LIMIT 1").get() as any;
@@ -69,7 +69,7 @@ describe('Observability extension — session lifecycle', () => {
     const pi = makePi(db);
     makeObservabilityExtension(pi as any, db);
 
-    pi.emit('session_shutdown', { reason: 'reload', contextId: 'main' });
+    pi.emit('session_shutdown', { reason: 'reload', sessionId: 'main' });
     await new Promise(r => setTimeout(r, 20));
 
     const row = db.prepare("SELECT * FROM session_events LIMIT 1").get() as any;
@@ -84,7 +84,7 @@ describe('Observability extension — session lifecycle', () => {
     const pi = makePi(db);
     makeObservabilityExtension(pi as any, db);
 
-    pi.emit('session_shutdown', { reason: 'quit', contextId: 'main', targetSessionFile: '/tmp/session.jsonl' });
+    pi.emit('session_shutdown', { reason: 'quit', sessionId: 'main', targetSessionFile: '/tmp/session.jsonl' });
     await new Promise(r => setTimeout(r, 20));
 
     const row = db.prepare("SELECT * FROM session_events LIMIT 1").get() as any;

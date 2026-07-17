@@ -43,6 +43,25 @@ export default function Chat() {
     inputRef.current?.focus();
   }, []);
 
+  // Hydrate transcript from persisted history on mount only
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/contexts/main/messages')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: Array<{ role: string; content: string; created_at: string }>) => {
+        if (cancelled) return;
+        setMessages(rows.map((row, i) => ({
+          id: `hist-${i}`,
+          role: (row.role === 'user' || row.role === 'assistant' || row.role === 'error')
+            ? row.role : 'assistant',
+          content: row.content,
+          timestamp: Date.parse(row.created_at) || Date.now(),
+        })));
+      })
+      .catch(() => { /* leave transcript empty on error */ });
+    return () => { cancelled = true; };
+  }, []); // mount only — do NOT depend on WS status (avoids refetch on reconnect)
+
   const handleWSMessage = useCallback((event: WSEvent) => {
     switch (event.type) {
       case 'text_delta': {

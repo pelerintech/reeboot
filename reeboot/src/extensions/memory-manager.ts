@@ -551,14 +551,14 @@ export async function runConsolidation(opts: ConsolidationOptions): Promise<void
  */
 export function registerServerJobs(
   _db: Database.Database,
-  scheduler: SchedulerToolsTarget,
+  _scheduler: SchedulerToolsTarget,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  config: any
+  _config: any
 ): void {
-  const memoryConfig = config.memory;
+  const memoryConfig = _config.memory;
   if (!memoryConfig?.enabled || !memoryConfig?.consolidation?.enabled) return;
 
-  scheduler.registerJob({
+  _scheduler.registerJob({
     id: '__memory_consolidation__',
     contextId: 'main',
     schedule: memoryConfig.consolidation.schedule ?? '0 2 * * *',

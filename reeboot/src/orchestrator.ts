@@ -15,6 +15,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import type { MessageBus, IncomingMessage, ChannelAdapter } from './channels/interface.js';
+import { isValidConversationId } from './channels/conversation-id.js';
 import type { AgentRunner } from './agent-runner/index.js';
 import { resolveMessageTrust } from './trust.js';
 import { TurnJournal } from './resilience/turn-journal.js';
@@ -50,6 +51,8 @@ export interface OrchestratorConfig {
   channels?: Record<string, { trust?: string; trusted_senders?: string[] }>;
   /** Override for the reeboot data directory (default: ~/.reeboot). Used in tests. */
   reebootDir?: string;
+  /** SDK mode switch — 'ree' enables dynamic per-conversation routing. */
+  sdk?: 'pi' | 'ree';
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -73,6 +76,11 @@ const CHANNEL_OP_TYPE_MAP: Record<string, string> = {
 
 function _channelTypeToOperationType(channelType: string): string {
   return CHANNEL_OP_TYPE_MAP[channelType] ?? 'user_message';
+}
+
+/** Mirror a turn's UUID into a 32-hex OTEL trace_id (trace = turn, span = event). */
+function _turnIdToTraceId(turnId: string): string {
+  return turnId.replace(/-/g, '');
 }
 
 // ─── Disk space check ─────────────────────────────────────────────────────────
@@ -119,19 +127,31 @@ export class Orchestrator {
   private _db: Database | null = null;
   private _consecutiveFailures = new Map<string, number>();
   private _activeOutage = false;
-  private _budgetGuard = new BudgetGuard();
+  private _budgetGuard: BudgetGuard;
+  /** Optional factory for lazily creating runners (ree mode dynamic chats). */
+  private _runnerFactory?: (contextId: string) => AgentRunner;
+  /** Context ids whose runners were lazily created by the factory (evictable). */
+  private _factoryCreated = new Set<string>();
+  /** Process-lifetime session start (reused on live-update). */
+  private readonly _sessionStartTs: string;
 
   constructor(
     config: OrchestratorConfig,
     bus: MessageBus,
     adapters: Map<string, ChannelAdapter>,
     runners: Map<string, AgentRunner>,
-    db?: Database
+    db?: Database,
+    options?: { runnerFactory?: (contextId: string) => AgentRunner }
   ) {
     this._config = config;
     this._bus = bus;
     this._adapters = adapters;
     this._runners = runners;
+    this._runnerFactory = options?.runnerFactory;
+    // Capture process-lifetime session start for BudgetGuard session scoping
+    this._sessionStartTs = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    this._budgetGuard = new BudgetGuard(this._sessionStartTs);
+
     if (db) {
       this._db = db;
       this._journal = new TurnJournal(db);
@@ -154,7 +174,37 @@ export class Orchestrator {
 
   // ── Routing ───────────────────────────────────────────────────────────────
 
+  /**
+   * Resolve the runner for a context, lazily creating one via the injected
+   * `runnerFactory` (ree mode) when absent. Returns undefined when no factory
+   * is registered and no static runner exists (pi mode, unknown context) —
+   * callers reply "No runner found" in that case.
+   */
+  private _resolveRunner(contextId: string): AgentRunner | undefined {
+    const existing = this._runners.get(contextId);
+    if (existing) return existing;
+    if (this._runnerFactory) {
+      const runner = this._runnerFactory(contextId);
+      this._runners.set(contextId, runner);
+      this._factoryCreated.add(contextId);
+      return runner;
+    }
+    return undefined;
+  }
+
   private _resolveContext(msg: IncomingMessage): string {
+    // ree mode: the conversationId is the isolation axis. Fall back to peerId
+    // (e.g. phone JID for non-web channels) then routing.default. Routing rules
+    // and per-peer overrides do not apply in ree mode — conversation ids are
+    // dynamic, not pre-registered.
+    if (this._config.sdk === 'ree') {
+      if (msg.conversationId && isValidConversationId(msg.conversationId)) {
+        return msg.conversationId;
+      }
+      if (msg.peerId) return msg.peerId;
+      return this._config.routing.default ?? 'main';
+    }
+
     const rules = this._config.routing.rules ?? [];
 
     // Check per-peer runtime override first
@@ -193,7 +243,7 @@ export class Orchestrator {
     if (state.busy) {
       // Cancel signal — abort the running turn instead of queuing
       if (msg.action === 'cancel') {
-        const runner = this._runners.get(contextId);
+        const runner = this._resolveRunner(contextId);
         if (runner) runner.abort();
         return;
       }
@@ -275,7 +325,7 @@ export class Orchestrator {
       }
     }
 
-    const runner = this._runners.get(contextId);
+    const runner = this._resolveRunner(contextId);
     if (!runner) {
       this._reply(msg, `No runner found for context "${contextId}".`);
       return;
@@ -285,17 +335,23 @@ export class Orchestrator {
     const sessionPath = runner?.getSessionPath?.() ?? undefined;
     this._journal?.openTurn(turnId, contextId, msg.content, sessionPath);
 
-    // Write turn meta file for token-meter to read operation_type
+    // Write turn meta file for token-meter to read operation_type.
+    // ree mode: SKIP — all conversations share one workspace
+    // (contexts/__ree__/workspace); a per-contextId meta file would create a
+    // per-customer directory and co-mingle paths. The ree token-meter defaults
+    // operationType to 'user_message' when the file is absent (correct for support).
     const operationType = _channelTypeToOperationType(msg.channelType);
-    const reebootDir = (this._config as any).reebootDir ?? join(homedir(), '.reeboot');
-    const workspaceDir = join(reebootDir, 'contexts', contextId, 'workspace');
-    try {
-      mkdirSync(workspaceDir, { recursive: true });
-      writeFileSync(
-        join(workspaceDir, '.reeboot_turn_meta.json'),
-        JSON.stringify({ operationType, turnId, trust: msg.trust ?? 'owner' })
-      );
-    } catch { /* non-critical; skip silently */ }
+    if (this._config.sdk !== 'ree') {
+      const reebootDir = (this._config as any).reebootDir ?? join(homedir(), '.reeboot');
+      const workspaceDir = join(reebootDir, 'contexts', contextId, 'workspace');
+      try {
+        mkdirSync(workspaceDir, { recursive: true });
+        writeFileSync(
+          join(workspaceDir, '.reeboot_turn_meta.json'),
+          JSON.stringify({ operationType, turnId, trust: msg.trust ?? 'owner' })
+        );
+      } catch { /* non-critical; skip silently */ }
+    }
     const turnStartMs = Date.now();
     if (this._db) {
       emitEvent(this._db, {
@@ -303,6 +359,7 @@ export class Orchestrator {
         contextId,
         channel: msg.channelType,
         severity: 9,
+        traceId: _turnIdToTraceId(turnId),
         payload: { turnId, peerId: msg.peerId },
       }).catch(() => {});
     }
@@ -324,7 +381,13 @@ export class Orchestrator {
 
     // Persist user message immediately — before the turn runs, so it is written
     // regardless of success, error, or timeout (MP-1).
-    const skipPersist = msg.channelType === 'scheduler' || msg.channelType === 'recovery' || msg.channelType === 'heartbeat';
+    // ree mode: SKIP the shared `messages` table — durable history lives in
+    // per-chat `chat_messages` (ree-history), and the shared table would
+    // co-mingle all customers under one context with no conversation scoping.
+    const skipPersist = this._config.sdk === 'ree'
+      || msg.channelType === 'scheduler'
+      || msg.channelType === 'recovery'
+      || msg.channelType === 'heartbeat';
     if (!skipPersist && this._db) {
       const msgId = randomUUID();
       try {
@@ -409,6 +472,7 @@ export class Orchestrator {
             contextId,
             channel: msg.channelType,
             severity: 17,
+            traceId: _turnIdToTraceId(turnId),
             payload: { turnId, reason: 'timeout', durationMs: Date.now() - turnStartMs },
           }).catch(() => {});
         }
@@ -418,7 +482,10 @@ export class Orchestrator {
 
       if (result === 'error') {
         const err = turnError;
-        if (err?.name === 'AbortError') return;
+        if (err?.name === 'AbortError') {
+          this._journal?.closeTurn(turnId);
+          return;
+        }
 
         // Check for rate limit (HTTP 429)
         const isRateLimit = err?.status === 429 ||
@@ -466,6 +533,7 @@ export class Orchestrator {
             contextId,
             channel: msg.channelType,
             severity: 17,
+            traceId: _turnIdToTraceId(turnId),
             payload: { turnId, reason: err?.message ?? String(err), durationMs: Date.now() - turnStartMs },
           }).catch(() => {});
         }
@@ -491,6 +559,7 @@ export class Orchestrator {
         contextId,
         channel: msg.channelType,
         severity: 9,
+        traceId: _turnIdToTraceId(turnId),
         payload: { turnId, durationMs: Date.now() - turnStartMs },
       }).catch(() => {});
     }
@@ -548,7 +617,7 @@ export class Orchestrator {
   }
 
   async handleNew(contextId: string, msg: IncomingMessage): Promise<void> {
-    const runner = this._runners.get(contextId);
+    const runner = this._resolveRunner(contextId);
     if (runner) {
       await runner.reset();
     }
@@ -574,7 +643,7 @@ export class Orchestrator {
 
   async handleCompact(contextId: string, msg: IncomingMessage): Promise<void> {
     // Trigger pi session compaction via runner if supported
-    const runner = this._runners.get(contextId) as any;
+    const runner = this._resolveRunner(contextId) as any;
     if (runner?.compact) {
       await runner.compact();
     }
@@ -585,7 +654,7 @@ export class Orchestrator {
 
   /** @deprecated Heartbeat now routes through the bus — this is unused. */
   async handleHeartbeatTick(params: { contextId: string; prompt: string }): Promise<string> {
-    const runner = this._runners.get(params.contextId);
+    const runner = this._resolveRunner(params.contextId);
     if (!runner) {
       getLogger().warn({ component: 'orchestrator', contextId: params.contextId }, `[Heartbeat] No runner for context "${params.contextId}"`);
       return 'IDLE';
@@ -618,14 +687,31 @@ export class Orchestrator {
     if (state.inactivityTimer) {
       clearTimeout(state.inactivityTimer);
     }
-    const timeoutMs =
+    const configuredMs =
       this._config.session?.inactivityTimeout ?? DEFAULT_INACTIVITY_MS;
+    // ree mode: align wrapper eviction to the ReeRuntime idle TTL (default 30m)
+    // so wrapper and underlying chat evict together. Tests inject a short
+    // session.inactivityTimeout which wins (Math.min).
+    const reeIdleTtlMs = (this._config as any).ree?.idleTtlMs ?? 1_800_000;
+    const timeoutMs = this._config.sdk === 'ree'
+      ? Math.min(configuredMs, reeIdleTtlMs)
+      : configuredMs;
 
     state.inactivityTimer = setTimeout(async () => {
+      const factoryCreated = this._factoryCreated.has(contextId);
       const runner = this._runners.get(contextId);
-      if (runner) {
-        // reset() clears the session so memory is freed, but leaves the runner
-        // usable — the next message will lazily start a fresh session.
+      if (factoryCreated && runner) {
+        // ree lazy runner: dispose permanently and remove from maps so they
+        // stay bounded. ReeRuntime independently evicts the underlying chat
+        // (LRU/TTL); a re-arriving customer is re-created and resumes from
+        // chat_messages unless idle-pruned.
+        this._runners.delete(contextId);
+        this._factoryCreated.delete(contextId);
+        try { await runner.dispose(); } catch { /* ignore */ }
+      } else if (runner) {
+        // pi runner (or pre-registered static runner): reset the session so
+        // memory is freed, but leave the runner in place — the next message
+        // lazily starts a fresh session.
         await runner.reset();
       }
       this._contextState.delete(contextId);
@@ -862,7 +948,8 @@ export class Orchestrator {
    */
   updateBudgetConfig(budget: Record<string, unknown>): void {
     (this._config as any).budget = { ...((this._config as any).budget ?? {}), ...budget };
-    // Reset warned-keys so updated thresholds can fire fresh warnings
-    this._budgetGuard = new BudgetGuard();
+    // Reset warned-keys so updated thresholds can fire fresh warnings.
+    // Reuse the SAME session start so session accounting doesn't reset on config change.
+    this._budgetGuard = new BudgetGuard(this._sessionStartTs);
   }
 }

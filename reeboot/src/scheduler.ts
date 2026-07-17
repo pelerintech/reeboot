@@ -154,8 +154,10 @@ export class Scheduler {
         )
         .all(nowIso) as TaskRow[];
 
+      // Skip tasks that are already in flight (concurrent dispatch guard)
+      const pending = due.filter((t) => !this._inFlight.has(t.id));
       await Promise.all(
-        due.map((t) =>
+        pending.map((t) =>
           this._runTask(t).catch((err) => this._logError(t, err, 0))
         )
       );
@@ -169,6 +171,7 @@ export class Scheduler {
   // ── Task execution ─────────────────────────────────────────────────────────
 
   private async _runTask(task: TaskRow): Promise<void> {
+    this._inFlight.add(task.id);
     const runId = nanoid();
     const startMs = Date.now();
     let result: string | void = undefined;
@@ -197,6 +200,7 @@ export class Scheduler {
       errorMsg = err?.message ?? String(err);
       throw err; // rethrow so poll loop catch handles it
     } finally {
+      this._inFlight.delete(task.id);
       const durationMs = Date.now() - startMs;
       const resultStr =
         typeof result === 'string' && result.length > 0
@@ -353,7 +357,7 @@ export function formatTasksDue(tasks: TaskRow[]): string {
  * If null, the orchestrator broadcasts to all adapters.
  * No `send_message` tool call is needed — routing is transparent.
  */
-export function buildScheduledPrompt(task: TaskRow): string {
+export function buildScheduledPrompt(task: ScheduledTaskRef): string {
   const base = task.prompt;
   if (task.origin_channel && task.origin_peer) {
     return (

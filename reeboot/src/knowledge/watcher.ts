@@ -1,6 +1,7 @@
 import { watch, readFileSync, statSync } from 'fs';
 import { createHash } from 'crypto';
 import { join, extname } from 'path';
+import { deleteKnowledgeSource } from './ingest.js';
 import type Database from 'better-sqlite3';
 import type { FSWatcher } from 'fs';
 
@@ -70,12 +71,18 @@ export class KnowledgeWatcher {
       // Resolve full path
       const fullPath = join(rawDir, filename);
 
-      // Skip directories and non-existent paths
+      // Skip directories
       try {
         const stat = statSync(fullPath);
         if (stat.isDirectory()) return;
       } catch {
-        return; // File doesn't exist (delete event) — skip
+        // File doesn't exist (delete event) — remove from index
+        try {
+          deleteKnowledgeSource(this._db, fullPath);
+        } catch {
+          // DB may be closed (test cleanup) — swallow silently
+        }
+        return;
       }
 
       // Skip hidden files and paths inside ignored directories

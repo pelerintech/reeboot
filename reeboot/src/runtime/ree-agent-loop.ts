@@ -61,6 +61,14 @@ export function toTanStackTool(
 
     const result = await reeTool.execute(toolCallId, args, signal, onUpdate, ctx);
 
+    // When the tool signals an error, throw so TanStack marks the
+    // result as 'output-error' (chunk.state === 'output-error').
+    if (result.isError) {
+      throw new Error(
+        typeof result.content === 'string' ? result.content : JSON.stringify(result.content),
+      );
+    }
+
     // TanStack expects the tool to return content directly
     return typeof result.content === 'string'
       ? result.content
@@ -117,30 +125,31 @@ export async function runReeAgentLoop(
     toTanStackTool(tool, reeAdapter.context),
   );
 
-  // Build chat options
-  const chatOptions: Record<string, unknown> = {
-    adapter,
-    messages,
-    systemPrompts: systemPrompt ? [systemPrompt] : undefined,
-    tools: tanstackTools.length > 0 ? tanstackTools : undefined,
-    abortController: reeChat.abortController,
-    agentLoopStrategy: maxIterations(maxIter),
-    ...(mcpClients && mcpClients.length > 0
-      ? { mcp: { clients: mcpClients, connection: 'keep-alive' } }
-      : {}),
-  };
-
   // Accumulators
   let accumulatedText = '';
   const toolCalls = new Map<string, { toolName: string; args: string }>();
 
   try {
-    // Emit before_agent_start
-    reeChat.emitBeforeAgentStart({
+    // Emit before_agent_start — must happen BEFORE chatOptions so extension
+    // hooks (injection-guard, capabilities) can inject into the system prompt.
+    const mergedPrompt = await reeChat.emitBeforeAgentStart({
       prompt: content,
       systemPrompt: systemPrompt ?? '',
       systemPromptOptions: {},
     });
+
+    // Build chat options using the merged (hook-injected) system prompt
+    const chatOptions: Record<string, unknown> = {
+      adapter,
+      messages,
+      systemPrompts: mergedPrompt.systemPrompt ? [mergedPrompt.systemPrompt] : undefined,
+      tools: tanstackTools.length > 0 ? tanstackTools : undefined,
+      abortController: reeChat.abortController,
+      agentLoopStrategy: maxIterations(maxIter),
+      ...(mcpClients && mcpClients.length > 0
+        ? { mcp: { clients: mcpClients, connection: 'keep-alive' } }
+        : {}),
+    };
 
     const stream = (chat as any)(chatOptions) as AsyncIterable<any>;
     for await (const chunk of stream) {
@@ -228,6 +237,9 @@ export async function runReeAgentLoop(
           const toolContent = (chunk as any).content;
           const entry = toolCalls.get(toolCallId);
 
+          // Derive isError from TanStack's chunk state (set when tool throws)
+          const isError = (chunk as any).state === 'output-error';
+
           // Parse args for the input field
           let parsedArgs: Record<string, unknown> = {};
           if (entry) {
@@ -244,7 +256,7 @@ export async function runReeAgentLoop(
             toolName: entry?.toolName ?? 'unknown',
             input: parsedArgs,
             content: [typeof toolContent === 'string' ? { type: 'text', text: toolContent } : toolContent],
-            isError: false,
+            isError,
           });
 
           // Emit tool_call_end RunnerEvent
@@ -253,7 +265,7 @@ export async function runReeAgentLoop(
             toolCallId,
             toolName: entry?.toolName ?? 'unknown',
             result: toolContent,
-            isError: false,
+            isError,
           });
 
           toolCalls.delete(toolCallId);
@@ -269,6 +281,17 @@ export async function runReeAgentLoop(
         case 'RUN_FINISHED': {
           const runId = (chunk as any).runId;
 
+          // Extract usage from the chunk (provided by the TanStack adapter
+          // from the provider's final SSE frame)
+          const u = (chunk as any).usage;
+          const usage = u
+            ? {
+                inputTokens: u.promptTokens ?? u.prompt_tokens ?? 0,
+                outputTokens: u.completionTokens ?? u.completion_tokens ?? 0,
+                ...(u.cost != null ? { cost: u.cost } : {}),
+              }
+            : undefined;
+
           // Emit after_provider_response (best-effort from config)
           const provider = (reeAdapter.context.config as any)?.agent?.model?.provider ?? 'unknown';
           reeChat.emitAfterProviderResponse({
@@ -278,24 +301,34 @@ export async function runReeAgentLoop(
             headers: {},
           });
 
-          // Emit turn_end
+          // Emit turn_end with usage
           reeChat.emitTurnEnd({
             turnId: `turn-${Date.now()}`,
             turnIndex: reeChat.history.length > 0 ? Math.floor(reeChat.history.length / 2) : 0,
             message: { role: 'assistant', content: accumulatedText },
             toolResults: [],
+            ...(usage ? { usage } : {}),
           });
 
-          // Emit agent_end
+          // Emit agent_end with usage on the assistant message
           reeChat.emitAgentEnd({
-            messages: [...reeChat.history, { role: 'user', content }, { role: 'assistant', content: accumulatedText }],
+            messages: [
+              ...reeChat.history,
+              { role: 'user', content },
+              usage
+                ? { role: 'assistant', content: accumulatedText, usage }
+                : { role: 'assistant', content: accumulatedText },
+            ],
           });
 
-          // Emit message_end RunnerEvent
+          // Emit message_end RunnerEvent with usage
           onEvent({
             type: 'message_end',
             runId: runId ?? `run-${Date.now()}`,
-            usage: { input: 0, output: 0 },
+            usage: {
+              input: usage?.inputTokens ?? 0,
+              output: usage?.outputTokens ?? 0,
+            },
           });
           break;
         }

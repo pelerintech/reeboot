@@ -788,3 +788,681 @@ describe('createRunner factory — ree mode', () => {
     expect(() => createRunner(runnerContext, { ...mockConfig, sdk: 'unknown' } as any)).toThrow(/Unknown sdk/i);
   });
 });
+
+// ─── Task A1: ree chat survives abort/reset ─────────────────────────────────
+
+describe('ReeAgentRunner — prompt after reset/abort (A1)', () => {
+  let ReeAgentRunner: typeof import('@src/agent-runner/ree-runner.js').ReeAgentRunner;
+  let ReeRuntime: typeof import('@src/runtime/ree-runtime.js').ReeRuntime;
+
+  beforeEach(async () => {
+    const runnerMod = await import('@src/agent-runner/ree-runner.js');
+    ReeAgentRunner = runnerMod.ReeAgentRunner;
+    const runtimeMod = await import('@src/runtime/ree-runtime.js');
+    ReeRuntime = runtimeMod.ReeRuntime;
+  });
+
+  /** Build a mockFetch that returns a fresh stream on each call */
+  function freshStreamFetch(chunks: Array<Record<string, unknown>>): ReturnType<typeof vi.fn> {
+    return vi.fn().mockImplementation(() => {
+      const encoder = new TextEncoder();
+      const lines: string[] = [];
+      for (const delta of chunks) {
+        const envelope = {
+          id: 'chatcmpl-test',
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: 'test-model',
+          choices: [{ index: 0, delta, finish_reason: null }],
+        };
+        lines.push(`data: ${JSON.stringify(envelope)}
+\n`);
+      }
+      lines.push(`data: ${JSON.stringify({
+        id: 'chatcmpl-test',
+        object: 'chat.completion.chunk',
+        created: Math.floor(Date.now() / 1000),
+        model: 'test-model',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      })}\n\n`);
+      lines.push('data: [DONE]\n\n');
+
+      const body = new ReadableStream({
+        start(controller) {
+          for (const line of lines) {
+            controller.enqueue(encoder.encode(line));
+          }
+          controller.close();
+        },
+      });
+
+      return Promise.resolve(new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }));
+    });
+  }
+
+  it('S1: prompt after reset succeeds (no AbortError)', async () => {
+    const mockFetch = freshStreamFetch([
+      { role: 'assistant' },
+      { content: 'first reply' },
+    ]);
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: {
+          provider: 'custom',
+          id: 'test-model',
+          baseUrl: 'http://localhost:1234/v1',
+          apiKey: 'test',
+          fetch: mockFetch,
+        },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    // First prompt should succeed
+    const events1: RunnerEvent[] = [];
+    await runner.prompt('one', (e) => events1.push(e));
+    expect(events1.find((e) => e.type === 'message_end')).toBeDefined();
+
+    // Reset
+    await runner.reset();
+
+    // Second prompt should succeed (not throw AbortError)
+    const events2: RunnerEvent[] = [];
+    await expect(runner.prompt('two', (e) => events2.push(e))).resolves.toBeUndefined();
+
+    // No error event should be captured
+    const errorEvent = events2.find((e) => e.type === 'error');
+    expect(errorEvent).toBeUndefined();
+    expect(events2.find((e) => e.type === 'message_end')).toBeDefined();
+  });
+
+  it('S2: prompt after abort succeeds (no AbortError)', async () => {
+    const mockFetch = freshStreamFetch([
+      { role: 'assistant' },
+      { content: 'first reply' },
+    ]);
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: {
+          provider: 'custom',
+          id: 'test-model',
+          baseUrl: 'http://localhost:1234/v1',
+          apiKey: 'test',
+          fetch: mockFetch,
+        },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    // First prompt should succeed
+    const events1: RunnerEvent[] = [];
+    await runner.prompt('one', (e) => events1.push(e));
+    expect(events1.find((e) => e.type === 'message_end')).toBeDefined();
+
+    // Abort (no in-flight prompt — just aborts the chat's controller)
+    runner.abort();
+
+    // Second prompt should succeed (not throw AbortError)
+    const events2: RunnerEvent[] = [];
+    await expect(runner.prompt('two', (e) => events2.push(e))).resolves.toBeUndefined();
+
+    // No error event should be captured
+    const errorEvent = events2.find((e) => e.type === 'error');
+    expect(errorEvent).toBeUndefined();
+    expect(events2.find((e) => e.type === 'message_end')).toBeDefined();
+  });
+
+  it('S3: in-flight abort still rejects (existing behavior preserved)', async () => {
+    // Mock provider that hangs forever but respects AbortSignal
+    const hangingFetch = vi.fn().mockImplementation((_url: string, opts?: { signal?: AbortSignal }) => {
+      return new Promise((_, reject) => {
+        if (opts?.signal) {
+          opts.signal.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }
+      });
+    });
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: {
+          provider: 'custom',
+          id: 'test-model',
+          baseUrl: 'http://localhost:1234/v1',
+          apiKey: 'test',
+          fetch: hangingFetch,
+        },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    const promptPromise = runner.prompt('hang', () => {});
+    await new Promise((r) => setTimeout(r, 10));
+    runner.abort();
+
+    await expect(promptPromise).rejects.toThrow(/abort/i);
+  });
+});
+
+// ─── Task A2: ree records token usage ───────────────────────────────────────
+
+describe('ReeAgentRunner — token usage (A2)', () => {
+  let ReeAgentRunner: typeof import('@src/agent-runner/ree-runner.js').ReeAgentRunner;
+  let ReeRuntime: typeof import('@src/runtime/ree-runtime.js').ReeRuntime;
+
+  beforeEach(async () => {
+    const runnerMod = await import('@src/agent-runner/ree-runner.js');
+    ReeAgentRunner = runnerMod.ReeAgentRunner;
+    const runtimeMod = await import('@src/runtime/ree-runtime.js');
+    ReeRuntime = runtimeMod.ReeRuntime;
+  });
+
+  /** Build a fetch that includes usage in the final chunk */
+  function usageFetch(promptTokens: number, completionTokens: number) {
+    return vi.fn().mockImplementation(() => {
+      const encoder = new TextEncoder();
+      const lines: string[] = [];
+
+      // Role chunk
+      lines.push(`data: ${JSON.stringify({
+        id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+      })}\n\n`);
+
+      // Content chunk
+      lines.push(`data: ${JSON.stringify({
+        id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: { content: 'hello' }, finish_reason: null }],
+      })}\n\n`);
+
+      // Final chunk with usage
+      lines.push(`data: ${JSON.stringify({
+        id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+      })}\n\n`);
+
+      lines.push('data: [DONE]\n\n');
+
+      const body = new ReadableStream({
+        start(controller) {
+          for (const line of lines) {
+            controller.enqueue(encoder.encode(line));
+          }
+          controller.close();
+        },
+      });
+
+      return Promise.resolve(new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }));
+    });
+  }
+
+  it('S1: agent_end assistant message carries usage', async () => {
+    const mockFetch = usageFetch(12, 7);
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: {
+          provider: 'custom',
+          id: 'test-model',
+          baseUrl: 'http://localhost:1234/v1',
+          apiKey: 'test',
+          fetch: mockFetch,
+        },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    // Subscribe to agent_end
+    const chat = runtime.getOrCreateChat(runnerContext.id, {
+      context: {
+        cwd: '/tmp', workspacePath: '/tmp', config,
+        ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
+        hasUI: false,
+      },
+    });
+    const agentEndHandler = vi.fn();
+    chat.adapter.on('agent_end', agentEndHandler);
+
+    await runner.prompt('hello', () => {});
+
+    // Find the last assistant message in the agent_end payload
+    expect(agentEndHandler).toHaveBeenCalled();
+    const payload = agentEndHandler.mock.calls[0][0];
+    const messages = payload.messages;
+    const asst = messages.find((m: any) => m.role === 'assistant');
+    expect(asst).toBeDefined();
+    expect(asst.usage).toMatchObject({ inputTokens: 12, outputTokens: 7 });
+  });
+});
+
+// ─── Task A4: ree surfaces tool errors ──────────────────────────────────────
+
+describe('ReeAgentRunner — tool errors (A4)', () => {
+  let ReeAgentRunner: typeof import('@src/agent-runner/ree-runner.js').ReeAgentRunner;
+  let ReeRuntime: typeof import('@src/runtime/ree-runtime.js').ReeRuntime;
+
+  beforeEach(async () => {
+    const runnerMod = await import('@src/agent-runner/ree-runner.js');
+    ReeAgentRunner = runnerMod.ReeAgentRunner;
+    const runtimeMod = await import('@src/runtime/ree-runtime.js');
+    ReeRuntime = runtimeMod.ReeRuntime;
+  });
+
+  it('S1: failing tool propagates isError to tool_result event', async () => {
+    // Mock fetch that first selects the 'boom' tool via tool_calls, then finishes
+    const mockFetch = vi.fn().mockImplementation(() => {
+      const encoder = new TextEncoder();
+      const lines: string[] = [];
+
+      // Build SSE frames without template-literals-in-JSON-stringify confusion
+      const makeFrame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
+
+      // Role chunk
+      lines.push(makeFrame({
+        id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+      }));
+
+      // Tool call delta (model chooses 'boom' tool)
+      lines.push(makeFrame({
+        id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'boom', arguments: '' } }] }, finish_reason: null }],
+      }));
+
+      // Tool call arguments delta
+      lines.push(makeFrame({
+        id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{}' } }] }, finish_reason: null }],
+      }));
+
+      // Final chunk with tool_calls finish_reason
+      lines.push(makeFrame({
+        id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+      }));
+
+      // Second response from assistant after tool result
+      lines.push(makeFrame({
+        id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+      }));
+
+      lines.push(makeFrame({
+        id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: { content: 'done' }, finish_reason: null }],
+      }));
+
+      lines.push(makeFrame({
+        id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      }));
+
+      lines.push('data: [DONE]\n\n');
+
+      const body = new ReadableStream({
+        start(controller) {
+          for (const line of lines) {
+            controller.enqueue(encoder.encode(line));
+          }
+          controller.close();
+        },
+      });
+
+      return Promise.resolve(new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }));
+    });
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: {
+          provider: 'custom',
+          id: 'test-model',
+          baseUrl: 'http://localhost:1234/v1',
+          apiKey: 'test',
+          fetch: mockFetch,
+        },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    // Register a tool that always errors
+    const boomTool = {
+      name: 'boom',
+      label: 'Boom',
+      description: 'Always errors',
+      parameters: { type: 'object' as const, properties: {} },
+      execute: async () => ({ content: 'kaboom', isError: true }),
+    };
+
+    const chat = runtime.getOrCreateChat(runnerContext.id, {
+      context: {
+        cwd: '/tmp', workspacePath: '/tmp', config,
+        ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
+        hasUI: false,
+      },
+    });
+    chat.adapter.registerTool(boomTool as any);
+
+    const toolResultHandler = vi.fn();
+    chat.adapter.on('tool_result', toolResultHandler);
+
+    await runner.prompt('use boom tool', () => {});
+
+    // The tool_result event should have isError: true
+    expect(toolResultHandler).toHaveBeenCalled();
+    expect(toolResultHandler.mock.calls[0][0].isError).toBe(true);
+  });
+
+  it('S1: toTanStackTool throws on isError tool', async () => {
+    // Unit-test toTanStackTool directly (lighter than a full fetch mock cycle)
+    // A failing tool's wrapped execute should throw so TanStack marks it output-error.
+    const { toTanStackTool } = await import('@src/runtime/ree-agent-loop.js');
+
+    const boomTool = {
+      name: 'boom',
+      label: 'Boom',
+      description: 'Always errors',
+      parameters: { type: 'object' as const, properties: {} },
+      execute: async () => ({ content: 'kaboom', isError: true }),
+    };
+
+    const ctx = {
+      cwd: '/tmp',
+      workspacePath: '/tmp',
+      config: {},
+      ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
+      hasUI: false,
+    };
+
+    const tanstackTool = toTanStackTool(boomTool as any, ctx as any);
+    await expect(tanstackTool.execute({}, { toolCallId: 'c' })).rejects.toThrow('kaboom');
+  });
+});
+
+// ─── Missing scenario tests (evaluation remediation) ────────────────────────
+
+describe('ReeAgentRunner — missing scenario tests', () => {
+  let ReeAgentRunner: typeof import('@src/agent-runner/ree-runner.js').ReeAgentRunner;
+  let ReeRuntime: typeof import('@src/runtime/ree-runtime.js').ReeRuntime;
+
+  beforeEach(async () => {
+    const runnerMod = await import('@src/agent-runner/ree-runner.js');
+    ReeAgentRunner = runnerMod.ReeAgentRunner;
+    const runtimeMod = await import('@src/runtime/ree-runtime.js');
+    ReeRuntime = runtimeMod.ReeRuntime;
+  });
+
+  it('S2 (ree-token-usage): message_end RunnerEvent carries non-zero usage from stream', async () => {
+    // Build a fetch with usage in the final chunk
+    const encoder = new TextEncoder();
+    const makeFrame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
+    const lines: string[] = [];
+
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { content: 'hello' }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 15, completion_tokens: 8 },
+    }));
+    lines.push('data: [DONE]\n\n');
+
+    const body = new ReadableStream({
+      start(controller) {
+        for (const line of lines) { controller.enqueue(encoder.encode(line)); }
+        controller.close();
+      },
+    });
+    const mockFetch = vi.fn().mockResolvedValue(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: { provider: 'custom', id: 'test-model', baseUrl: 'http://localhost:1234/v1', apiKey: 'test', fetch: mockFetch },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    const capturedEvents: any[] = [];
+    await runner.prompt('hello', (e) => { capturedEvents.push(e); });
+
+    // Find message_end in captured runner events
+    const messageEnd = capturedEvents.find((e: any) => e.type === 'message_end');
+
+    expect(messageEnd).toBeDefined();
+    expect(messageEnd.usage).toMatchObject({ input: 15, output: 8 });
+  });
+
+  it('S2 (ree-before-agent-start-hooks): injected text appears in model request body', async () => {
+    const encoder = new TextEncoder();
+    const makeFrame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(makeFrame({
+          id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+          choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+        })));
+        controller.enqueue(encoder.encode(makeFrame({
+          id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+          choices: [{ index: 0, delta: { content: 'reply' }, finish_reason: null }],
+        })));
+        controller.enqueue(encoder.encode(makeFrame({
+          id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        })));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    // Use a mock that captures the request body
+    let capturedBody: string | null = null;
+    const mockFetch = vi.fn().mockImplementation(async (url: string, opts: any) => {
+      capturedBody = opts.body;
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: { provider: 'custom', id: 'test-model', baseUrl: 'http://localhost:1234/v1', apiKey: 'test', fetch: mockFetch },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    // Register a before_agent_start handler that injects text
+    const chat = runtime.getOrCreateChat(runnerContext.id, {
+      context: { cwd: '/tmp', workspacePath: '/tmp', config,
+        ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
+        hasUI: false },
+    });
+    chat.adapter.on('before_agent_start', () => ({ systemPrompt: 'BASE\\n## INJECTED' }));
+
+    await runner.prompt('hello', () => {});
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody).toContain('## INJECTED');
+  });
+
+  it('(ree-tool-errors) tool_call_end RunnerEvent carries isError for failing tool', async () => {
+    const encoder = new TextEncoder();
+    const makeFrame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
+    const lines: string[] = [];
+
+    // Role chunk
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+    }));
+    // Tool call delta
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'boom', arguments: '' } }] }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{}' } }] }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+    }));
+    // Second response
+    lines.push(makeFrame({
+      id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { content: 'done' }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    }));
+    lines.push('data: [DONE]\n\n');
+
+    const body = new ReadableStream({
+      start(controller) {
+        for (const line of lines) { controller.enqueue(encoder.encode(line)); }
+        controller.close();
+      },
+    });
+    const mockFetch = vi.fn().mockResolvedValue(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: { provider: 'custom', id: 'test-model', baseUrl: 'http://localhost:1234/v1', apiKey: 'test', fetch: mockFetch },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    const chat = runtime.getOrCreateChat(runnerContext.id, {
+      context: { cwd: '/tmp', workspacePath: '/tmp', config,
+        ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
+        hasUI: false },
+    });
+    chat.adapter.registerTool({
+      name: 'boom', label: 'Boom', description: 'Always errors',
+      parameters: { type: 'object' as const, properties: {} },
+      execute: async () => ({ content: 'kaboom', isError: true }),
+    } as any);
+
+    const capturedEvents: any[] = [];
+    await runner.prompt('use boom tool', (e) => { capturedEvents.push(e); });
+
+    const toolCallEnd = capturedEvents.find((e: any) => e.type === 'tool_call_end');
+    expect(toolCallEnd).toBeDefined();
+    expect(toolCallEnd.isError).toBe(true);
+  });
+
+  it('(ree-tool-errors) success tool through the loop has isError:false', async () => {
+    const encoder = new TextEncoder();
+    const makeFrame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
+    const lines: string[] = [];
+
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'ok_tool', arguments: '' } }] }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{}' } }] }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }],
+    }));
+    lines.push(makeFrame({
+      id: 'chatcmpl-test-2', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'test-model',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    }));
+    lines.push('data: [DONE]\n\n');
+
+    const body = new ReadableStream({
+      start(controller) {
+        for (const line of lines) { controller.enqueue(encoder.encode(line)); }
+        controller.close();
+      },
+    });
+    const mockFetch = vi.fn().mockResolvedValue(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+
+    const config = {
+      ...mockConfig,
+      ree: {
+        model: { provider: 'custom', id: 'test-model', baseUrl: 'http://localhost:1234/v1', apiKey: 'test', fetch: mockFetch },
+      },
+    };
+    const runtime = new ReeRuntime({ config, maxChats: 10, idleTtlMs: 60000, maxHistoryPerChat: 50 });
+    const runner = new ReeAgentRunner(runtime, runnerContext, config);
+
+    const chat = runtime.getOrCreateChat(runnerContext.id, {
+      context: { cwd: '/tmp', workspacePath: '/tmp', config,
+        ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
+        hasUI: false },
+    });
+    chat.adapter.registerTool({
+      name: 'ok_tool', label: 'Ok Tool', description: 'Always succeeds',
+      parameters: { type: 'object' as const, properties: {} },
+      execute: async () => ({ content: 'ok' }),
+    } as any);
+
+    const capturedEvents: any[] = [];
+    const toolResultHandler = vi.fn();
+    chat.adapter.on('tool_result', toolResultHandler);
+    await runner.prompt('use ok tool', (e) => { capturedEvents.push(e); });
+
+    // tool_result event should have isError: false for success tool
+    expect(toolResultHandler).toHaveBeenCalled();
+    expect(toolResultHandler.mock.calls[0][0].isError).toBe(false);
+
+    // tool_call_end RunnerEvent should also have isError: false
+    const toolCallEnd = capturedEvents.find((e: any) => e.type === 'tool_call_end');
+    expect(toolCallEnd).toBeDefined();
+    expect(toolCallEnd.isError).toBe(false);
+  });
+});

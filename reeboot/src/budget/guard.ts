@@ -19,6 +19,14 @@ export class BudgetGuard {
   /** Track which thresholds have already triggered a warning to avoid spam */
   private _warnedKeys = new Set<string>();
 
+  /** Session start timestamp (SQLite UTC format) */
+  private readonly _sessionStartTs: string;
+
+  constructor(sessionStartTs?: string) {
+    // Default to 'now' in SQLite UTC format if not provided
+    this._sessionStartTs = sessionStartTs ?? new Date().toISOString().replace('T', ' ').slice(0, 19);
+  }
+
   /**
    * Check global budget limits before dispatching a turn.
    * Returns { ok: true } if no limits are configured or nothing is breached.
@@ -48,6 +56,16 @@ export class BudgetGuard {
 
     if (!hasAnyLimit) return { ok: true };
 
+    // Collect the first warning (preserving _warnedKeys dedup)
+    let pendingWarning: string | undefined;
+
+    const maybeWarn = (warnKey: string, warning: string) => {
+      if (!pendingWarning && !this._warnedKeys.has(warnKey)) {
+        this._warnedKeys.add(warnKey);
+        pendingWarning = warning;
+      }
+    };
+
     // ── Daily checks ──────────────────────────────────────────────────────────
 
     if (daily_tokens !== null && daily_tokens !== undefined) {
@@ -64,11 +82,10 @@ export class BudgetGuard {
 
       const pct = used / daily_tokens;
       if (pct >= warn_threshold) {
-        const warnKey = `daily_tokens:${Math.floor(pct * 100)}`;
-        if (!this._warnedKeys.has(warnKey)) {
-          this._warnedKeys.add(warnKey);
-          return { ok: true, warning: `Daily token usage at ${Math.round(pct * 100)}% (${used} / ${daily_tokens})` };
-        }
+        maybeWarn(
+          `daily_tokens:${Math.floor(pct * 100)}`,
+          `Daily token usage at ${Math.round(pct * 100)}% (${used} / ${daily_tokens})`,
+        );
       }
     }
 
@@ -89,31 +106,24 @@ export class BudgetGuard {
 
       const pct = used / daily_cost_usd;
       if (pct >= warn_threshold) {
-        const warnKey = `daily_cost:${Math.floor(pct * 100)}`;
-        if (!this._warnedKeys.has(warnKey)) {
-          this._warnedKeys.add(warnKey);
-          return {
-            ok: true,
-            warning: `Daily cost usage at ${Math.round(pct * 100)}% ($${used.toFixed(2)} / $${daily_cost_usd.toFixed(2)})`,
-          };
-        }
+        maybeWarn(
+          `daily_cost:${Math.floor(pct * 100)}`,
+          `Daily cost usage at ${Math.round(pct * 100)}% ($${used.toFixed(2)} / $${daily_cost_usd.toFixed(2)})`,
+        );
       }
     }
 
     // ── Session checks ────────────────────────────────────────────────────────
-    // Session = rows created since server start (approximate: all rows today for simplicity,
-    // or the most pragmatic definition: all rows for this contextId since last context reset)
-    // We use a simple definition: all rows for this contextId within the current process
-    // lifetime. For now, we approximate as all rows created since the server started.
-    // Since we can't easily pass session_start, we use today as an approximation.
+    // Session = rows created since the session start (process-lifetime), scoped by
+    // `created_at >= _sessionStartTs` (not start-of-day).
 
     if (session_tokens !== null && session_tokens !== undefined) {
       const row = db.prepare(`
         SELECT COALESCE(SUM(input_tokens + output_tokens), 0) as total
         FROM usage
         WHERE context_id = ?
-          AND created_at >= date('now', 'start of day')
-      `).get(contextId) as { total: number };
+          AND created_at >= ?
+      `).get(contextId, this._sessionStartTs) as { total: number };
 
       const used = row.total;
       if (used > session_tokens) {
@@ -126,8 +136,8 @@ export class BudgetGuard {
         SELECT COALESCE(SUM(cost_usd), 0) as total
         FROM usage
         WHERE context_id = ?
-          AND created_at >= date('now', 'start of day')
-      `).get(contextId) as { total: number };
+          AND created_at >= ?
+      `).get(contextId, this._sessionStartTs) as { total: number };
 
       const used = row.total;
       if (used > session_cost_usd) {
@@ -174,6 +184,7 @@ export class BudgetGuard {
       }
     }
 
-    return { ok: true };
+    // All hard limits passed. Return pending warning if any.
+    return pendingWarning ? { ok: true, warning: pendingWarning } : { ok: true };
   }
 }

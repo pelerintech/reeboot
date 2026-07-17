@@ -93,6 +93,11 @@ export class ReeAgentRunner implements AgentRunner {
     // Update activity timestamp
     chat.touch();
 
+    // Recreate AbortController if it was aborted (e.g. by a previous reset/abort)
+    if (chat.abortController.signal.aborted) {
+      chat.abortController = new AbortController();
+    }
+
     // Ensure extension factories have finished initializing on this chat
     // (they run async on chat creation; prompt must not race them).
     await chat.extensionsReady;

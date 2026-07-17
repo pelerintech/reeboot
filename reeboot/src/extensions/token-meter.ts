@@ -26,7 +26,7 @@ export default function (pi: ExtensionAPI) {
         if (m.usage) {
           inputTokens = m.usage.inputTokens ?? 0;
           outputTokens = m.usage.outputTokens ?? 0;
-          costUsd = m.usage.cost?.total ?? 0;
+          costUsd = typeof m.usage.cost === 'number' ? m.usage.cost : (m.usage.cost?.total ?? 0);
         }
         if (m.model) {
           modelId = typeof m.model === 'string' ? m.model : (m.model.id ?? '');

@@ -27,9 +27,9 @@ describe('createRunner factory (1.1)', () => {
   it('unknown runner value throws descriptive error', async () => {
     const { createRunner } = await import('@src/agent-runner/index.js');
     const { defaultConfig } = await import('@src/config.js');
-    const config = { ...defaultConfig, agent: { ...defaultConfig.agent, runner: 'unknown' as any } };
+    const config = { ...defaultConfig, sdk: 'unknown' as any };
     expect(() => createRunner({ id: 'main', workspacePath: '/tmp/test-ctx' }, config)).toThrow(
-      'Unknown agent runner: unknown',
+      'Unknown sdk: unknown',
     );
   });
 });

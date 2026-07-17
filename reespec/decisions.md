@@ -39,6 +39,43 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Observability audit view is driven by the `events` table, not `operational_logs` — 2026-07-17 (Request: observability-audit-view)
+
+The operator-facing observability page (a window into what the agent did over time and why tasks
+succeeded or failed) is backed by the curated `events` audit trail — typed domain events
+(`turn_started`/`turn_completed`/`turn_failed` with reason payloads, budget/channel/capability/
+scheduler events, OTEL severity, `trace_id`/`context_id` correlation) — surfaced as a **turn-grouped
+rollup** so each task reads as one expandable unit. This reverses the `web-api-readback` approach,
+which pointed the page at raw `operational_logs` and, to make that substantive, lowered DB log
+persistence from warn+ to info+ (`logger.ts:89`). That was spec-satisfied but the wrong substrate:
+raw log lines are low-signal for auditing agent behavior and info-level DB persistence floods the
+store (millions of rows under support fan-out), obscuring the signal. Info/debug logs revert to
+stdout + rotating file (operator debugging), `operational_logs` returns to warn+, and `events`
+growth is deliberately bounded (severity-tiered retention and/or per-context row cap). The audit page
+is an operator surface (owner in pi mode, company operator in support mode) — never exposed to end
+customers. See the `observability-audit-view` request artifacts for full context.
+
+### Injected test DBs bypass full schema migration — tests must create tables explicitly — 2026-07-17 (Request: web-api-readback)
+
+When `startServer({ db, ... })` is called with an injected `better-sqlite3` handle, the server
+calls only `createContextsTable(db)` and creates the `main` context — it does NOT run
+`applySchema(db)` which creates `messages`, `tasks`, `channels`, and `usage` tables. This means
+tests that seed data into those tables must create them first (e.g., via `CREATE TABLE IF NOT EXISTS`
+SQL in a `beforeEach` helper). This is by design: the injected-DB path is used for lightweight
+testing where the full schema is overkill. Future tests using this pattern must follow the same
+approach — create only the tables their test needs.
+
+### WebSocket sessionId hoisted to factory scope for shared closure access — 2026-07-17 (Request: web-api-readback)
+
+During the full-build integration gate, `tsc` failed with `Cannot find name 'sessionId'` at the
+`onMessage` and `onClose` handlers in the WebSocket upgrade factory (`server.ts`). The `sessionId`
+was declared with `const` inside `onOpen` but the sibling handlers referenced it out of scope.
+Fixed by hoisting `const sessionId = nanoid()` to the factory function scope above the returned
+object literal. This is a pre-existing latent bug that was never surfaced because the handlers
+return `undefined` for `sessionId` at runtime (peer routing silently broken in production).
+Any future work touching the WebSocket handlers should verify that `sessionId` propagates
+correctly into `onMessage` and `onClose`.
+
 ### Centralized capabilities discovery extension replaces per-tool promptSnippet — 2026-05-22 (Request: agent-capabilities)
 
 A new `capabilities.ts` bundled extension hooks `before_agent_start`, calls `pi.getAllTools()` to discover every registered tool dynamically, filters out pi built-ins, and injects a structured capabilities block into the system prompt. This replaces the scattered `promptSnippet` approach which was easy to forget and missed user extensions entirely. The extension is always-on, placed last in the loader order so it sees the full tool set, and emits a `capabilities_injected` observability event. Per-tool `promptSnippet` additions are no longer required for reeboot bundled tools.
@@ -410,3 +447,19 @@ Post-evaluation gap: `getReeFactories` and `ReeRuntime.setFactories` existed but
 ### webchat-ui: Vite + React + TypeScript SPA with Tailwind CSS — 2026-07-08 (Request: webchat-ui)
 
 The webchat SPA is built with Vite + React 19 + TypeScript + Tailwind CSS v4 (via @tailwindcss/postcss). The SPA builds into `reeboot/webchat/dist/` and is served by Hono's `serveStatic` middleware after all API routes. The old static HTML webchat (`index.html`, `logs.js`, `settings.js`) was replaced — the old `index.html` was backed up to `index.old.html`. The WebSocket hook (`useWebSocket`) connects to `/ws/chat/:contextId` with auto-reconnect. Message rendering uses a custom markdown renderer (no external library) that handles bold, italic, inline code, code blocks, and links. Tailwind v4 requires `@tailwindcss/postcss` as the PostCSS plugin (not `tailwindcss` directly). Testing uses Vitest + React Testing Library + jsdom with 33 tests across 3 files (Message, ToolCall, useWebSocket). The Navigation component supports two variants: sidebar (desktop, 50px wide) and bottom bar (mobile, <768px). The Chat page uses placeholder messages and simulated responses — WebSocket integration is wired but the Chat page's message handling will be enhanced in future tasks to use the real WebSocket hook for live messaging.
+
+### Deployment model is single-tenant: one process = one product — 2026-07-17 (Request: ree-scope-discovery)
+
+A reeboot deployment serves exactly ONE product: either the owner's personal assistant (pi SDK) OR a single-company dedicated agent such as a support/triage agent (ree SDK) — never both, never multiple tenants, in one process. This confirms and extends the earlier "one SDK per process" decision from the deployment side. The consequence for the ree/multi-user path: "no cross-user leakage" only ever means per-CHAT privacy inside one trusted deployment (customer A must not see customer B's conversation), NOT per-tenant row-level isolation. The scary roadmap option (session_search gated via per-tenant DB views/RLS) is therefore out of scope; a single `better-sqlite3` file per process is sufficient. Domain competence for the support use case comes from the RAG knowledge corpus, not from accumulating customer conversations into a shared soul.
+
+### If multi-tenant is ever adopted: dedicated DB per tenant, shared engine — 2026-07-17 (Request: ree-scope-discovery)
+
+Should reeboot ever go multi-tenant, the desired implementation is a database PER TENANT with only the "engine" (the reeboot codebase/runtime image) shared — i.e. more processes, each with its own config and its own DB file — never a single shared DB with row-level/tenant-scoped isolation. This is just the "one process = one product" model scaled out as a deploy topology, so no shared-DB isolation code needs to exist in the codebase. The storage layer already supports this: `openDatabase(dbPath?)` (`src/db/index.ts:26`) takes a configurable path (default `~/.reeboot/reeboot.db`) and `_db` is a process-level singleton that actively prevents two tenants sharing one process. The only deploy nuance is that co-locating instances on one host requires distinct home dirs or explicit `dbPath` values. No code change is required now to keep this future open.
+
+### Ree emitBeforeAgentStart composes all extension systemPrompt returns (not last-wins) — 2026-07-17 (Request: deployment-readiness)
+
+`ReeChat.emitBeforeAgentStart` previously used last-wins semantics for returned `systemPrompt` values: each handler returned the full prompt (base + its block), and only the last handler's value was kept. This meant multiple `before_agent_start` listeners (e.g., capabilities + injection-guard) could not both contribute to the system prompt — whichever ran first was silently overwritten. The fix updates `event.systemPrompt` to the accumulated value before each handler call, so each handler sees and builds on contributions from all prior handlers. This is the same compose pattern pi's adapter uses naturally since pi passes event objects by reference. Only `ReeChat.emitBeforeAgentStart` needed the fix — the `ree-adapter.ts` and `ree-agent-loop.ts` call sites are unchanged.
+
+### DB log persistence reverts to warn+ — observability audit moves to the `events` table — 2026-07-17 (Request: observability-audit-view)
+
+The `web-api-readback` request lowered `operational_logs` DB persistence from warn+ to info+ (`logger.ts` `< 30` → `< 40` gate, stream `level: 'warn'` → `'info'`) to make a raw-log observability page "substantive". That was the wrong substrate: raw log lines are low-signal for auditing agent behaviour and info-level DB persistence floods the store (millions of rows under support fan-out), obscuring the signal that matters. Reverted: `createDbStream` again gates at `level < 40` and the stream entry is `level: 'warn'`, realigning the code with its own JSDoc ("warn+ records, level >= 40"). stdout, file, and SSE sinks are unchanged — operator debuggability is preserved via stdout/file; only DB persistence narrows. The operator-facing audit view is repointed at the curated `events` table (typed domain events with OTEL severity, `trace_id`/`context_id` correlation) surfaced as a turn-grouped rollup via `GET /api/events`. `tests/observability/info-log-persistence.test.ts` (the web-api-readback spec test) was removed; its S2/S3 coverage is now in `warn-only-log-persistence.test.ts`, and `operational-logs-persist.test.ts`'s info assertion was flipped to assert non-persistence. See the `observability-audit-view` request for full context.

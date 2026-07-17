@@ -23,10 +23,10 @@ const mockConfig = {
 // ─── Task 19: Ree extension subset loader ────────────────────────────────────
 
 describe('Ree extension subset loader', () => {
-  it('getReeFactories returns 4 factories', async () => {
+  it('getReeFactories returns 7 factories (5 bundled + 2 security)', async () => {
     const { getReeFactories } = await import('@src/extensions/loader.js');
     const factories = getReeFactories(mockConfig);
-    expect(factories).toHaveLength(4);
+    expect(factories).toHaveLength(7);
   });
 
   it('observability exports makeObservabilityExtension (named)', async () => {
@@ -172,5 +172,76 @@ describe('session-name, token-meter, capabilities run unchanged on ree adapter',
         systemPromptOptions: {},
       });
     }).not.toThrow();
+  });
+});
+
+// ─── Task C3: ree security extensions ────────────────────────────────────────
+
+describe('ree security extensions (C3)', () => {
+  let ReeChat: typeof import('@src/runtime/ree-chat.js').ReeChat;
+
+  beforeEach(async () => {
+    const mod = await import('@src/runtime/ree-chat.js');
+    ReeChat = mod.ReeChat;
+  });
+
+  it('S1: injection-guard contributes its policy block (not just listenerCount)', async () => {
+    const chat = new ReeChat('test', { maxHistory: 50, context: mockContext, config: mockConfig });
+
+    const { getReeFactories } = await import('@src/extensions/loader.js');
+    const factories = getReeFactories(mockConfig);
+
+    for (const factory of factories) {
+      await factory(chat.adapter);
+    }
+
+    // Assert injection-guard block is deterministically present
+    // (proves both that the handler is registered AND that its return is honored)
+    const result = await chat.emitBeforeAgentStart({
+      prompt: 'User message',
+      systemPrompt: 'BASE',
+      systemPromptOptions: {},
+    });
+    expect(result.systemPrompt).toContain('external_content_policy');
+  });
+
+  it('S2 end-to-end: both capabilities AND injection-guard blocks reach the prompt (not order-dependent)', async () => {
+    const chat = new ReeChat('test', { maxHistory: 50, context: mockContext, config: mockConfig });
+
+    // Register a tool so capabilities has something to advertise
+    chat.adapter.registerTool({
+      name: 'test_tool',
+      label: 'Test Tool',
+      description: 'A test tool',
+      parameters: {},
+      execute: async () => ({ content: 'ok' }),
+    });
+
+    const { getReeFactories } = await import('@src/extensions/loader.js');
+    const factories = getReeFactories(mockConfig);
+
+    for (const factory of factories) {
+      await factory(chat.adapter);
+    }
+
+    const result = await chat.emitBeforeAgentStart({
+      prompt: 'User message',
+      systemPrompt: 'BASE',
+      systemPromptOptions: {},
+    });
+
+    // Both blocks must be present — proves compose semantics, not last-wins
+    expect(result.systemPrompt).toContain('external_content_policy');
+    expect(result.systemPrompt).toContain('test_tool');
+  });
+
+  it('S3: getReeFactories returns 7 functions (not just length check)', async () => {
+    const { getReeFactories } = await import('@src/extensions/loader.js');
+    const factories = getReeFactories(mockConfig);
+
+    expect(factories).toHaveLength(7);
+    for (const f of factories) {
+      expect(typeof f).toBe('function');
+    }
   });
 });

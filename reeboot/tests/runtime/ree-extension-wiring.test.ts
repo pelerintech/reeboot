@@ -66,7 +66,7 @@ describe('Extension subset wiring — createRunner sets factories on the runtime
 
     // The runner exposes its runtime (read-only) for introspection/testing.
     expect(runner.runtime).toBeDefined();
-    expect(runner.runtime.factories.length).toBe(5);
+    expect(runner.runtime.factories.length).toBe(7);
   });
 });
 

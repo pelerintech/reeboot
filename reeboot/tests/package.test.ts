@@ -49,7 +49,7 @@ describe('Package Publication Readiness', () => {
     expect(files).toContain('skills/');
     expect(files).toContain('templates/');
     expect(files).toContain('container/');
-    expect(files).toContain('webchat/');
+    expect(files).toContain('webchat/dist/');
   });
 
   it('exports has . and ./channels entries', () => {
@@ -95,10 +95,13 @@ describe('npm pack dry-run', () => {
       .map((l) => l.trim())
       .filter((l) => l.startsWith('dist/') || l.startsWith('extensions/') || l.startsWith('skills/') || l.startsWith('templates/') || l.startsWith('container/') || l === 'package.json' || l === 'README.md');
 
-    // Check that src/ files are NOT included
+    // Check that src/ files are NOT included (top-level or nested, e.g. webchat/src/)
     expect(output).not.toMatch(/\bsrc\//);
-    // Check that test files are NOT included
+    // Check that test files are NOT included (tests/ or __tests__/)
     expect(output).not.toMatch(/\btests\//);
+    expect(output).not.toMatch(/__tests__\//);
+    // node_modules must never ship
+    expect(output).not.toMatch(/\bnode_modules\//);
     // dist/ should be present (built output)
     expect(output).toMatch(/dist\//);
   });

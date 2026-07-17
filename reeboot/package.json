@@ -19,7 +19,7 @@
     "skills/",
     "templates/",
     "container/",
-    "webchat/"
+    "webchat/dist/"
   ],
   "engines": {
     "node": ">=22"

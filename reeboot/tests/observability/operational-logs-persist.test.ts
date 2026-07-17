@@ -2,7 +2,7 @@
  * OB-1-E: warn+ pino log records must be persisted to the operational_logs table.
  *
  * The logger must write warn, error, and fatal records to operational_logs in SQLite.
- * Info and debug records must NOT be written.
+ * Info and debug records must NOT be written (reverts the web-api-readback info+ change).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
@@ -50,7 +50,7 @@ describe('OB-1-E: operational_logs persist warn+ pino records', () => {
     expect(row.level).toBe(50); // pino error level
   });
 
-  it('info log is NOT written to operational_logs', async () => {
+  it('info log is NOT written to operational_logs (warn+ only)', async () => {
     const { createLogger } = await import('@src/observability/logger.js');
     const db = makeDb();
     const logger = createLogger({ level: 'debug' }, db);
@@ -61,7 +61,7 @@ describe('OB-1-E: operational_logs persist warn+ pino records', () => {
 
     const row = db.prepare(
       "SELECT * FROM operational_logs WHERE msg = 'test-info-message'"
-    ).get();
+    ).get() as any;
     expect(row).toBeUndefined();
   });
 

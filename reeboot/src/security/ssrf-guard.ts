@@ -53,6 +53,21 @@ const BLOCKED_RANGES: IpRange[] = [
       return second >= 64 && second <= 127;
     },
   },
+  // Unspecified address
+  {
+    name: 'unspecified address (0.0.0.0)',
+    test: (ip) => ip === '0.0.0.0',
+  },
+  // IPv6 unique local address (ULA, fc00::/7)
+  {
+    name: 'IPv6 unique local address (fc00::/7)',
+    test: (ip) => ip.includes(':') && /^f[c-d]/i.test(ip),
+  },
+  // IPv6 link-local (fe80::/10)
+  {
+    name: 'IPv6 link-local address (fe80::/10)',
+    test: (ip) => ip.includes(':') && /^fe[89a-b]/i.test(ip),
+  },
 ];
 
 // Cloud metadata hostnames (checked before DNS)
@@ -112,9 +127,32 @@ export async function isUrlSafe(
     return { safe: true };
   }
 
-  // Check against blocked ranges
+  // Normalise IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) before range checks.
+  // Node's URL parser normalises dotted-quad IPv4 to hex (::ffff:a00:1 for 10.0.0.1),
+  // so we must decode the mapped bytes back to dotted-quad.
+  let norm = address;
+  const v4mapped = address.match(/^::ffff:(.+)$/i);
+  if (v4mapped) {
+    const rest = v4mapped[1];
+    // If the mapped part is a plain dotted-quad, use it directly.
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(rest)) {
+      norm = rest;
+    } else {
+      // Otherwise it's hex-encoded (e.g. a00:1 → 10.0.0.1).
+      // Split on ':', parse each segment as two bytes.
+      const parts = rest.split(':');
+      const bytes: number[] = [];
+      for (const p of parts) {
+        const num = parseInt(p, 16);
+        bytes.push((num >> 8) & 0xff, num & 0xff);
+      }
+      norm = bytes.join('.');
+    }
+  }
+
+  // Check against blocked ranges (test both original and normalised)
   for (const range of BLOCKED_RANGES) {
-    if (range.test(address)) {
+    if (range.test(address) || range.test(norm)) {
       return { safe: false, reason: `URL blocked by SSRF policy: destination resolves to ${range.name}` };
     }
   }

@@ -339,6 +339,18 @@ export function getReeFactories(config: Config): import('./extension-api.js').Ex
     if (mod?.default) await (mod.default as any)(api, config);
   });
 
+  // 6. injection-guard — default(api, config) — warns/blocks injection in untrusted messages
+  factories.push(async (api) => {
+    const mod = await importExt('injection-guard');
+    if (mod?.default) (mod.default as any)(api, config);
+  });
+
+  // 7. trust-enforcer — makeTrustEnforcerExtension(api, config) — enforces trust policy per tool
+  factories.push(async (api) => {
+    const mod = await importExt('trust-enforcer');
+    if (mod?.makeTrustEnforcerExtension) mod.makeTrustEnforcerExtension(api, config);
+  });
+
   return factories;
 }
 

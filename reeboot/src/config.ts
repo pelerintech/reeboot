@@ -143,6 +143,10 @@ const LoggingConfigSchema = z.object({
   /** Remaining tokens below which a rate_limit_warning is emitted. Default: 5000. */
   rate_limit_warn_threshold: z.number().int().min(0).default(5000),
   retention_days: z.number().int().min(1).default(30),
+  /** INFO-severity events pruned after this shorter window. Default: 7. */
+  events_info_retention_days: z.number().int().min(1).default(7),
+  /** Hard per-context row backstop for the `events` table. Default: 8000. */
+  events_max_rows_per_context: z.number().int().min(100).default(8000),
 });
 
 const ServerConfigSchema = z.object({

@@ -131,4 +131,31 @@ describe('SSRF guard — isUrlSafe', () => {
     expect(result.safe).toBe(false);
     expect(result.reason).toMatch(/DNS/i);
   });
+
+  // ─── C1: IPv6 and 0.0.0.0 coverage ───────────────────────────────────
+
+  it('C1-S1: blocks 0.0.0.0', async () => {
+    const result = await checkUrl('http://0.0.0.0:8080/');
+    expect(result.safe).toBe(false);
+  });
+
+  it('C1-S2: blocks IPv6 ULA (fc00::/7)', async () => {
+    const result = await checkUrl('http://[fd00::1]/');
+    expect(result.safe).toBe(false);
+  });
+
+  it('C1-S3: blocks IPv6 link-local (fe80::/10)', async () => {
+    const result = await checkUrl('http://[fe80::1]/');
+    expect(result.safe).toBe(false);
+  });
+
+  it('C1-S4: blocks IPv4-mapped private (::ffff:10.0.0.1)', async () => {
+    const result = await checkUrl('http://[::ffff:10.0.0.1]/');
+    expect(result.safe).toBe(false);
+  });
+
+  it('C1-S5: public addresses still allowed (regression)', async () => {
+    const result = await checkUrl('http://[2001:db8::1]/');
+    expect(result.safe).toBe(true);
+  });
 });
