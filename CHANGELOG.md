@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Multi-user support for the ree SDK** — a single process can now serve many concurrent, mutually-private customer conversations, each an isolated chat with its own history, created on demand from a client-supplied conversation id.
+- **Observability audit view** — a new turn-grouped Activity page (backed by a `GET /api/events` endpoint) that gives the operator a window into what the agent did over time and why each task succeeded or failed.
+
+### Fixed
+
+- **Extensive ree and subsystem hardening** — a large batch of correctness, security, and budget bug fixes: the ree runtime (abort/reset wedge, token metering, tool-error surfacing, extension hooks), security (SSRF IPv6/loopback blocking, injection-guard and trust-enforcer wired into ree), budget scoping, and the memory-consolidation, knowledge-index, scheduler, and crash-recovery subsystems.
+
+---
+
+## [2.7.0] - 2026-07-16
+
+### Added
+
+- **Ree SDK** — new multi-user chat runtime powered by TanStack AI, enabled via `sdk: "ree"` in config. Supports concurrent isolated conversations with per-chat history, idle eviction, and a dedicated session_search tool scoped to the current chat.
+- **Revamped WebChat UI** — new React SPA with streaming message rendering, tool call indicators, connection status, budget settings panel, channel status page, and live log streaming.
+- **Improved Docker support** — streamlined entrypoint with config file as single source of truth. Docker Compose full-stack deployment with SearXNG, Signal CLI, and optional Caddy reverse proxy.
+
+### Changed
+
+- WebSocket streaming now delivers events through the orchestrator's event-forwarding path — no more duplicate text_delta or message_end events.
+- Each WS connection gets a unique session ID for peer routing, allowing multiple concurrent browser tabs.
+- Cancel messages are now sent as a proper bus signal and actually abort the running turn.
+
+### Fixed
+
+- **Ree mode was unreachable in production** — the `sdk` and `ree` config fields were silently stripped by Zod. Both are now declared in the config schema.
+- Pi-specific API endpoints (`/api/contexts`, `/api/tasks`, `/api/contexts/:id/sessions`) now return empty results in ree mode instead of querying pi-only tables.
+
+---
+
 ## [2.6.0] - 2026-06-01
 
 ### Added

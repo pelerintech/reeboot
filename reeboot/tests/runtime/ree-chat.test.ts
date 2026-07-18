@@ -290,3 +290,42 @@ describe('ReeChat — bounded history and per-chat AbortController', () => {
     expect(chatB.abortController.signal.aborted).toBe(false);
   });
 });
+
+// ─── Task A3: before_agent_start return values are honored ────────────────
+
+describe('ReeChat — before_agent_start return values (A3)', () => {
+  let ReeChat: typeof import('@src/runtime/ree-chat.js').ReeChat;
+
+  beforeEach(async () => {
+    const mod = await import('@src/runtime/ree-chat.js');
+    ReeChat = mod.ReeChat;
+  });
+
+  it('S1: handler return value merges into systemPrompt', async () => {
+    const chat = new ReeChat('test', { maxHistory: 50, context: mockContext, config: mockContext.config });
+
+    chat.adapter.on('before_agent_start', () => ({ systemPrompt: 'BASE\n## INJECTED' }));
+
+    const result = await chat.emitBeforeAgentStart({
+      prompt: 'x',
+      systemPrompt: 'BASE',
+      systemPromptOptions: {},
+    });
+
+    expect(result).toBeDefined();
+    expect(result.systemPrompt).toContain('## INJECTED');
+    expect(result.systemPrompt).toContain('BASE');
+  });
+
+  it('S3: no handler leaves the prompt unchanged', async () => {
+    const chat = new ReeChat('test', { maxHistory: 50, context: mockContext, config: mockContext.config });
+
+    const result = await chat.emitBeforeAgentStart({
+      prompt: 'x',
+      systemPrompt: 'BASE',
+      systemPromptOptions: {},
+    });
+
+    expect(result.systemPrompt).toBe('BASE');
+  });
+});

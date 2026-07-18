@@ -70,8 +70,7 @@ describe('bootstrap wiring in server.ts', () => {
 
     bootstrapServerJobs({} as any, spyScheduler as any, config);
 
-    // The bootstrap job should have been registered through the real scheduler
-    // (memory consolidation when enabled)
+    // Memory consolidation is registered in non-ree mode
     expect(spyScheduler.registerJob).toHaveBeenCalledTimes(1);
   });
 });

@@ -30,6 +30,14 @@ export interface IncomingMessage {
   channelType: string;
   /** Peer identifier — phone number JID for WhatsApp, socket ID for web, etc. */
   peerId: string;
+  /**
+   * Stable per-conversation isolation axis (ree mode). Distinct from `peerId`
+   * (the per-connection reply-routing token). Web/API transports supply this
+   * from the WS path segment; channel adapters that have no notion of a
+   * conversation id leave it undefined, in which case ree context resolution
+   * falls back to `peerId` then `routing.default`.
+   */
+  conversationId?: string;
   /** Plain text content extracted from the message */
   content: string;
   /** Unix timestamp (ms) when the message was received */
@@ -45,6 +53,11 @@ export interface IncomingMessage {
    * Web and CLI leave this undefined — all their messages are implicitly from the owner.
    */
   fromSelf?: boolean;
+  /**
+   * If set to 'cancel', signals the orchestrator to abort the running turn
+   * instead of queuing the message as a normal turn.
+   */
+  action?: 'cancel';
 }
 
 /**
@@ -53,10 +66,21 @@ export interface IncomingMessage {
 export function createIncomingMessage(
   fields: Omit<IncomingMessage, 'timestamp'> & { timestamp?: number }
 ): IncomingMessage {
-  return {
-    timestamp: Date.now(),
-    ...fields,
+  const { timestamp, channelType, peerId, content, raw, ...rest } = fields;
+  const msg: IncomingMessage = {
+    timestamp: timestamp ?? Date.now(),
+    channelType,
+    peerId,
+    content,
+    raw,
   };
+  // Thread optional declared fields explicitly (no blind spread) so the
+  // constructed object only carries first-class IncomingMessage fields.
+  if (rest.trust !== undefined) msg.trust = rest.trust;
+  if (rest.fromSelf !== undefined) msg.fromSelf = rest.fromSelf;
+  if (rest.action !== undefined) msg.action = rest.action;
+  if (rest.conversationId !== undefined) msg.conversationId = rest.conversationId;
+  return msg;
 }
 
 // ─── MessageBus ───────────────────────────────────────────────────────────────

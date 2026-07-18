@@ -93,6 +93,11 @@ export class ReeAgentRunner implements AgentRunner {
     // Update activity timestamp
     chat.touch();
 
+    // Recreate AbortController if it was aborted (e.g. by a previous reset/abort)
+    if (chat.abortController.signal.aborted) {
+      chat.abortController = new AbortController();
+    }
+
     // Ensure extension factories have finished initializing on this chat
     // (they run async on chat creation; prompt must not race them).
     await chat.extensionsReady;
@@ -101,9 +106,9 @@ export class ReeAgentRunner implements AgentRunner {
     const adapter = this._runtime.createTanStackClient();
 
     // Read agent loop options from config
-    const reeConfig = (this._config as any)?.ree ?? {};
-    const systemPrompt = reeConfig.systemPrompt ?? reeConfig.system_prompt ?? '';
-    const maxIterations = reeConfig.maxIterations ?? 5;
+    const ree = this._config?.ree as import('../config.js').ReeConfig | undefined;
+    const systemPrompt = ree?.systemPrompt ?? '';
+    const maxIterations = ree?.maxIterations ?? 5;
     // Initialize MCP clients from config (no-op if already initialized or none configured)
     await this._runtime.initMcpClients();
     const mcpClients = this._runtime.getMcpClients();

@@ -143,6 +143,10 @@ const LoggingConfigSchema = z.object({
   /** Remaining tokens below which a rate_limit_warning is emitted. Default: 5000. */
   rate_limit_warn_threshold: z.number().int().min(0).default(5000),
   retention_days: z.number().int().min(1).default(30),
+  /** INFO-severity events pruned after this shorter window. Default: 7. */
+  events_info_retention_days: z.number().int().min(1).default(7),
+  /** Hard per-context row backstop for the `events` table. Default: 8000. */
+  events_max_rows_per_context: z.number().int().min(100).default(8000),
 });
 
 const ServerConfigSchema = z.object({
@@ -281,7 +285,21 @@ const BudgetConfigSchema = z.object({
 
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 
+const ReeConfigSchema = z.object({
+  maxChats: z.number().int().positive().default(200),
+  idleTtlMs: z.number().int().positive().default(1_800_000),
+  maxHistoryPerChat: z.number().int().positive().default(50),
+  systemPrompt: z.string().default(''),
+  maxIterations: z.number().int().positive().default(5),
+  model: ModelConfigSchema.optional(),
+  mcp: McpConfigSchema.optional(),
+});
+
+export type ReeConfig = z.infer<typeof ReeConfigSchema>;
+
 export const ConfigSchema = z.object({
+  sdk: z.enum(['pi', 'ree']).default('pi'),
+  ree: ReeConfigSchema.default({}),
   agent: AgentConfigSchema.default({}),
   channels: ChannelsConfigSchema.default({}),
   sandbox: SandboxConfigSchema.default({}),

@@ -137,6 +137,50 @@ describe('BudgetGuard', () => {
     expect(result.reason).toMatch(/52000/);
   });
 
+  // ─── D2: Warning ordering — hard breach must not be masked ──────────
+
+  it('D2-S1: hard breach wins over a token warning', async () => {
+    const BudgetGuard = await getGuard();
+    const guard = new BudgetGuard();
+
+    // Usage in the warn band for daily tokens (82% of limit) but OVER daily cost
+    db.prepare(`
+      INSERT INTO usage (context_id, input_tokens, output_tokens, model, cost_usd, created_at)
+      VALUES ('ctx1', 50000, 32000, 'test', 10.50, datetime('now'))
+    `).run();
+
+    const result = guard.check(db, 'ctx1', makeConfig({
+      daily_tokens: 100000,
+      daily_cost_usd: 5.0,
+      warn_threshold: 0.8,
+    }));
+
+    // Should NOT return ok:true with a warning — should return ok:false with cost breach
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/Daily cost/i);
+  });
+
+  it('D2-S2: warning still returned when no hard limit is breached', async () => {
+    const BudgetGuard = await getGuard();
+    const guard = new BudgetGuard();
+
+    // Usage in warn band but no hard limit exceeded
+    db.prepare(`
+      INSERT INTO usage (context_id, input_tokens, output_tokens, model, cost_usd, created_at)
+      VALUES ('ctx1', 50000, 32000, 'test', 0.50, datetime('now'))
+    `).run();
+
+    const result = guard.check(db, 'ctx1', makeConfig({
+      daily_tokens: 100000,
+      daily_cost_usd: 10.0,
+      warn_threshold: 0.8,
+    }));
+
+    expect(result.ok).toBe(true);
+    expect(result.warning).toBeDefined();
+    expect(result.warning).toMatch(/82%/);
+  });
+
   it('TB-2-F: turn limit uses last turn actual cost', async () => {
     const BudgetGuard = await getGuard();
     const guard = new BudgetGuard();

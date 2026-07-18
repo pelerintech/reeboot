@@ -150,6 +150,11 @@ export class ReeExtensionAdapter implements ExtensionAPI {
     return this.chat.sessionName;
   }
 
+  /** Get the current chat ID */
+  getCurrentChatId(): string | undefined {
+    return this.chat.chatId;
+  }
+
   /** Send a custom message to the session */
   sendMessage(
     message: { customType: string; content?: unknown; display?: unknown; details?: unknown },

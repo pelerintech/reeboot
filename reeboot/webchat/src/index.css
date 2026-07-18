@@ -1,0 +1,53 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --color-foreground: #09090b;
+  --color-background: #ffffff;
+  --color-muted: #f4f4f5;
+  --color-muted-foreground: #71717a;
+  --color-border: #e4e4e7;
+  --color-ring: #18181b;
+  --color-accent: #09090b;
+  --color-accent-foreground: #fafafa;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fade-in 0.15s ease-in;
+}

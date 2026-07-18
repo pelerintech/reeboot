@@ -7,6 +7,12 @@ import { ReeRuntime } from '../runtime/ree-runtime.js';
 
 export type { AgentRunner, AgentRunnerFactory, ContextConfig, RunnerEvent } from './interface.js';
 
+// Exported for ree session_search tool to access the history DB.
+// Returns null if ree runtime hasn't been initialised yet.
+export function getReeRuntime(): ReeRuntime | null {
+  return _reeRuntime;
+}
+
 // Shared ReeRuntime singleton — one per process, shared across all ree runners
 let _reeRuntime: ReeRuntime | null = null;
 
@@ -17,7 +23,7 @@ let _reeRuntime: ReeRuntime | null = null;
  * Resolution: config.sdk ?? config.agent.runner ?? 'pi'
  */
 export function createRunner(context: ContextConfig, config: Config): AgentRunner {
-  const sdk = (config as any).sdk ?? (config as any).agent?.runner ?? 'pi';
+  const sdk = config.sdk ?? config.agent?.runner ?? 'pi';
 
   if (sdk === 'pi') {
     const loader = createLoader(context, config);
@@ -27,12 +33,12 @@ export function createRunner(context: ContextConfig, config: Config): AgentRunne
   if (sdk === 'ree') {
     // Create or reuse the shared ReeRuntime singleton
     if (!_reeRuntime) {
-      const reeConfig = (config as any).ree ?? {};
+      const ree = config.ree ?? {};
       _reeRuntime = new ReeRuntime({
         config,
-        maxChats: reeConfig.maxChats ?? 200,
-        idleTtlMs: reeConfig.idleTtlMs ?? 1800000,
-        maxHistoryPerChat: reeConfig.maxHistoryPerChat ?? 50,
+        maxChats: ree.maxChats,
+        idleTtlMs: ree.idleTtlMs,
+        maxHistoryPerChat: ree.maxHistoryPerChat,
       });
       _reeRuntime.setFactories(getReeFactories(config));
     }

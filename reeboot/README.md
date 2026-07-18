@@ -143,6 +143,47 @@ Open `http://localhost:3000` after starting the agent. No setup required.
 
 → [docs/channels/signal.md](../docs/channels/signal.md)
 
+### ree Support Integration (multi-customer)
+
+When `config.sdk` is set to `"ree"`, reeboot runs as a single-company support/triage
+agent that serves **many mutually-private end-customers** in one process over the
+Web/API WebSocket transport. Each customer is an isolated conversation with its
+own history and `session_search` scope, created on demand from a client-supplied
+conversation id — no pre-registered context and no cross-customer leakage.
+
+**Endpoint:** `ws://<host>:<port>/ws/chat/:conversationId`
+
+**Client contract:**
+
+- **`conversationId`** (WS path segment) — the isolation axis. One stable id per
+  customer conversation; same customer thread ⇒ same id; never reuse one
+  customer's id for another. Rules: `^[A-Za-z0-9._:-]{1,128}$`; reserved ids
+  (`main`, `__system__`, `scheduler`, `__outage_probe__`) are rejected.
+- **Authentication** — `Authorization: Bearer <serverToken>` header (or
+  `?token=<serverToken>` query param) for non-loopback connections. The shared
+  server token authenticates the **client integration** (server-to-server), NOT
+  the end-customer. Per-customer privacy is enforced solely by
+  `conversationId → chat` isolation.
+- **Reply routing** — each WS connection receives a unique `sessionId`; replies
+  and streaming events are delivered only to the connection that sent the
+  message. `conversationId` (isolation) and `sessionId` (reply routing) are
+  explicit and orthogonal.
+- **Cancel** — send `{ "type": "cancel" }` to abort the in-flight turn on that
+  connection's conversation; other conversations are unaffected.
+
+**Isolation guarantees:**
+
+- Each `conversationId` maps to a distinct `ReeChat` with its own durable history
+  (`chat_messages`) and FTS `session_search` scope.
+- ree turns do **not** write the shared `messages` table (no cross-customer
+  co-mingling surface).
+- All conversations share one workspace (the RAG corpus); there is no
+  per-customer filesystem. Tools that write files must not assume per-customer
+  isolation.
+- Lazily-created runners are evicted on inactivity so orchestrator maps stay
+  bounded; a re-arriving customer resumes from `chat_messages` unless the
+  underlying chat was idle-pruned.
+
 ---
 
 ## Key Capabilities

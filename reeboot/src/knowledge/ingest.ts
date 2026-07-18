@@ -142,3 +142,19 @@ export async function ingestDocument(
     throw err;
   }
 }
+
+/**
+ * Delete a knowledge source by file path, removing its chunks and FTS entries.
+ * No-op if the path doesn't exist in knowledge_sources.
+ */
+export function deleteKnowledgeSource(db: Database.Database, filePath: string): void {
+  const source = db.prepare('SELECT id FROM knowledge_sources WHERE path = ?').get(filePath) as { id: string } | undefined;
+  if (!source) return;
+
+  const { id } = source;
+  db.transaction(() => {
+    db.prepare('DELETE FROM knowledge_fts WHERE doc_id = ?').run(id);
+    db.prepare('DELETE FROM knowledge_chunks WHERE doc_id = ?').run(id);
+    db.prepare('DELETE FROM knowledge_sources WHERE id = ?').run(id);
+  })();
+}

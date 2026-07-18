@@ -83,7 +83,7 @@ describe('bootstrap server jobs', () => {
     vi.clearAllMocks();
   });
 
-  it('bootstrapServerJobs registers memory consolidation job when enabled', async () => {
+  it('bootstrapServerJobs registers memory consolidation when not ree (pi mode)', async () => {
     const { bootstrapServerJobs } = await import('../src/bootstrap.js');
 
     const db = makeDbWithTasks();
@@ -95,11 +95,39 @@ describe('bootstrap server jobs', () => {
 
     bootstrapServerJobs(db, mockScheduler as any, config);
 
-    // The mock memory registerServerJobs checks config gates and calls scheduler.registerJob
+    // Memory consolidation should be registered for non-ree (pi mode)
     const memCalls = schedulerRegisterSpy.mock.calls.filter(
       (c: any) => c[0].id === '__memory_consolidation__'
     );
     expect(memCalls).toHaveLength(1);
+
+    // knowledge should NOT be registered (disabled)
+    const knCalls = schedulerRegisterSpy.mock.calls.filter(
+      (c: any) => c[0].id === '__knowledge_lint__'
+    );
+    expect(knCalls).toHaveLength(0);
+
+    db.close();
+  });
+
+  it('bootstrapServerJobs skips memory consolidation in ree mode', async () => {
+    const { bootstrapServerJobs } = await import('../src/bootstrap.js');
+
+    const db = makeDbWithTasks();
+    const mockScheduler = { registerJob: schedulerRegisterSpy };
+    const config = {
+      sdk: 'ree',
+      memory: { enabled: true, consolidation: { enabled: true, schedule: '0 2 * * *' } },
+      knowledge: { enabled: false },
+    };
+
+    bootstrapServerJobs(db, mockScheduler as any, config);
+
+    // Memory consolidation should NOT be registered for ree mode
+    const memCalls = schedulerRegisterSpy.mock.calls.filter(
+      (c: any) => c[0].id === '__memory_consolidation__'
+    );
+    expect(memCalls).toHaveLength(0);
 
     // knowledge should NOT be registered (disabled)
     const knCalls = schedulerRegisterSpy.mock.calls.filter(

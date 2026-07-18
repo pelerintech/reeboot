@@ -101,7 +101,7 @@ export class ReeChat {
   public history: MessageEntry[];
 
   /** Per-chat AbortController for cancellation */
-  public readonly abortController: AbortController;
+  public abortController: AbortController;
 
   /** Outgoing message queue (for sendMessage) */
   public outgoingQueue: unknown[];
@@ -177,15 +177,34 @@ export class ReeChat {
 
   // ─── Typed emit helpers ──────────────────────────────────────────────────
 
-  /** Emit before_agent_start event */
-  emitBeforeAgentStart(payload: BeforeAgentStartPayload): void {
+  /**
+   * Emit before_agent_start event and collect handler return values.
+   * When a handler returns an object with a string `systemPrompt`, it is
+   * merged into the event's systemPrompt (last handler wins on conflicts).
+   * Returns the final (merged) event payload.
+   */
+  async emitBeforeAgentStart(payload: BeforeAgentStartPayload): Promise<BeforeAgentStartPayload> {
     const event: BeforeAgentStartEvent = {
       type: 'before_agent_start',
       prompt: payload.prompt,
       systemPrompt: payload.systemPrompt,
       systemPromptOptions: payload.systemPromptOptions,
     };
-    this.emitter.emit('before_agent_start', event);
+
+    const listeners = this.emitter.listeners('before_agent_start');
+    let mergedSystemPrompt = payload.systemPrompt;
+
+    for (const listener of listeners) {
+      // Update event.systemPrompt so each handler builds on the accumulated value
+      // (not just the original), enabling multiple handlers to compose their blocks.
+      event.systemPrompt = mergedSystemPrompt;
+      const result = await (listener as (event: BeforeAgentStartEvent) => unknown)(event);
+      if (result && typeof (result as any).systemPrompt === 'string') {
+        mergedSystemPrompt = (result as any).systemPrompt;
+      }
+    }
+
+    return { ...payload, systemPrompt: mergedSystemPrompt };
   }
 
   /** Emit turn_end event */

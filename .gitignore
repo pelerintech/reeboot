@@ -46,3 +46,9 @@ Thumbs.db
 # ─── Cache directories ────────────────────────────────────────────────────────
 .cache/
 .parcel-cache/
+
+# ─── Playwright CLI skill artifacts ───────────────────────────────────────────
+.playwright-cli/
+
+# ─── Research artifacts (not part of the build) ───────────────────────────────
+research_ree_sdk_framework/

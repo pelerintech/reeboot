@@ -11,7 +11,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
 import type { ServerType } from '@hono/node-server';
 import { startHeartbeat } from './scheduler/heartbeat.js';
-import { readFileSync } from 'fs';
+import { readFileSync, mkdirSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import type Database from 'better-sqlite3';
@@ -31,9 +31,12 @@ import {
 import { nanoid } from 'nanoid';
 import { migratePackages } from './packages.js';
 import { homedir } from 'os';
-import type { ChannelAdapter } from './channels/interface.js';
+import type { ChannelAdapter, MessageBus } from './channels/interface.js';
+import { isValidConversationId } from './channels/conversation-id.js';
 import type { Orchestrator } from './orchestrator.js';
 import { broadcastToAllChannels } from './utils/broadcast.js';
+import { webAdapter } from './channels/web.js';
+import { createIncomingMessage } from './channels/interface.js';
 import type { Scheduler } from './scheduler.js';
 import { streamSSE } from 'hono/streaming';
 import { getLogger, initLogger } from './observability/logger.js';
@@ -73,8 +76,8 @@ export interface ServerOptions {
 
 let _server: ServerType | null = null;
 
-// Active runners: contextId → AgentRunner
-const _activeRunners = new Map<string, AgentRunner>();
+// MessageBus (set during startServer, used by WS handler)
+let _bus: MessageBus | null = null;
 
 // Channel adapters (set during startServer)
 let _channelAdapters = new Map<string, ChannelAdapter>();
@@ -87,6 +90,9 @@ let _scheduler: Scheduler | null = null;
 
 // Credential proxy (set during startServer)
 let _credProxy: ServerType | null = null;
+
+// Periodic retention timer handle
+let _retentionTimer: ReturnType<typeof setInterval> | null = null;
 
 // ─── Auth helper ─────────────────────────────────────────────────────────────
 
@@ -110,13 +116,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
   const app = new Hono();
 
-  // ── Static file serving for webchat ──────────────────────────────────────
-  const webchatDir = resolve(__dirname, '../webchat');
-  try {
-    app.use('*', serveStatic({ root: webchatDir, index: 'index.html' }));
-  } catch {
-    // webchat dir may not exist in test environments — that's OK
-  }
+  // ── Static file serving for webchat SPA (configured after API routes) ──
 
   // Get or set up the DB
   let db: Database.Database;
@@ -153,9 +153,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
   // ── Observability retention pruning ──────────────────────────────────────
   {
-    const { pruneObservabilityData } = await import('./observability/retention.js');
-    const retentionDays = (opts.config as any)?.logging?.retention_days ?? 30;
-    pruneObservabilityData(db, retentionDays);
+    const { pruneObservabilityData, armRetentionTimer } = await import('./observability/retention.js');
+    const logging = (opts.config as any)?.logging ?? {};
+    const retentionDays = logging.retention_days ?? 30;
+    const eventsInfoRetentionDays = logging.events_info_retention_days ?? 7;
+    const eventsMaxRowsPerContext = logging.events_max_rows_per_context ?? 8000;
+    const pruneOpts = { retentionDays, eventsInfoRetentionDays, eventsMaxRowsPerContext };
+    pruneObservabilityData(db, pruneOpts);
+
+    // Arm periodic retention timer (default daily, overridable via env var)
+    const intervalMs = parseInt(process.env['REEBOOT_RETENTION_INTERVAL_MS'] ?? String(24 * 60 * 60 * 1000), 10);
+    _retentionTimer = armRetentionTimer(db, pruneOpts, intervalMs);
   }
 
   // ── Re-initialise logger with DB so warn+ records persist to operational_logs ──
@@ -192,46 +200,69 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
       const { MessageBus } = await import('./channels/interface.js');
       const { Orchestrator: OrchestratorClass } = await import('./orchestrator.js');
 
-      const bus = new MessageBus();
+      _bus = new MessageBus();
 
-      _channelAdapters = await globalRegistry.initChannels(appConfig as any, bus);
+      _channelAdapters = await globalRegistry.initChannels(appConfig as any, _bus);
 
       const { scanSessionForUnansweredMessage } = await import('./resilience/startup.js');
 
       const orchestratorRunners = new Map<string, AgentRunner>();
       const contexts = listContexts(db);
       const inactivityMs = (appConfig as any).session?.inactivityTimeout ?? 14_400_000;
-      for (const ctx of contexts) {
-        const sessionsDir = join(reebotDir, 'sessions', ctx.id);
-        const sessionPath = getResumedSessionPath(ctx.id, inactivityMs, reebotDir) ?? undefined;
-        if (sessionPath) {
-          const unanswered = scanSessionForUnansweredMessage(sessionPath);
-          if (unanswered) {
-            const snippet = unanswered.length > 120
-              ? unanswered.substring(0, 120) + '…'
-              : unanswered;
-            broadcastToAllChannels(
-              _channelAdapters,
-              `⚠️ It looks like I may not have responded to your last message: "${snippet}". Please re-send if needed.`
-            );
+      const isReeMode = (appConfig as any)?.sdk === 'ree';
+
+      if (isReeMode) {
+        // ree mode: dynamic per-conversation runners over the shared ReeRuntime.
+        // Do NOT eagerly build per-context runners — the orchestrator lazily
+        // creates a runner per conversationId via the factory. All conversations
+        // share ONE workspace (the RAG corpus); no per-customer directory.
+        const sharedWorkspacePath = join(reebotDir, 'contexts', '__ree__', 'workspace');
+        try { mkdirSync(sharedWorkspacePath, { recursive: true }); } catch { /* may already exist */ }
+        const factory = (id: string): AgentRunner => createRunner(
+          { id, workspacePath: sharedWorkspacePath },
+          appConfig
+        );
+        _orchestrator = new OrchestratorClass(
+          appConfig as any,
+          _bus,
+          _channelAdapters,
+          orchestratorRunners,
+          db,
+          { runnerFactory: factory }
+        );
+      } else {
+        // pi mode: eagerly build one runner per registered context.
+        for (const ctx of contexts) {
+          const sessionsDir = join(reebotDir, 'sessions', ctx.id);
+          const sessionPath = getResumedSessionPath(ctx.id, inactivityMs, reebotDir) ?? undefined;
+          if (sessionPath) {
+            const unanswered = scanSessionForUnansweredMessage(sessionPath);
+            if (unanswered) {
+              const snippet = unanswered.length > 120
+                ? unanswered.substring(0, 120) + '…'
+                : unanswered;
+              broadcastToAllChannels(
+                _channelAdapters,
+                `⚠️ It looks like I may not have responded to your last message: "${snippet}". Please re-send if needed.`
+              );
+            }
           }
+          orchestratorRunners.set(
+            ctx.id,
+            createRunner(
+              { id: ctx.id, workspacePath: join(reebotDir, 'contexts', ctx.id, 'workspace'), sessionsDir, sessionPath },
+              appConfig
+            )
+          );
         }
-        orchestratorRunners.set(
-          ctx.id,
-          createRunner(
-            { id: ctx.id, workspacePath: join(reebotDir, 'contexts', ctx.id, 'workspace'), sessionsDir, sessionPath },
-            appConfig
-          )
+        _orchestrator = new OrchestratorClass(
+          appConfig as any,
+          _bus,
+          _channelAdapters,
+          orchestratorRunners,
+          db
         );
       }
-
-      _orchestrator = new OrchestratorClass(
-        appConfig as any,
-        bus,
-        _channelAdapters,
-        orchestratorRunners,
-        db
-      );
       _orchestrator.start();
 
       // ── Deferred resilience phase ───────────────────────────────────────
@@ -244,7 +275,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           appConfig as any,
           _channelAdapters,
           (contextId: string, prompt: string) => {
-            bus.publish(
+            _bus!.publish(
               createIncomingMessage({
                 channelType: 'recovery',
                 peerId: contextId,
@@ -277,24 +308,27 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
         const { Scheduler } = await import('./scheduler.js');
         const { setGlobalScheduler } = await import('./scheduler-registry.js');
 
+        const { createSchedulerTaskHandler } = await import('./scheduler-dispatch.js');
+        const { createLlmCall } = await import('./llm/one-shot.js');
+        const memoryConfig = (appConfig as any)?.memory ?? {};
+        const memoriesDir = join(reebotDir, 'memories');
+        const memoryCharLimit = memoryConfig.memoryCharLimit ?? 2200;
+        const userCharLimit = memoryConfig.userCharLimit ?? 1375;
+        const llmCall = createLlmCall(appConfig);
+
         const schedulerOrchestrator = {
-          handleScheduledTask: async (task: any) => {
-            const { createIncomingMessage } = await import('./channels/interface.js');
-            const { buildScheduledPrompt } = await import('./scheduler.js');
-            const enrichedPrompt = buildScheduledPrompt(task);
-            bus.publish(
-              createIncomingMessage({
-                channelType: 'scheduler',
-                peerId: 'scheduler',
-                content: enrichedPrompt,
-                raw: {
-                  taskId: task.taskId,
-                  origin_channel: task.origin_channel ?? null,
-                  origin_peer: task.origin_peer ?? null,
-                },
-              })
-            );
-          },
+          handleScheduledTask: createSchedulerTaskHandler({
+            db,
+            bus: _bus!,
+            runConsolidation: async (opts) => {
+              const { runConsolidation } = await import('./extensions/memory-manager.js');
+              return runConsolidation(opts);
+            },
+            llmCall,
+            memoriesDir,
+            memoryCharLimit,
+            userCharLimit,
+          }),
         };
 
         const schedulerProvider: string = (appConfig as any)?.agent?.model?.provider ?? 'unknown';
@@ -310,7 +344,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
         // ── Heartbeat init ───────────────────────────────────────────
         if (appConfig.heartbeat) {
-          startHeartbeat(appConfig.heartbeat, db, bus);
+          startHeartbeat(appConfig.heartbeat, db, _bus);
           if (appConfig.heartbeat.enabled) {
             getLogger().info({ component: 'server' }, '[server] System heartbeat started');
           }
@@ -325,9 +359,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
   // ── Routes ──────────────────────────────────────────────────────────────
 
-  // GET / — serve WebChat (fallback if serveStatic missed it)
+  // GET / — serve WebChat SPA (fallback if static serving missed it)
   app.get('/', async (c) => {
-    const webchatPath = resolve(__dirname, '../webchat/index.html');
+    const webchatPath = resolve(__dirname, '../webchat/dist/index.html');
     try {
       const html = readFileSync(webchatPath, 'utf-8');
       return c.text(html, 200, { 'Content-Type': 'text/html' });
@@ -368,6 +402,63 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
         });
       });
     });
+  });
+
+  // GET /api/logs — persisted log history
+  app.get('/api/logs', (c) => {
+    const levelNum = _pinoLevelToNumber(c.req.query('level') ?? 'info');
+    const raw = Number(c.req.query('limit') ?? '200');
+    const limit = Math.max(1, Math.min(1000, Number.isFinite(raw) ? raw : 200));
+    const rows = db.prepare(
+      `SELECT level, msg, component, created_at FROM (
+         SELECT id, level, msg, component, created_at FROM operational_logs
+         WHERE level >= ? ORDER BY id DESC LIMIT ?
+       ) ORDER BY id ASC`
+    ).all(levelNum, limit) as Array<{ level: number; msg: string; component: string | null; created_at: string }>;
+    return c.json(rows.map((r) => ({
+      timestamp: r.created_at,
+      level: _pinoNumberToLevel(r.level),
+      component: r.component ?? undefined,
+      message: r.msg,
+    })));
+  });
+
+  // GET /api/events — curated audit events (turn-grouped rollup source)
+  app.get('/api/events', (c) => {
+    const severityThreshold = _levelToOtelSeverity(c.req.query('level') ?? 'info');
+    const contextFilter = c.req.query('context');
+    const typeFilter = c.req.query('type');
+    const rawLimit = Number(c.req.query('limit') ?? '200');
+    const limit = Math.max(1, Math.min(1000, Number.isFinite(rawLimit) ? rawLimit : 200));
+
+    const where: string[] = ['severity >= ?'];
+    const params: any[] = [severityThreshold];
+    if (contextFilter) { where.push('context_id = ?'); params.push(contextFilter); }
+    if (typeFilter) { where.push('type = ?'); params.push(typeFilter); }
+    const whereSql = where.join(' AND ');
+
+    const rows = db.prepare(
+      `SELECT id, type, severity, context_id, channel, peer_id, created_at, trace_id, payload,
+              json_extract(payload, '$.turnId') AS turn_id
+       FROM (
+         SELECT id, type, severity, context_id, channel, peer_id, created_at, trace_id, payload, created_ns
+         FROM events WHERE ${whereSql} ORDER BY created_ns DESC LIMIT ?
+       ) ORDER BY created_ns ASC`
+    ).all(...params, limit) as Array<any>;
+
+    return c.json(rows.map((r) => ({
+      id: r.id,
+      timestamp: r.created_at,
+      type: r.type,
+      level: _otelSeverityToLevelString(r.severity),
+      severity: r.severity,
+      contextId: r.context_id,
+      channel: r.channel,
+      peerId: r.peer_id,
+      traceId: r.trace_id,
+      turnId: r.turn_id ?? null,
+      payload: _safeParsePayload(r.payload),
+    })));
   });
 
   // GET /api/status
@@ -437,15 +528,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 
     // Schedule shutdown after response is sent
     setTimeout(async () => {
-      const DRAIN_TIMEOUT_MS = 30_000;
-      const drainStart = Date.now();
-
       if (_orchestrator) {
         _orchestrator.stop();
-      }
-
-      while (_activeRunners.size > 0 && Date.now() - drainStart < DRAIN_TIMEOUT_MS) {
-        await new Promise(r => setTimeout(r, 100));
       }
 
       for (const adapter of _channelAdapters.values()) {
@@ -469,6 +553,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   // ── REST: Task API ──────────────────────────────────────────────────────
 
   app.get('/api/tasks', (c) => {
+    // Ree mode doesn't use the scheduler — return empty array
+    if ((opts.config as any)?.sdk === 'ree') {
+      return c.json([]);
+    }
     const tasks = db
       .prepare('SELECT id, context_id as contextId, schedule, prompt, enabled, last_run as lastRun, created_at as createdAt FROM tasks')
       .all();
@@ -527,6 +615,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   // ── REST: Context API ───────────────────────────────────────────────────
 
   app.get('/api/contexts', (c) => {
+    // Ree mode uses chats table, not contexts — return empty array
+    if ((opts.config as any)?.sdk === 'ree') {
+      return c.json([]);
+    }
     return c.json(listContexts(db));
   });
 
@@ -546,12 +638,31 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   });
 
   app.get('/api/contexts/:id/sessions', async (c) => {
+    // Ree mode doesn't have pi-style sessions — return empty array
+    if ((opts.config as any)?.sdk === 'ree') {
+      return c.json([]);
+    }
     const ctx = getContextById(db, c.req.param('id'));
     if (!ctx) {
       return c.json({ error: 'Context not found' }, 404);
     }
     const sessions = await listSessions(c.req.param('id'), reebotDir);
     return c.json(sessions);
+  });
+
+  app.get('/api/contexts/:id/messages', (c) => {
+    const id = c.req.param('id');
+    const ctx = getContextById(db, id);
+    if (!ctx) return c.json({ error: 'Context not found' }, 404);
+    const raw = Number(c.req.query('limit') ?? '200');
+    const limit = Math.max(1, Math.min(1000, Number.isFinite(raw) ? raw : 200));
+    const rows = db.prepare(
+      `SELECT role, content, created_at FROM (
+         SELECT rowid, role, content, created_at FROM messages
+         WHERE context_id = ? ORDER BY rowid DESC LIMIT ?
+       ) ORDER BY rowid ASC`
+    ).all(id, limit);
+    return c.json(rows);
   });
 
   // ── REST: Budget settings ─────────────────────────────────────────────────
@@ -625,6 +736,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
     const contextId = c.req.param('contextId')!;
     const clientIp = (c.env as any)?.incoming?.socket?.remoteAddress ?? '';
 
+    const sessionId = nanoid();
+    // ree mode: the path segment is the conversationId (isolation axis). It is
+    // NOT a pre-registered context — runners are created dynamically. The
+    // nanoid sessionId stays the per-connection reply-routing token (peerId).
+    const isReeMode = (opts.config as any)?.sdk === 'ree';
+
     return {
       onOpen(_event, ws) {
         // Auth check for non-loopback connections
@@ -638,15 +755,27 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           }
         }
 
-        // Validate context exists
-        const ctx = getContextById(db, contextId);
-        if (!ctx) {
-          ws.close(4004, 'Unknown context');
-          return;
+        // pi mode: validate context exists (static runner map).
+        // ree mode: dynamic conversation ids are never in `contexts` — skip the
+        // gate. Per-customer isolation comes from conversationId → chat. Invalid /
+        // reserved ids are rejected at message time (before dispatch).
+        if (!isReeMode) {
+          const ctx = getContextById(db, contextId);
+          if (!ctx) {
+            ws.close(4004, 'Unknown context');
+            return;
+          }
         }
 
-        // Generate session ID
-        const sessionId = nanoid();
+        // Register peer with WebAdapter for reply routing
+        // wsSend is a no-op — streaming events deliver everything via sendEvent
+        const wsSend = async () => {};
+        const wsEvent = (event: any) => {
+          try { ws.send(JSON.stringify(event)); } catch { /* connection may be closed */ }
+        };
+        webAdapter.registerPeer(sessionId, wsSend, wsEvent);
+
+        // Send connected event with unique sessionId
         ws.send(JSON.stringify({ type: 'connected', contextId, sessionId }));
       },
 
@@ -659,67 +788,61 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           return;
         }
 
+        // ree mode: validate the conversation id before any dispatch. Reject
+        // reserved/invalid ids with an error frame and do not publish.
+        if (isReeMode && !isValidConversationId(contextId)) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: `Invalid or reserved conversation id: "${contextId}"`,
+          }));
+          return;
+        }
+
         if (msg.type === 'cancel') {
-          const runner = _activeRunners.get(contextId);
-          if (runner) {
-            runner.abort();
-            _activeRunners.delete(contextId);
-            ws.send(JSON.stringify({ type: 'cancelled' }));
+          // Publish a cancellation signal to the bus.
+          // The orchestrator detects action: 'cancel' and calls runner.abort().
+          if (_bus) {
+            _bus.publish(createIncomingMessage({
+              channelType: 'web',
+              peerId: sessionId,
+              conversationId: isReeMode ? contextId : undefined,
+              content: '',
+              raw: null,
+              action: 'cancel',
+            }));
           }
+          ws.send(JSON.stringify({ type: 'cancelled' }));
           return;
         }
 
         if (msg.type === 'message') {
-          // Check if a turn is already in-flight
-          if (_activeRunners.has(contextId)) {
-            ws.send(JSON.stringify({
-              type: 'error',
-              message: 'Agent is busy. Cancel the current turn first.',
-            }));
+          if (!_bus) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Server not fully initialized' }));
             return;
           }
-
-          const runId = nanoid();
-
-          // Get or create runner
-          let runner: AgentRunner;
-          try {
-            const { defaultConfig } = await import('./config.js');
-            const cfg = opts.config ?? defaultConfig;
-            runner = createRunner(
-              { id: contextId, workspacePath: join(reebotDir, 'contexts', contextId, 'workspace') },
-              cfg
-            );
-          } catch (err: any) {
-            ws.send(JSON.stringify({ type: 'error', message: String(err?.message ?? err) }));
-            return;
-          }
-
-          _activeRunners.set(contextId, runner);
-
-          try {
-            await runner.prompt(msg.content ?? '', (event) => {
-              ws.send(JSON.stringify(event));
-            });
-          } catch (err: any) {
-            if (err?.name !== 'AbortError') {
-              ws.send(JSON.stringify({ type: 'error', message: String(err?.message ?? err) }));
-            }
-          } finally {
-            _activeRunners.delete(contextId);
-          }
+          _bus.publish(createIncomingMessage({
+            channelType: 'web',
+            peerId: sessionId,
+            conversationId: isReeMode ? contextId : undefined,
+            content: msg.content ?? '',
+            raw: null,
+          }));
         }
       },
 
       onClose(_event, ws) {
-        const runner = _activeRunners.get(contextId);
-        if (runner) {
-          runner.abort();
-          _activeRunners.delete(contextId);
-        }
+        webAdapter.unregisterPeer(sessionId);
       },
     };
   }));
+
+  // ── Serve built WebChat SPA (catches all non-API routes) ────────────────
+  try {
+    const webchatDist = resolve(__dirname, '../webchat/dist');
+    app.use('*', serveStatic({ root: webchatDist, index: 'index.html' }));
+  } catch {
+    // webchat/dist may not exist in test environments — that's OK
+  }
 
   // Custom 404 handler
   app.notFound((c) => {
@@ -745,6 +868,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
 // ─── stopServer ──────────────────────────────────────────────────────────────
 
 export async function stopServer(): Promise<void> {
+  // Clear retention timer
+  if (_retentionTimer) {
+    clearInterval(_retentionTimer);
+    _retentionTimer = null;
+  }
+
   // Stop credential proxy
   if (_credProxy) {
     try { await new Promise<void>((r) => _credProxy!.close(() => r())); } catch { /* ignore */ }
@@ -773,12 +902,6 @@ export async function stopServer(): Promise<void> {
   }
   _channelAdapters.clear();
 
-  // Abort all active runners before closing
-  for (const runner of _activeRunners.values()) {
-    try { runner.abort(); } catch { /* ignore */ }
-  }
-  _activeRunners.clear();
-
   if (_server) {
     await new Promise<void>((resolve) => {
       _server!.close(() => resolve());
@@ -799,4 +922,37 @@ function _pinoLevelToNumber(level: string): number {
     case 'fatal': return 60;
     default:      return 30; // default to info
   }
+}
+
+function _pinoNumberToLevel(n: number): string {
+  if (n >= 60) return 'fatal';
+  if (n >= 50) return 'error';
+  if (n >= 40) return 'warn';
+  if (n >= 30) return 'info';
+  return 'debug';
+}
+
+/** Map a UI level string to the OTEL severity threshold (9/13/17/21). */
+function _levelToOtelSeverity(level: string): number {
+  switch (level.toLowerCase()) {
+    case 'warn':   return 13;
+    case 'error':  return 17;
+    case 'fatal':  return 21;
+    case 'info':
+    default:       return 9;
+  }
+}
+
+/** Map an OTEL severity number to a UI level string. */
+function _otelSeverityToLevelString(severity: number): string {
+  if (severity >= 21) return 'fatal';
+  if (severity >= 17) return 'error';
+  if (severity >= 13) return 'warn';
+  return 'info';
+}
+
+/** Parse a JSON payload column defensively (null/empty → {}). */
+function _safeParsePayload(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; }
 }
