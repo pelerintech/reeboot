@@ -3,14 +3,19 @@ FROM node:22-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies first (better layer caching)
+# Install main app dependencies first (better layer caching)
 # --legacy-peer-deps: TanStack AI packages have zod v4 peer dep conflicting with our zod v3
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps
 
-# Copy source and build
+# Install webchat dependencies separately (it's a separate Vite project)
+COPY webchat/package.json webchat/
+RUN cd webchat && npm ci
+
+# Copy source and build everything
 COPY . .
 RUN npm run build
+RUN cd webchat && npm run build
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 FROM node:22-slim
