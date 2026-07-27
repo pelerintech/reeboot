@@ -10,6 +10,7 @@ RUN npm ci --legacy-peer-deps
 
 # Install webchat dependencies separately (it's a separate Vite project)
 COPY webchat/package.json webchat/
+COPY webchat/package-lock.json webchat/
 RUN cd webchat && npm ci
 
 # Copy source and build everything
