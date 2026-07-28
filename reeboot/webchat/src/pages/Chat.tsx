@@ -3,22 +3,30 @@ import Message from '../components/Message';
 import ToolCall from '../components/ToolCall';
 import { useWebSocket, type WSEvent } from '../hooks/useWebSocket';
 
+// ─── Chronologically-ordered message parts ───────────────────────────────
+// Parts are appended in arrival order, so rendering order matches the actual
+// event sequence (text → tool → text → tool → ...). Mirrors the Vercel AI
+// SDK's `message.parts` pattern.
+
+type Part =
+  | { kind: 'text'; content: string }
+  | {
+      kind: 'tool';
+      toolCallId: string;
+      name: string;
+      args?: unknown;
+      result?: string;
+      isError?: boolean;
+      view?: { type: string; [key: string]: unknown };
+      state: 'running' | 'complete' | 'error';
+    };
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'error';
-  content: string;
+  parts: Part[];
   timestamp: number;
   streaming?: boolean;
-  toolCalls?: ToolCallData[];
-}
-
-interface ToolCallData {
-  toolCallId: string;
-  name: string;
-  args?: unknown;
-  result?: string;
-  isError?: boolean;
-  view?: { type: string; [key: string]: unknown };
 }
 
 export default function Chat() {
@@ -55,7 +63,7 @@ export default function Chat() {
           id: `hist-${i}`,
           role: (row.role === 'user' || row.role === 'assistant' || row.role === 'error')
             ? row.role : 'assistant',
-          content: row.content,
+          parts: [{ kind: 'text' as const, content: row.content }],
           timestamp: Date.parse(row.created_at) || Date.now(),
         })));
       })
@@ -66,7 +74,7 @@ export default function Chat() {
   const handleWSMessage = useCallback((event: WSEvent) => {
     switch (event.type) {
       case 'text_delta': {
-        const content = (event.delta as string) ?? '';
+        const delta = (event.delta as string) ?? '';
         let targetMsgId = currentAssistantIdRef.current;
 
         if (!targetMsgId) {
@@ -76,16 +84,24 @@ export default function Chat() {
           streamingMessageIdRef.current = id;
           setMessages((prev) => [
             ...prev,
-            { id, role: 'assistant', content, timestamp: Date.now(), streaming: true, toolCalls: [] },
+            { id, role: 'assistant', parts: [{ kind: 'text', content: delta }], timestamp: Date.now(), streaming: true },
           ]);
         } else {
-          // Update the current assistant message
+          // Update the current assistant message — append delta to last text part
           setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === targetMsgId
-                ? { ...msg, content: msg.content + content, streaming: true }
-                : msg
-            )
+            prev.map((msg) => {
+              if (msg.id !== targetMsgId) return msg;
+              const parts = [...msg.parts];
+              const last = parts[parts.length - 1];
+              if (last?.kind === 'text') {
+                // Append to existing text part (chronologically contiguous)
+                parts[parts.length - 1] = { kind: 'text', content: last.content + delta };
+              } else {
+                // New text segment after tool calls
+                parts.push({ kind: 'text', content: delta });
+              }
+              return { ...msg, parts, streaming: true };
+            })
           );
         }
         break;
@@ -105,7 +121,7 @@ export default function Chat() {
           if (!targetId) return prev;
           return prev.map((msg) =>
             msg.id === targetId
-              ? { ...msg, toolCalls: [...(msg.toolCalls ?? []), { toolCallId, name, args }] }
+              ? { ...msg, parts: [...msg.parts, { kind: 'tool', toolCallId, name, args, state: 'running' as const }] }
               : msg
           );
         });
@@ -140,13 +156,30 @@ export default function Chat() {
           if (!targetId) return prev;
           return prev.map((msg) => {
             if (msg.id !== targetId) return msg;
-            const existing = (msg.toolCalls ?? []).find((tc) => tc.toolCallId === toolCallId);
-            if (existing) {
-              // Update existing tool call from tool_call_start
-              return { ...msg, toolCalls: (msg.toolCalls ?? []).map((tc) => tc.toolCallId === toolCallId ? { ...tc, result, isError, view: toolView ?? tc.view } : tc) };
+            // Find matching tool part in the message's parts array
+            const toolIndex = msg.parts.findIndex(
+              (p) => p.kind === 'tool' && p.toolCallId === toolCallId
+            );
+            if (toolIndex !== -1) {
+              // Update existing tool part in-place
+              const parts = [...msg.parts];
+              parts[toolIndex] = {
+                kind: 'tool',
+                toolCallId,
+                name: (parts[toolIndex] as any).name ?? toolName,
+                args: (parts[toolIndex] as any).args,
+                result,
+                isError,
+                view: toolView,
+                state: isError ? 'error' as const : 'complete' as const,
+              };
+              return { ...msg, parts };
             }
-            // No matching tool_call_start — create entry from tool_call_end alone
-            return { ...msg, toolCalls: [...(msg.toolCalls ?? []), { toolCallId, name: toolName, result, isError, view: toolView }] };
+            // No matching tool_call_start — append entry from tool_call_end alone
+            return {
+              ...msg,
+              parts: [...msg.parts, { kind: 'tool', toolCallId, name: toolName, result, isError, view: toolView, state: isError ? 'error' as const : 'complete' as const }],
+            };
           });
         });
         break;
@@ -163,13 +196,13 @@ export default function Chat() {
       }
       case 'error': {
         const errorMsg = (event.message as string) ?? 'Unknown error';
-        setMessages((prev) => [...prev, { id: `error-${Date.now()}`, role: 'error', content: `⚠ ${errorMsg}`, timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: `error-${Date.now()}`, role: 'error', parts: [{ kind: 'text', content: `⚠ ${errorMsg}` }], timestamp: Date.now() }]);
         setIsProcessing(false);
         currentAssistantIdRef.current = null;
         break;
       }
       case 'cancelled': {
-        setMessages((prev) => [...prev, { id: `cancel-${Date.now()}`, role: 'error', content: '⚠ Turn cancelled.', timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: `cancel-${Date.now()}`, role: 'error', parts: [{ kind: 'text', content: '⚠ Turn cancelled.' }], timestamp: Date.now() }]);
         setIsProcessing(false);
         currentAssistantIdRef.current = null;
         break;
@@ -183,7 +216,7 @@ export default function Chat() {
     if (!input.trim() || isProcessing || status !== 'connected') return;
     // Clear streaming state on all messages before sending new message
     setMessages((prev) => prev.map((msg) => msg.streaming ? { ...msg, streaming: false } : msg));
-    setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: input.trim(), timestamp: Date.now() }]);
+    setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', parts: [{ kind: 'text', content: input.trim() }], timestamp: Date.now() }]);
     setInput('');
     setIsProcessing(true);
     // Clear the current assistant ref so the next turn creates a fresh message,
@@ -251,24 +284,33 @@ export default function Chat() {
                   </div>
                 )}
                 <div className="flex-1 text-left">
-                  <Message
-                    role={msg.role}
-                    content={msg.content}
-                    streaming={msg.streaming}
-                  />
-                  {msg.toolCalls?.map((tc) => (
-                    <div key={tc.toolCallId} className="mt-2">
-                      <ToolCall
-                        name={tc.name}
-                        args={tc.args}
-                        result={tc.result}
-                        isError={tc.isError}
-                        defaultExpanded={!!tc.result}
-                        view={tc.view}
-                        onAction={(action) => send({ type: 'action', ...action })}
-                      />
-                    </div>
-                  ))}
+                  {msg.parts.map((part, i) => {
+                    if (part.kind === 'text') {
+                      // Show streaming cursor only on the last text part when the message is still streaming
+                      const isLastTextPart = i === msg.parts.length - 1 || msg.parts.slice(i + 1).every(p => p.kind !== 'text');
+                      return (
+                        <Message
+                          key={`text-${i}`}
+                          role={msg.role}
+                          content={part.content}
+                          streaming={msg.streaming && isLastTextPart}
+                        />
+                      );
+                    }
+                    return (
+                      <div key={part.toolCallId} className="mt-2">
+                        <ToolCall
+                          name={part.name}
+                          args={part.args}
+                          result={part.result}
+                          isError={part.isError}
+                          defaultExpanded={part.state === 'complete' || part.state === 'error'}
+                          view={part.view}
+                          onAction={(action) => send({ type: 'action', ...action })}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
                 {msg.role === 'user' && (
                   <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">

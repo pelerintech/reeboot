@@ -356,4 +356,186 @@ describe('Chat message ordering across turns', () => {
     await waitFor(() => expect(screen.getByText('Resuming...')).toBeInTheDocument());
     expect(screen.getByText('Working on it')).toBeInTheDocument();
   });
+
+  describe('chronological parts ordering', () => {
+    it('renders text → tool → text in chronological order, not all text on top (P1)', async () => {
+      globalThis.fetch = mockFetchReturning([]) as any;
+      const { container } = render(<Chat />);
+      await waitFor(() => expect(screen.getByText('How can I help you?')).toBeInTheDocument());
+
+      // Simulate: text_delta → tool_call_start → tool_call_end → text_delta
+      await act(async () => {
+        simulateWSMessage({ type: 'text_delta', delta: 'Let me search...' });
+      });
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_start', toolCallId: 'tc-search', toolName: 'web_search', args: { q: 'SEO' } });
+      });
+      // Wait for tool to render
+      await waitFor(() => expect(screen.getByText('web_search')).toBeInTheDocument());
+
+      // Complete the tool
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_end', toolCallId: 'tc-search', toolName: 'web_search', result: 'SEO resources', isError: false });
+      });
+
+      // More text after tool
+      await act(async () => {
+        simulateWSMessage({ type: 'text_delta', delta: 'Here are the results.' });
+      });
+      simulateWSMessage({ type: 'message_end' });
+
+      // Wait for the post-tool text to render
+      await waitFor(() => expect(screen.getByText('Here are the results.')).toBeInTheDocument());
+
+      // Get the parts container of the assistant message
+      const partsContainer = container.querySelector('.flex-1.text-left')!;
+      expect(partsContainer).toBeTruthy();
+
+      const children = Array.from(partsContainer.children);
+
+      // Child 0: first text part (Message renders text in a prose div)
+      expect(children[0].textContent).toContain('Let me search...');
+
+      // Child 1: tool part (wrapped in a div with class "mt-2")
+      const toolWrapper = children[1];
+      expect(toolWrapper.className).toContain('mt-2');
+      expect(toolWrapper.textContent).toContain('web_search');
+
+      // Child 2: second text part (appears AFTER the tool, not before)
+      expect(children[2].textContent).toContain('Here are the results.');
+    });
+
+    it('renders multiple tools in start order, interleaved with text (P2)', async () => {
+      globalThis.fetch = mockFetchReturning([]) as any;
+      const { container } = render(<Chat />);
+      await waitFor(() => expect(screen.getByText('How can I help you?')).toBeInTheDocument());
+
+      // Simulate: text → tool1_start → tool2_start → text → tool1_end → tool2_end
+      await act(async () => {
+        simulateWSMessage({ type: 'text_delta', delta: 'Researching...' });
+      });
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_start', toolCallId: 'tc-1', toolName: 'fetch_data', args: {} });
+      });
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_start', toolCallId: 'tc-2', toolName: 'analyze', args: {} });
+      });
+      // Text between tool calls
+      await act(async () => {
+        simulateWSMessage({ type: 'text_delta', delta: 'Processing...' });
+      });
+      // Tool results arrive
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_end', toolCallId: 'tc-1', toolName: 'fetch_data', result: 'data', isError: false });
+      });
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_end', toolCallId: 'tc-2', toolName: 'analyze', result: 'analysis', isError: false });
+      });
+      simulateWSMessage({ type: 'message_end' });
+
+      await waitFor(() => expect(screen.getByText('Researching...')).toBeInTheDocument());
+
+      const partsContainer = container.querySelector('.flex-1.text-left')!;
+      const children = Array.from(partsContainer.children);
+
+      // Order: text, tool1, tool2, text
+      expect(children[0].textContent).toContain('Researching...');
+      expect(children[1].className).toContain('mt-2');
+      expect(children[1].textContent).toContain('fetch_data');
+      expect(children[2].className).toContain('mt-2');
+      expect(children[2].textContent).toContain('analyze');
+      expect(children[3].textContent).toContain('Processing...');
+    });
+
+    it('shows tool in "running" state before result arrives and "complete" after (P3)', async () => {
+      globalThis.fetch = mockFetchReturning([]) as any;
+      render(<Chat />);
+      await waitFor(() => expect(screen.getByText('How can I help you?')).toBeInTheDocument());
+
+      // Establish a message first so tool_call_start has somewhere to attach
+      await act(async () => {
+        simulateWSMessage({ type: 'text_delta', delta: 'Running' });
+      });
+      await waitFor(() => expect(screen.getByText('Running')).toBeInTheDocument());
+
+      // tool_call_start with no result yet — tool shows collapsed button
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_start', toolCallId: 'tc-run', toolName: 'long_task', args: {} });
+      });
+      await waitFor(() => expect(screen.getByText('long_task')).toBeInTheDocument());
+
+      // Result arrives
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_end', toolCallId: 'tc-run', toolName: 'long_task', result: 'Done!', isError: false });
+      });
+      simulateWSMessage({ type: 'message_end' });
+
+      // Tool is still present
+      expect(screen.getByText('long_task')).toBeInTheDocument();
+
+      // Click to expand — should now show result
+      await act(async () => {
+        fireEvent.click(screen.getByText('long_task'));
+      });
+      await waitFor(() => expect(screen.getByText('Done!')).toBeInTheDocument());
+    });
+
+    it('shows streaming cursor on the last text part only (P4)', async () => {
+      globalThis.fetch = mockFetchReturning([]) as any;
+      render(<Chat />);
+      await waitFor(() => expect(screen.getByText('How can I help you?')).toBeInTheDocument());
+
+      // Stream first text
+      simulateWSMessage({ type: 'text_delta', delta: 'First part. ' });
+      await waitFor(() => expect(screen.getByText('First part.')).toBeInTheDocument());
+
+      // Tool call — cursor should not appear on the tool
+      simulateWSMessage({ type: 'tool_call_start', toolCallId: 'tc', toolName: 'search', args: {} });
+      await waitFor(() => expect(screen.getByText('search')).toBeInTheDocument());
+
+      // Find the cursor indicator — it uses a ▋ character
+      // Before the second text part, there should be no cursor because the last part is a tool
+
+      // Now stream more text after tool
+      await act(async () => {
+        simulateWSMessage({ type: 'text_delta', delta: 'Second part.' });
+      });
+
+      // Cursor should now be near "Second part." text
+      // message_end clears all cursors
+      simulateWSMessage({ type: 'message_end' });
+
+      await waitFor(() => {
+        // After message_end, no streaming cursors should remain
+        expect(screen.queryByText('▋')).toBeNull();
+      });
+    });
+
+    it('handles tool_call_end without a prior tool_call_start by appending (P5)', async () => {
+      globalThis.fetch = mockFetchReturning([]) as any;
+      const { container } = render(<Chat />);
+      await waitFor(() => expect(screen.getByText('How can I help you?')).toBeInTheDocument());
+
+      // text_delta then tool_call_end (no preceding tool_call_start)
+      await act(async () => {
+        simulateWSMessage({ type: 'text_delta', delta: 'Done.' });
+      });
+      await act(async () => {
+        simulateWSMessage({ type: 'tool_call_end', toolCallId: 'tc-late', toolName: 'search', result: 'result', isError: false });
+      });
+      simulateWSMessage({ type: 'message_end' });
+
+      await waitFor(() => expect(screen.getByText('Done.')).toBeInTheDocument());
+
+      // Tool should still render
+      expect(screen.getByText('search')).toBeInTheDocument();
+
+      // Verify order: text then tool
+      const partsContainer = container.querySelector('.flex-1.text-left')!;
+      const children = Array.from(partsContainer.children);
+      expect(children[0].textContent).toContain('Done.');
+      expect(children[1].className).toContain('mt-2');
+      expect(children[1].textContent).toContain('search');
+    });
+  });
 });
