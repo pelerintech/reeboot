@@ -502,4 +502,36 @@ During evaluation gap remediation, `'plan'` was added to `VIEW_TYPES` in `src/st
 
 ### Pi-mode `setDefaultRunnerFactory` wiring in server.ts — 2027-07-27 (Request: a2a-protocol)
 
+### Views are produced by thin wrapper tools, not parsed from LLM text — 2026-07-28 (Request: interactive-tool-views)
+
+Structured views (data-table, data-chart, plan, form, confirm) are produced by dedicated tools that the LLM calls, not parsed from the LLM's free-text response. The LLM does the thinking and structuring; the tool just validates the input and returns it as a `view` on the tool result. The LLM-text-parsing approach (where a skill instructs the LLM to output raw JSON with a `view` field in its text response) was rejected because: (1) it requires fragile parsing of the assistant's markdown output, (2) it only works in webchat, and (3) it has no fallback for non-visual channels. The tool-result path already works end-to-end (proven by MCP data-table).
+
+### Passive vs Interactive views — 2026-07-28 (Request: interactive-tool-views)
+
+Views fall into two categories:
+- **Passive (display only)**: data-table, data-chart, plan — the tool returns the view, the turn completes, the UI renders it. No user response needed.
+- **Interactive (user response needed)**: form, confirm — the tool returns the view, the UI renders it, the user must respond, and the response must reach the agent.
+
+Interactive views use the A2UI-inspired "structured action message" pattern: the user's form submission or confirm click is sent as a structured WebSocket message (`{ type: "action", action: "form_submit", fields: {...} }`), which the server injects into the conversation as a new user message. The LLM sees the structured data and continues. This avoids the complexity of pausing and resuming tool execution across network roundtrips. The alternative (tool-level pause/resume via ExtensionUIContext) was rejected because it requires long-lived tool state across channels and doesn't fit the existing streaming architecture.
+
+### Channel-aware view fallback via `content` field — 2026-07-28 (Request: interactive-tool-views)
+
+All tools that return a `view` MUST also return a `content` text field. The `content` is the universal fallback for non-webchat channels (WhatsApp, Signal, Telegram, CLI). Each channel adapter interprets the view according to its capabilities:
+- Webchat: renders the full interactive widget + captures structured response
+- WhatsApp: can use interactive message buttons for confirm, text fallback for forms
+- Signal/Telegram: renders as text with reply instructions
+- CLI: uses the existing Inquirer-based ExtensionUIContext primitives
+
+The channel adapter is responsible for mapping the view type to the appropriate channel-specific interaction pattern. No view type assumes a particular rendering capability exists on every channel.
+
+### Multi-step dynamic flows remain conversational — 2026-07-28 (Request: interactive-tool-views)
+
+Multi-step, branching interactions (e.g., "create a company" where each answer changes what to ask next) are handled by the LLM talking naturally to the user. Forms are for collecting multiple fields at once (efficiency). Confirms are for yes/no safety gates. The LLM does NOT need special infrastructure for dynamic branching — it already handles this through ordinary conversation. A multi-field form is appropriate when the LLM knows exactly what fields it needs upfront and wants to reduce back-and-forth.
+
+### Proactive + slash-command triggers — 2026-07-28 (Request: interactive-tool-views)
+
+The LLM should call view-producing tools both:
+- **Reactively** via slash commands (`/visual-plan`, `/visual-recap`) — skill files instruct the LLM to call the tool when it sees these commands
+- **Proactively** via natural language understanding — tool descriptions and prompt guidelines teach the LLM when to call `render_plan`, `render_chart`, `render_form`, or `render_confirm` based on user intent
+
 Post-evaluation gap remediation revealed that `server.ts` only called `setDefaultRunnerFactory()` in the ree-mode branch, leaving the pi-mode branch (default, config.sdk === 'pi') without a registered runner factory. Same-process `delegate({task})` calls in pi mode would fail in production with "Sub-agent runner is not available." Fixed by adding an identical `setDefaultRunnerFactory` call in the pi-mode branch, creating runners with `__a2a__${randomUUID()}` context IDs and their own workspace at `contexts/__a2a__/workspace`. The mechanism was already correct — `createRunner({ id, workspacePath }, appConfig)` creates a `PiAgentRunner` that inherits the main agent's model config. The only gap was the missing registration call. See evaluation entry `2027-07-27 14:25` and `server.ts` lines 270-273 for the fix.
