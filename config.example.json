@@ -113,6 +113,21 @@
     "ephemeral_ttl_minutes": 60,
     "catalog_path": ""
   },
+  "$comment_a2a": "A2A (Agent-to-Agent) protocol — cross-process agent delegation.",
+  "a2a": {
+    "$comment_a2a_peers": "Remote agent peers. Same pattern as mcp.servers.",
+    "peers": [
+      {
+        "name": "research-agent",
+        "url": "http://localhost:3001",
+        "apiKey": ""
+      }
+    ],
+    "$comment_a2a_server": "A2A server settings for incoming requests.",
+    "server": {
+      "apiKey": ""
+    }
+  },
   "$comment_mcp": "MCP (Model Context Protocol) servers.",
   "mcp": {
     "servers": []

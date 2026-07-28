@@ -12,11 +12,13 @@ import { createNodeWebSocket } from '@hono/node-ws';
 import type { ServerType } from '@hono/node-server';
 import { startHeartbeat } from './scheduler/heartbeat.js';
 import { readFileSync, mkdirSync } from 'fs';
+import { randomUUID } from 'crypto';
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import type Database from 'better-sqlite3';
 import type { AgentRunner } from './agent-runner/index.js';
 import { createRunner } from './agent-runner/index.js';
+import { setDefaultRunnerFactory } from './extensions/delegate.js';
 import {
   listContexts,
   createContext,
@@ -222,6 +224,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           { id, workspacePath: sharedWorkspacePath },
           appConfig
         );
+        // Register the runner factory for the delegate tool's same-process sub-agents.
+        // Sub-agents get a unique context ID prefixed with __a2a__ (same pattern as
+        // the A2A server endpoint) and share the same workspace.
+        setDefaultRunnerFactory((_task: string): AgentRunner => createRunner(
+          { id: `__a2a__${randomUUID()}`, workspacePath: sharedWorkspacePath },
+          appConfig
+        ));
         _orchestrator = new OrchestratorClass(
           appConfig as any,
           _bus,
@@ -255,6 +264,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
             )
           );
         }
+        // Register the runner factory for the delegate tool's same-process sub-agents.
+        // Sub-agents get a unique context ID prefixed with __a2a__ (same pattern as
+        // the A2A server endpoint and the ree-mode branch) with their own workspace.
+        setDefaultRunnerFactory((_task: string): AgentRunner => createRunner(
+          { id: `__a2a__${randomUUID()}`, workspacePath: join(reebotDir, 'contexts', '__a2a__', 'workspace') },
+          appConfig
+        ));
         _orchestrator = new OrchestratorClass(
           appConfig as any,
           _bus,
@@ -835,6 +851,116 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
       },
     };
   }));
+
+  // ── A2A: Agent-to-Agent protocol ─────────────────────────────────────────
+  // Peer discovery — returns server metadata
+  app.get('/a2a/capabilities', async (c) => {
+    // API key check (optional)
+    const a2aConfig = (opts.config as any)?.a2a ?? {};
+    const serverKey = a2aConfig.server?.apiKey;
+    if (serverKey) {
+      const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '');
+      if (auth !== serverKey) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+    }
+
+    // Collect tool names from the first available runner
+    const toolNames: string[] = [];
+    if (_orchestrator) {
+      for (const runner of _orchestrator.runners.values()) {
+        try {
+          const tools = await (runner as any).getAllTools?.() ?? [];
+          toolNames.push(...tools.map((t: any) => t.name));
+        } catch { /* skip */ }
+      }
+    }
+
+    return c.json({
+      name: 'reeboot',
+      version: '2.6.0',
+      tools: [...new Set(toolNames)],
+      protocols: ['a2a-v1'],
+    });
+  });
+
+  // Task invocation — receives a task, runs it, returns the result
+  app.post('/a2a/invoke', async (c) => {
+    // API key check (optional)
+    const a2aConfig = (opts.config as any)?.a2a ?? {};
+    const serverKey = a2aConfig.server?.apiKey;
+    if (serverKey) {
+      const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '');
+      if (auth !== serverKey) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+    }
+
+    let body: any;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    const task: string = body.task ?? '';
+    if (!task.trim()) {
+      return c.json({ error: 'Missing required field: task' }, 400);
+    }
+
+    const timeoutMs = (body.timeout ?? 60) * 1000;
+    const id = `a2a-${randomUUID()}`;
+
+    try {
+      const workspacePath = join(reebotDir, 'contexts', '__a2a__', id, 'workspace');
+      mkdirSync(workspacePath, { recursive: true });
+
+      const runner = createRunner(
+        { id, workspacePath },
+        { ...(opts.config as any), sdk: (opts.config as any)?.sdk ?? 'pi' }
+      );
+
+      if (!runner) {
+        return c.json({ error: 'Failed to create runner' }, 500);
+      }
+
+      const completionPromise = new Promise<string>((resolve, reject) => {
+        const segments: string[] = [];
+        const timer = setTimeout(() => {
+          runner.abort();
+          reject(new Error('Timed out'));
+        }, timeoutMs);
+
+        runner.prompt(task, (event) => {
+          if (event.type === 'text_delta') {
+            segments.push(event.delta);
+          } else if (event.type === 'message_end') {
+            clearTimeout(timer);
+            resolve(segments.join(''));
+          } else if (event.type === 'error') {
+            clearTimeout(timer);
+            reject(new Error(event.message));
+          }
+        }).catch((err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
+
+      const result = await completionPromise;
+
+      // Cleanup
+      runner.dispose().catch(() => {});
+
+      return c.json({ status: 'completed', id, result });
+    } catch (err: any) {
+      return c.json({
+        status: 'failed',
+        id,
+        error: err?.message ?? String(err),
+      }, 500);
+    }
+  });
 
   // ── Serve built WebChat SPA (catches all non-API routes) ────────────────
   try {

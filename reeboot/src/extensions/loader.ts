@@ -58,6 +58,7 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
   const knowledgeEnabled     = (config as any).knowledge?.enabled ?? false;
   const skillManagerEnabled  = (core as any).skill_manager ?? true;
   const mcpEnabled           = (core as any).mcp ?? true;
+  const delegateEnabled      = (core as any).delegate ?? true;
   const injectionGuardEnabled = (core as any).injection_guard ?? true;
 
   const factories: ExtensionFactory[] = [];
@@ -185,6 +186,19 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
     factories.push(withAdapter(async (api) => {
       const mod = await importExt('injection-guard');
       if (mod?.default) await (mod.default as any)(api, config);
+    }));
+  }
+
+  // Delegate tool — SDK-agnostic sub-agent delegation (feature flag).
+  if (delegateEnabled) {
+    factories.push(withAdapter(async (api) => {
+      const mod = await importExt('delegate');
+      if (mod?.delegateExtension) {
+        // Pass runner factory and A2A client through config
+        mod.delegateExtension(api, {});
+      } else if (mod?.default) {
+        (mod.default as any)(api, {});
+      }
     }));
   }
 
@@ -348,7 +362,21 @@ export function getReeFactories(config: Config): import('./extension-api.js').Ex
   // 7. trust-enforcer — makeTrustEnforcerExtension(api, config) — enforces trust policy per tool
   factories.push(async (api) => {
     const mod = await importExt('trust-enforcer');
-    if (mod?.makeTrustEnforcerExtension) mod.makeTrustEnforcerExtension(api, config);
+    if (mod?.makeTrustEnforcerExtension) {
+      mod.makeTrustEnforcerExtension(api, config);
+    } else if (mod?.default) {
+      await (mod.default as any)(api, config);
+    }
+  });
+
+  // 8. delegate — delegateExtension(api, opts) — sub-agent delegation (ree mode)
+  factories.push(async (api) => {
+    const mod = await importExt('delegate');
+    if (mod?.delegateExtension) {
+      mod.delegateExtension(api, {});
+    } else if (mod?.default) {
+      (mod.default as any)(api, {});
+    }
   });
 
   return factories;

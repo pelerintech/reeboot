@@ -293,8 +293,11 @@ Usage:
           description: t.description ?? '',
         }));
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(tools, null, 2) }],
+          content: [{ type: 'text' as const, text: `Found ${tools.length} tools on "${params.server}"` }],
           details: null,
+          view: tools.length > 0
+            ? { type: 'data-table' as const, columns: ['Name', 'Description'], rows: tools }
+            : undefined,
         };
       }
 
@@ -314,9 +317,34 @@ Usage:
           const text = content
             .map((c: any) => (c.type === 'text' ? c.text : JSON.stringify(c)))
             .join('\n');
+
+          // Try to parse result as structured data for a table view
+          let tableView: { columns: string[]; rows: Record<string, unknown>[] } | undefined;
+          try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && parsed[0] !== null) {
+              const columns = Object.keys(parsed[0]);
+              tableView = {
+                columns,
+                rows: parsed.map((item: any) => {
+                  const row: Record<string, unknown> = {};
+                  for (const col of columns) {
+                    row[col] = typeof item[col] === 'object' && item[col] !== null ? JSON.stringify(item[col]) : item[col];
+                  }
+                  return row;
+                }),
+              };
+            }
+          } catch {
+            // Not parseable as structured JSON — fall back to text only
+          }
+
           return {
             content: [{ type: 'text' as const, text }],
             details: null,
+            view: tableView
+              ? { type: 'data-table' as const, columns: tableView.columns, rows: tableView.rows }
+              : undefined,
           };
         } catch (err: any) {
           const rawMessage = err?.message ?? String(err);

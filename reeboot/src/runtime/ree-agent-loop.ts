@@ -60,6 +60,8 @@ export function toTanStackTool(
       : undefined;
 
     const result = await reeTool.execute(toolCallId, args, signal, onUpdate, ctx);
+    // Cast to access optional view field (not in TanStack's ToolResult type)
+    const resultExt = result as typeof result & { view?: Record<string, unknown> };
 
     // When the tool signals an error, throw so TanStack marks the
     // result as 'output-error' (chunk.state === 'output-error').
@@ -69,10 +71,18 @@ export function toTanStackTool(
       );
     }
 
-    // TanStack expects the tool to return content directly
-    return typeof result.content === 'string'
+    // TanStack expects the tool to return content directly.
+    // If the tool also returned a structured view hint, wrap so it
+    // survives TanStack's serialization and can be extracted later.
+    const contentStr = typeof result.content === 'string'
       ? result.content
       : JSON.stringify(result.content);
+
+    if (resultExt.view) {
+      return JSON.stringify({ __r: contentStr, __v: resultExt.view });
+    }
+
+    return contentStr;
   });
 }
 
@@ -234,7 +244,7 @@ export async function runReeAgentLoop(
 
         case 'TOOL_CALL_RESULT': {
           const toolCallId = (chunk as any).toolCallId;
-          const toolContent = (chunk as any).content;
+          const rawContent = (chunk as any).content;
           const entry = toolCalls.get(toolCallId);
 
           // Derive isError from TanStack's chunk state (set when tool throws)
@@ -247,6 +257,21 @@ export async function runReeAgentLoop(
               parsedArgs = entry.args ? JSON.parse(entry.args) : {};
             } catch {
               parsedArgs = { _raw: entry.args };
+            }
+          }
+
+          // Unwrap structured view metadata if present
+          let toolContent = rawContent;
+          let toolView: unknown = undefined;
+          if (typeof rawContent === 'string') {
+            try {
+              const parsed = JSON.parse(rawContent);
+              if (parsed && typeof parsed === 'object' && '__r' in parsed) {
+                toolContent = parsed.__r;
+                toolView = parsed.__v;
+              }
+            } catch {
+              // Not our wrapper — use as-is
             }
           }
 
@@ -265,6 +290,7 @@ export async function runReeAgentLoop(
             toolCallId,
             toolName: entry?.toolName ?? 'unknown',
             result: toolContent,
+            view: toolView as Record<string, unknown> | undefined,
             isError,
           });
 

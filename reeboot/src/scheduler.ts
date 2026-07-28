@@ -16,6 +16,7 @@ import { detectScheduleType, computeNextRun } from './scheduler/parse.js';
 import { getLogger } from './observability/logger.js';
 import { getLatestRateLimit } from './extensions/observability.js';
 import { emitEvent } from './observability/events.js';
+import type { ToolView } from './structured-views.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ export interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
   details: Record<string, unknown>;
   isError?: boolean;
+  /** Optional structured view hint for rich WebChat rendering */
+  view?: ToolView;
 }
 
 interface TaskRow {

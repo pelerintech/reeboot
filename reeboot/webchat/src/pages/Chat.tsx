@@ -18,6 +18,7 @@ interface ToolCallData {
   args?: unknown;
   result?: string;
   isError?: boolean;
+  view?: { type: string; [key: string]: unknown };
 }
 
 export default function Chat() {
@@ -127,6 +128,7 @@ export default function Chat() {
         }
         const isError = (event.isError as boolean) ?? false;
         const toolName = (event.toolName as string) ?? 'unknown';
+        const toolView = event.view as { type: string; [key: string]: unknown } | undefined;
         setMessages((prev) => {
           // Find target: current assistant message, or fall back to last assistant message
           let targetId = currentAssistantIdRef.current;
@@ -141,10 +143,10 @@ export default function Chat() {
             const existing = (msg.toolCalls ?? []).find((tc) => tc.toolCallId === toolCallId);
             if (existing) {
               // Update existing tool call from tool_call_start
-              return { ...msg, toolCalls: (msg.toolCalls ?? []).map((tc) => tc.toolCallId === toolCallId ? { ...tc, result, isError } : tc) };
+              return { ...msg, toolCalls: (msg.toolCalls ?? []).map((tc) => tc.toolCallId === toolCallId ? { ...tc, result, isError, view: toolView ?? tc.view } : tc) };
             }
             // No matching tool_call_start — create entry from tool_call_end alone
-            return { ...msg, toolCalls: [...(msg.toolCalls ?? []), { toolCallId, name: toolName, result, isError }] };
+            return { ...msg, toolCalls: [...(msg.toolCalls ?? []), { toolCallId, name: toolName, result, isError, view: toolView }] };
           });
         });
         break;
@@ -184,6 +186,9 @@ export default function Chat() {
     setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: input.trim(), timestamp: Date.now() }]);
     setInput('');
     setIsProcessing(true);
+    // Clear the current assistant ref so the next turn creates a fresh message,
+    // rather than appending streaming events to the previous turn's message.
+    currentAssistantIdRef.current = null;
     send({ type: 'message', content: input.trim() });
   }, [input, isProcessing, status, send]);
 
@@ -245,15 +250,7 @@ export default function Chat() {
                     </svg>
                   </div>
                 )}
-                {msg.role === 'user' && (
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
-                  </div>
-                )}
-                <div className={`flex-1 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
+                <div className="flex-1 text-left">
                   <Message
                     role={msg.role}
                     content={msg.content}
@@ -267,10 +264,19 @@ export default function Chat() {
                         result={tc.result}
                         isError={tc.isError}
                         defaultExpanded={!!tc.result}
+                        view={tc.view}
                       />
                     </div>
                   ))}
                 </div>
+                {msg.role === 'user' && (
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </div>
+                )}
               </div>
             ))
           )}

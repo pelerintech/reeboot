@@ -1,4 +1,12 @@
 import { useState } from 'react';
+import DataTable from './DataTable';
+import DataChart from './DataChart';
+import PlanView from './PlanView';
+
+interface ViewData {
+  type: string;
+  [key: string]: unknown;
+}
 
 interface ToolCallProps {
   name: string;
@@ -6,6 +14,7 @@ interface ToolCallProps {
   result?: string;
   isError?: boolean;
   defaultExpanded?: boolean;
+  view?: ViewData;
 }
 
 export default function ToolCall({
@@ -14,9 +23,38 @@ export default function ToolCall({
   result,
   isError = false,
   defaultExpanded = false,
+  view,
 }: ToolCallProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
+  // If a structured view is provided and recognized, render the widget directly
+  // (not inside the collapsible card)
+  if (view?.type === 'data-table' && Array.isArray(view.columns) && Array.isArray(view.rows)) {
+    return (
+      <DataTable
+        columns={view.columns as string[]}
+        rows={view.rows as Record<string, unknown>[]}
+      />
+    );
+  }
+
+  if (view?.type === 'data-chart' && Array.isArray(view.labels) && Array.isArray(view.values)) {
+    return (
+      <DataChart
+        labels={view.labels as string[]}
+        values={view.values as number[]}
+        kind={(view.kind as 'bar' | 'line') ?? 'bar'}
+      />
+    );
+  }
+
+  if (view?.type === 'plan' && Array.isArray(view.blocks)) {
+    return (
+      <PlanView blocks={view.blocks as any[]} />
+    );
+  }
+
+  // Fall back to collapsible JSON card for no view or unknown view type
   const argsPreview = (() => {
     if (!args) return undefined;
     if (typeof args === 'string') {

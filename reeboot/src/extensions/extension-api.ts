@@ -13,6 +13,8 @@
 
 // ─── Tool Types ──────────────────────────────────────────────────────────────
 
+import type { ToolView } from '../structured-views.js';
+
 /** Minimal tool definition — the subset all extensions need to register tools. */
 export interface ToolDefinition<TParams = any, TDetails = unknown> {
   /** Tool name (used in LLM tool calls) */
@@ -50,6 +52,8 @@ export interface ToolResult<TDetails = unknown> {
   content: string | Array<{ type: string; text?: string; image?: { data: string; mimeType: string } }>;
   isError?: boolean;
   details?: TDetails;
+  /** Optional structured view hint for rich WebChat rendering */
+  view?: ToolView;
 }
 
 // ─── Extension Context ───────────────────────────────────────────────────────

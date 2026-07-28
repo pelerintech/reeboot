@@ -167,11 +167,17 @@ export class PiAgentRunner implements AgentRunner {
             }
           }
 
+          // Extract optional view hint from tool result
+          const toolView = toolResult && typeof toolResult === 'object' && 'view' in (toolResult as Record<string, unknown>)
+            ? (toolResult as Record<string, unknown>).view as Record<string, unknown>
+            : undefined;
+
           onEvent({
             type: 'tool_call_end',
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             result: toolResult,
+            view: toolView,
             isError: event.isError,
           });
         } else if (event.type === 'agent_end') {

@@ -66,6 +66,25 @@ export type McpPermissions = z.infer<typeof McpPermissionsSchema>;
 export type McpServerConfig = z.infer<typeof McpServerSchema>;
 export type McpConfig = z.infer<typeof McpConfigSchema>;
 
+const A2APeerSchema = z.object({
+  name:   z.string().min(1),
+  url:    z.string().url(),
+  apiKey: z.string().optional(),
+});
+
+const A2AServerSchema = z.object({
+  apiKey: z.string().optional(),
+});
+
+const A2AConfigSchema = z.object({
+  peers:  z.array(A2APeerSchema).default([]),
+  server: A2AServerSchema.default({}),
+});
+
+export type A2APeer = z.infer<typeof A2APeerSchema>;
+export type A2AServer = z.infer<typeof A2AServerSchema>;
+export type A2AConfig = z.infer<typeof A2AConfigSchema>;
+
 const ExtensionsConfigSchema = z.object({
   core: ExtensionsCoreConfigSchema.default({}),
 });
@@ -313,6 +332,7 @@ export const ConfigSchema = z.object({
   heartbeat: HeartbeatConfigSchema.default({}),
   skills: SkillsConfigSchema.default({}),
   mcp: McpConfigSchema.default({}),
+  a2a: A2AConfigSchema.default({}),
   permissions: PermissionsConfigSchema.default({}),
   security: SecurityConfigSchema.default({}),
   contexts: z.array(ContextConfigEntrySchema).default([]),

@@ -39,6 +39,22 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Delegate tool uses lazy dependency resolution + global runner factory setter — 2025-07-26 (Request: a2a-protocol)
+
+During execution, the evaluation found that the delegate extension was loaded with empty options `{}`
+from `loader.ts`, leaving `runnerFactory`, `a2aClient`, and `a2aPeers` all undefined. The original
+approach required all dependencies to be injected at registration time, but the loader had no access
+to the SDK-specific runner factory (which lives in `server.ts`/`agent-runner/index.ts`) and no
+pass-through of the A2A config. Fixed with a hybrid approach: `setDefaultRunnerFactory()` is a
+module-level setter called by `server.ts` at startup with a factory that creates `PiAgentRunner`
+or `ReeAgentRunner`; A2A peers are resolved from `ctx.config.a2a.peers` at execution time via
+`resolveA2APeersFromConfig()`; the A2A HTTP client is lazy-imported from `a2a-client.js` to avoid
+circular dependencies. This keeps the delegate tool SDK-agnostic (no direct import of runner
+implementations) while making it work in production without pre-registration. Explicit `opts`
+still win when provided (for testing and edge cases).
+
+See request `a2a-protocol` artifacts for full context.
+
 ### Observability audit view is driven by the `events` table, not `operational_logs` — 2026-07-17 (Request: observability-audit-view)
 
 The operator-facing observability page (a window into what the agent did over time and why tasks
@@ -463,3 +479,27 @@ Should reeboot ever go multi-tenant, the desired implementation is a database PE
 ### DB log persistence reverts to warn+ — observability audit moves to the `events` table — 2026-07-17 (Request: observability-audit-view)
 
 The `web-api-readback` request lowered `operational_logs` DB persistence from warn+ to info+ (`logger.ts` `< 30` → `< 40` gate, stream `level: 'warn'` → `'info'`) to make a raw-log observability page "substantive". That was the wrong substrate: raw log lines are low-signal for auditing agent behaviour and info-level DB persistence floods the store (millions of rows under support fan-out), obscuring the signal that matters. Reverted: `createDbStream` again gates at `level < 40` and the stream entry is `level: 'warn'`, realigning the code with its own JSDoc ("warn+ records, level >= 40"). stdout, file, and SSE sinks are unchanged — operator debuggability is preserved via stdout/file; only DB persistence narrows. The operator-facing audit view is repointed at the curated `events` table (typed domain events with OTEL severity, `trace_id`/`context_id` correlation) surfaced as a turn-grouped rollup via `GET /api/events`. `tests/observability/info-log-persistence.test.ts` (the web-api-readback spec test) was removed; its S2/S3 coverage is now in `warn-only-log-persistence.test.ts`, and `operational-logs-persist.test.ts`'s info assertion was flipped to assert non-persistence. See the `observability-audit-view` request for full context.
+
+### Structured tool views — view field on tool results propagates through both SDK paths — 2026-07-26 (Request: structured-tool-views)
+
+### PlanView component renders structured plan blocks via the view system — 2026-07-26 (Request: visual-planning)
+
+The `PlanView` React component renders 5 block types (diagram, wireframe, annotated-code, decision, file-tree) as structured inline content, using SVG for diagrams and styled cards for other types. It is registered in `ToolCall.tsx` as a handler for `view.type === 'plan'`, the same pattern as `DataTable` and `DataChart`. The skill file at `reeboot/skills/visual-planning.md` instructs the agent on the structured output format for `/visual-plan` and `/visual-recap` commands. No separate rendering engine was added — the LLM outputs structured data and `PlanView` renders it inline. See request artifacts for full context.
+
+Tools registered via `ExtensionAPI.registerTool()` can now return an optional `view` field on their result (`ToolResult.view`). The field propagates through both SDK paths: (1) the ree path wraps `view` in the TanStack tool server handler return and unwraps it in `TOOL_CALL_RESULT`, and (2) the pi path reads `view` from the tool's return in `tool_execution_end`. The WS broadcast flows automatically because `JSON.stringify(event)` includes all own properties. The WebChat `ToolCall` component switches on `view.type` and renders `DataTable`, `DataChart`, or falls back to the existing JSON card for unrecognized/absent views. The `mcp` proxy tool was equipped as the first consumer: `action: "list"` returns a data-table view, and `action: "call"` attempts structured JSON parsing for table rendering. The approach (structured result types with view hint, not a full `defineAction` abstraction) was chosen over Agent-Native's pattern because reeboot's pi/ree runtimes are sufficient and no new abstraction layer was needed. See request artifacts for full context.
+
+### Delegate tool + A2A protocol — 2026-07-26 (Request: a2a-protocol)
+
+The delegate extension at `reeboot/src/extensions/delegate.ts` registers a `delegate` tool via `ExtensionAPI.registerTool()` that accepts `{ task, peer?, timeout? }`. Same-process delegation uses a `runnerFactory` (SDK-agnostic via `AgentRunner` interface). Cross-process delegation uses an A2A client at `reeboot/src/extensions/a2a-client.ts` that sends HTTP POST to configured peers. A2A server endpoints (`GET /a2a/capabilities`, `POST /a2a/invoke`) are mounted on the existing Hono server. Peers are configured in `config.json` under `a2a.peers`. Both endpoints support optional API key auth via `Bearer` token. Timeout is enforced via `Promise.race` with `AbortController`. See request artifacts for full context.
+
+### PlanView diagram uses SVG marker for directed edges, FileTreeView builds nested tree from flat paths — 2026-07-27 (Request: visual-planning)
+
+During evaluation gap remediation, two rendering fidelity issues in `PlanView.tsx` were fixed. (1) Diagram edges were undirected plain `<line>` elements; fixed by adding an SVG `<defs><marker>` arrowhead definition and applying `markerEnd="url(#arrowhead)"` to each edge line. (2) FileTreeView rendered paths as a flat list (`📄 path` per entry); fixed by building a nested `TreeNode` structure via `buildTree()` that splits paths on `/`, aggregates shared directory prefixes into folder nodes (`📁`), and renders indented with file nodes (`📄`) at leaves. The `buildRecapView` helper in `tests/visual-planning/helpers.ts` was also extended with `extractBeforeAfterFiles()` that parses RED steps ("before" — files that didn't exist) and ACTION steps ("after" — files created/modified) from `tasks.md`, outputting two `file-tree` blocks titled "Before" and "After" — satisfying the brief's "before/after visual summary" requirement. The E2E recap test was strengthened to assert on both `Before` and `After` file-tree blocks. See request `visual-planning` artifacts and `evaluations.md` for full context.
+
+### `'plan'` added as a first-class ToolView discriminant — 2026-07-27 (Request: visual-planning)
+
+During evaluation gap remediation, `'plan'` was added to `VIEW_TYPES` in `src/structured-views.ts` and a `PlanBlock` interface + `{ type: 'plan'; blocks: PlanBlock[] }` variant was added to the `ToolView` discriminated union. Previously, `'plan'` was only handled as a one-off `if` branch in `ToolCall.tsx` — it was NOT a registered view type, violating the brief's stated dependency as "a downstream consumer of the structured tool views system." The `PlanBlock` interface is generic (`{ type: string; title?: string; [key: string]: unknown }`) to avoid coupling the type system to the full PlanBlock hierarchy defined in `PlanView.tsx.` The rendering dispatch in `ToolCall.tsx` remains a hard-coded `if` branch (consistent with how `data-table`, `data-chart`, etc. are dispatched) but the type system now recognizes `'plan'` as a valid discriminant, and `extractViewFromToolResult` accepts it transitively. The E2E tests in `tests/visual-planning/` were also upgraded from hard-coded fixture literals to a `buildPlanView`/`buildRecapView` helper that reads real reespec fixture files — proving the data flow from filesystem to structured output. See request `visual-planning` for full context.
+
+### Pi-mode `setDefaultRunnerFactory` wiring in server.ts — 2027-07-27 (Request: a2a-protocol)
+
+Post-evaluation gap remediation revealed that `server.ts` only called `setDefaultRunnerFactory()` in the ree-mode branch, leaving the pi-mode branch (default, config.sdk === 'pi') without a registered runner factory. Same-process `delegate({task})` calls in pi mode would fail in production with "Sub-agent runner is not available." Fixed by adding an identical `setDefaultRunnerFactory` call in the pi-mode branch, creating runners with `__a2a__${randomUUID()}` context IDs and their own workspace at `contexts/__a2a__/workspace`. The mechanism was already correct — `createRunner({ id, workspacePath }, appConfig)` creates a `PiAgentRunner` that inherits the main agent's model config. The only gap was the missing registration call. See evaluation entry `2027-07-27 14:25` and `server.ts` lines 270-273 for the fix.
