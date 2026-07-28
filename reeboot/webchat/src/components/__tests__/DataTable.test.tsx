@@ -36,7 +36,7 @@ describe('DataTable', () => {
   });
 
   it('renders empty columns gracefully', () => {
-    const { container } = render(<DataTable columns={[]} rows={[]} />);
+    render(<DataTable columns={[]} rows={[]} />);
     expect(screen.getByText('No columns')).toBeInTheDocument();
   });
 });
