@@ -5,13 +5,15 @@ WORKDIR /app
 
 # Install main app dependencies first (better layer caching)
 # --legacy-peer-deps: TanStack AI packages have zod v4 peer dep conflicting with our zod v3
+# ONNXRUNTIME_NODE_INSTALL=skip: onnxruntime-node downloads hundreds of MB of CUDA libs on Linux
+# which we don't need — this is a chat server, not a GPU inference pipeline
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm ci --legacy-peer-deps
 
 # Install webchat dependencies separately (it's a separate Vite project)
 COPY webchat/package.json webchat/
 COPY webchat/package-lock.json webchat/
-RUN cd webchat && npm ci
+RUN cd webchat && ONNXRUNTIME_NODE_INSTALL=skip npm ci
 
 # Copy source and build everything
 COPY . .
@@ -43,7 +45,8 @@ COPY --from=builder --chown=reeboot:reeboot /app/package.json ./package.json
 COPY --from=builder --chown=reeboot:reeboot /app/package-lock.json ./package-lock.json
 
 # Install production dependencies only
-RUN npm ci --omit=dev --legacy-peer-deps
+# ONNXRUNTIME_NODE_INSTALL=skip: skip CUDA binaries for onnxruntime-node (not needed)
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm ci --omit=dev --legacy-peer-deps
 
 # Make entrypoint executable
 RUN chmod +x ./container/entrypoint.sh
