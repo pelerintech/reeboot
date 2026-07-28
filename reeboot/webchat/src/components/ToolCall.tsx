@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useId } from 'react';
 import DataTable from './DataTable';
 import DataChart from './DataChart';
 import PlanView from './PlanView';
+import ConfirmWidget from './ConfirmWidget';
+import FormWidget from './FormWidget';
 
 interface ViewData {
   type: string;
@@ -15,6 +17,7 @@ interface ToolCallProps {
   isError?: boolean;
   defaultExpanded?: boolean;
   view?: ViewData;
+  onAction?: (action: { action: string; [key: string]: unknown }) => void;
 }
 
 export default function ToolCall({
@@ -24,7 +27,10 @@ export default function ToolCall({
   isError = false,
   defaultExpanded = false,
   view,
+  onAction,
 }: ToolCallProps) {
+  const previewId = useId();
+  const surfaceId = view && (view.type === 'confirm' || view.type === 'form') ? `${view.type}-${previewId}` : undefined;
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   // If a structured view is provided and recognized, render the widget directly
@@ -51,6 +57,27 @@ export default function ToolCall({
   if (view?.type === 'plan' && Array.isArray(view.blocks)) {
     return (
       <PlanView blocks={view.blocks as any[]} />
+    );
+  }
+
+  if (view?.type === 'confirm' && typeof view.title === 'string' && typeof view.message === 'string') {
+    return (
+      <ConfirmWidget
+        title={view.title as string}
+        message={view.message as string}
+        confirmLabel={view.confirmLabel as string | undefined}
+        cancelLabel={view.cancelLabel as string | undefined}
+        onAction={(action) => onAction?.({ action: 'confirm', ...action, surfaceId })}
+      />
+    );
+  }
+
+  if (view?.type === 'form' && Array.isArray(view.fields)) {
+    return (
+      <FormWidget
+        fields={view.fields as any[]}
+        onAction={(action) => onAction?.({ action: 'form_submit', ...action, surfaceId })}
+      />
     );
   }
 

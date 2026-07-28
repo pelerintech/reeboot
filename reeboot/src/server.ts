@@ -831,6 +831,32 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
           return;
         }
 
+        if (msg.type === 'action') {
+          if (!_bus) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Server not fully initialized' }));
+            return;
+          }
+
+          // Build structured content from the action message
+          let actionContent: string;
+          if (msg.action === 'confirm') {
+            actionContent = `[User confirmed: ${msg.value ?? false}]`;
+          } else if (msg.action === 'form_submit') {
+            actionContent = `[Form Response: ${JSON.stringify(msg.fields ?? {})}]`;
+          } else {
+            actionContent = `[Action: ${JSON.stringify(msg)}]`;
+          }
+
+          _bus.publish(createIncomingMessage({
+            channelType: 'web',
+            peerId: sessionId,
+            conversationId: isReeMode ? contextId : undefined,
+            content: actionContent,
+            raw: null,
+          }));
+          return;
+        }
+
         if (msg.type === 'message') {
           if (!_bus) {
             ws.send(JSON.stringify({ type: 'error', message: 'Server not fully initialized' }));

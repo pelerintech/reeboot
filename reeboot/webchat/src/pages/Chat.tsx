@@ -265,6 +265,7 @@ export default function Chat() {
                         isError={tc.isError}
                         defaultExpanded={!!tc.result}
                         view={tc.view}
+                        onAction={(action) => send({ type: 'action', ...action })}
                       />
                     </div>
                   ))}

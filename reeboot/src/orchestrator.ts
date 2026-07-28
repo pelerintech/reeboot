@@ -26,6 +26,7 @@ import { randomUUID as _randomUUID2 } from 'crypto';
 import { getLogger } from './observability/logger.js';
 import { emitEvent } from './observability/events.js';
 import { BudgetGuard } from './budget/guard.js';
+import { extractContentText } from './structured-views.js';
 
 // ─── Config types ─────────────────────────────────────────────────────────────
 
@@ -426,6 +427,22 @@ export class Orchestrator {
         // Forward event to channel adapter for streaming (e.g., WebAdapter.sendEvent)
         if (presenceAdapter && typeof (presenceAdapter as any).sendEvent === 'function') {
           (presenceAdapter as any).sendEvent(msg.peerId, event);
+        } else if (
+          event.type === 'tool_call_end' &&
+          event.view &&
+          presenceAdapter
+        ) {
+          // Non-webchat channels (WhatsApp, Signal, Telegram, CLI) have no
+          // sendEvent() and therefore receive no rich widget. Deliver the
+          // tool's `content` text fallback so users on those channels still
+          // receive the information. Fire-and-forget: a failing send must not
+          // break the turn (see channel-delivery.md D4).
+          const fallback = extractContentText(event.result);
+          if (fallback) {
+            presenceAdapter
+              .send(msg.peerId, { type: 'text', text: fallback })
+              .catch(() => {/* ignore — transport/disconnect failure */});
+          }
         }
       };
       // Inject channel context header for real channel turns

@@ -35,10 +35,10 @@
 ## 6. Publish
 
 - [x] 6.1 Check npm package name availability: `npm view reeboot` — if taken, fall back to `@reeboot/agent` and update README + bin accordingly
-- [ ] 6.2 `npm publish --access public` (or `npm publish --dry-run` first to confirm tarball)
-- [ ] 6.3 Verify: `npx reeboot --help` works from npmjs.com
-- [ ] 6.4 `docker build -f container/Dockerfile -t reeboot/reeboot:1.0.0 -t reeboot/reeboot:latest . && docker push reeboot/reeboot:1.0.0 && docker push reeboot/reeboot:latest`
-- [ ] 6.5 Verify Docker image on Docker Hub
+- [x] 6.2 `npm publish --access public` (or `npm publish --dry-run` first to confirm tarball)
+- [x] 6.3 Verify: `npx reeboot --help` works from npmjs.com
+- [x] 6.4 `docker build -f container/Dockerfile -t reeboot/reeboot:1.0.0 -t reeboot/reeboot:latest . && docker push reeboot/reeboot:1.0.0 && docker push reeboot/reeboot:latest`
+- [x] 6.5 Verify Docker image on Docker Hub
 
 ## 7. Architecture Update
 

@@ -60,6 +60,7 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
   const mcpEnabled           = (core as any).mcp ?? true;
   const delegateEnabled      = (core as any).delegate ?? true;
   const injectionGuardEnabled = (core as any).injection_guard ?? true;
+  const renderViewsEnabled   = (core as any).render_views   ?? true;
 
   const factories: ExtensionFactory[] = [];
 
@@ -257,6 +258,30 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
       }
     }
   }));
+
+  // Render view tools — produce structured views (chart, plan, confirm, form).
+  // Always loaded unless disabled via core.render_views: false.
+  if (renderViewsEnabled) {
+    factories.push(withAdapter(async (api) => {
+      const mod = await importExt('render-chart');
+      if (mod?.default) mod.default(api);
+    }));
+
+    factories.push(withAdapter(async (api) => {
+      const mod = await importExt('render-plan');
+      if (mod?.default) mod.default(api);
+    }));
+
+    factories.push(withAdapter(async (api) => {
+      const mod = await importExt('render-confirm');
+      if (mod?.default) mod.default(api);
+    }));
+
+    factories.push(withAdapter(async (api) => {
+      const mod = await importExt('render-form');
+      if (mod?.default) mod.default(api);
+    }));
+  }
 
   // Hot memory extension — always loaded (no feature flag).
   // Registers session_shutdown and before_agent_start hooks for session

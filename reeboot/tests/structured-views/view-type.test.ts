@@ -3,7 +3,7 @@ import { VIEW_TYPES } from '@src/structured-views.js';
 
 describe('ToolView type', () => {
   it('VIEW_TYPES constant defines valid discriminants', () => {
-    expect(VIEW_TYPES).toEqual(['data-table', 'data-chart', 'form', 'confirm']);
+    expect(VIEW_TYPES).toEqual(['data-table', 'data-chart', 'form', 'confirm', 'plan']);
   });
 
   it('data-table discriminant has correct shape', () => {

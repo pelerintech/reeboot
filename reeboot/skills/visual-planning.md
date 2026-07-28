@@ -11,9 +11,8 @@ Reads a reespec `brief.md` and `design.md`, then generates a structured visual p
 **Instructions:**
 1. Read `reespec/requests/<name>/brief.md` and `reespec/requests/<name>/design.md`
 2. Extract architecture, decisions, and design approach
-3. Output a structured plan using the block types below
-4. Always include a text description in `content` for non-WebChat channels
-5. Return the structured blocks as `view: { type: 'plan', blocks: [...] }`
+3. Call the `render_plan` tool with the extracted blocks (see block types below)
+4. Always set a descriptive text in the `title` field so the LLM sees context in the response
 
 ### `/visual-recap`
 
@@ -22,9 +21,8 @@ Reads completed `tasks.md` and generates a before/after visual summary.
 **Instructions:**
 1. Read `reespec/requests/<name>/tasks.md`
 2. Identify completed tasks and what changed
-3. Output structured blocks showing the changes
-4. Always include a text summary in `content` for non-WebChat channels
-5. Return the structured blocks as `view: { type: 'plan', blocks: [...] }`
+3. Call the `render_plan` tool with structured blocks showing the changes (see block types below)
+4. Always set a descriptive text in the `title` field so the LLM sees context in the response
 
 ## Block Types
 
@@ -110,21 +108,10 @@ Project file structure with optional notes.
 }
 ```
 
-## Output Format
+## Tool Usage
 
-Always return the visual plan as a structured view:
+Call the `render_plan` tool with the extracted blocks. The tool accepts:
+- `title` (optional): A summary label for the plan
+- `blocks` (required): Array of block objects using the types above
 
-```json
-{
-  "content": [
-    { "type": "text", "text": "Text description for all channels..." }
-  ],
-  "view": {
-    "type": "plan",
-    "blocks": [
-      { "type": "diagram", "title": "...", "nodes": [...], "edges": [...] },
-      { "type": "decision", "title": "...", ... }
-    ]
-  }
-}
-```
+The tool returns formatted content for all channels and a structured view for WebChat.

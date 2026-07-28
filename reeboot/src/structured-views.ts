@@ -70,3 +70,60 @@ export type ToolView =
       type: 'plan';
       blocks: PlanBlock[];
     };
+
+// ─── Content text fallback extraction ───────────────────────────────────────
+
+/**
+ * Extract a plain-text fallback from a tool result object.
+ *
+ * Tools that produce structured views return a `content` field that is meant
+ * to be delivered to non-visual channels (WhatsApp, Signal, Telegram, CLI)
+ * when no rich widget can be rendered. This helper normalises the various
+ * shapes a tool result may take into a single string.
+ *
+ * Handles:
+ *   - `{ content: "string" }`           (render_plan/chart/form/confirm)
+ *   - `{ content: [{type:"text",text}] }` (pi SDK normalised array form)
+ *   - `"string"`                         (bare string result)
+ *   - `[{type:"text",text}]`              (bare array result)
+ *
+ * Returns `null` when no text can be extracted.
+ */
+export function extractContentText(result: unknown): string | null {
+  if (result == null) return null;
+
+  // Canonical shape: result.content
+  const content = (result as Record<string, unknown> | undefined)?.content;
+  if (typeof content === 'string') {
+    return content.length > 0 ? content : null;
+  }
+  if (Array.isArray(content)) {
+    const text = textBlocksToString(content);
+    return text;
+  }
+
+  // Bare shapes: result itself is a string or array of text blocks
+  if (typeof result === 'string') {
+    return result.length > 0 ? result : null;
+  }
+  if (Array.isArray(result)) {
+    return textBlocksToString(result);
+  }
+
+  return null;
+}
+
+/** Join an array of `{ type: 'text', text }` blocks into a newline string. */
+function textBlocksToString(blocks: unknown[]): string | null {
+  const text = blocks
+    .filter(
+      (c): c is { type: 'text'; text: string } =>
+        !!c &&
+        typeof c === 'object' &&
+        (c as { type?: string }).type === 'text' &&
+        typeof (c as { text?: unknown }).text === 'string',
+    )
+    .map((c) => c.text)
+    .join('\n');
+  return text.length > 0 ? text : null;
+}
