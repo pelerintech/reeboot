@@ -67,7 +67,7 @@ export default function ToolCall({
         message={view.message as string}
         confirmLabel={view.confirmLabel as string | undefined}
         cancelLabel={view.cancelLabel as string | undefined}
-        onAction={(action) => onAction?.({ action: 'confirm', ...action, surfaceId })}
+        onAction={(action) => onAction?.({ ...action, action: 'confirm', surfaceId })}
       />
     );
   }
@@ -76,7 +76,7 @@ export default function ToolCall({
     return (
       <FormWidget
         fields={view.fields as any[]}
-        onAction={(action) => onAction?.({ action: 'form_submit', ...action, surfaceId })}
+        onAction={(action) => onAction?.({ ...action, action: 'form_submit', surfaceId })}
       />
     );
   }
