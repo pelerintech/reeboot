@@ -621,9 +621,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
       version,
       auth: state,
       browser: Browsers.ubuntu('Chrome'),
-      pairingCode: true,
-      phoneNumber: phone,
       logger: getLogger().child({ component: 'whatsapp-pair' }),
+    });
+
+    // Request pairing code — this tells WhatsApp to send a code to the phone instead of showing a QR
+    sock.requestPairingCode(phone).catch((err: any) => {
+      getLogger().warn({ component: 'server', err }, '[pair] Failed to request pairing code');
     });
 
     return await new Promise<Response>((resolve) => {
