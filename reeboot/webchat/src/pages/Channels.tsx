@@ -1,6 +1,16 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import ChannelQrDialog from '../components/ChannelQrDialog';
 
 interface Channel { type: string; status: string; connectedAt: string | null; lastSeen?: string | null; error?: string | null; }
+
+type DialogMode =
+  | 'qr'
+  | 'scanning'
+  | 'paired'
+  | 'timeout'
+  | 'pairing'
+  | 'pairing_wait'
+  | 'pairing_error';
 
 const statusOrder: Record<string, number> = { connected: 0, 'connecting': 1, 'reconnecting': 2, disconnected: 3, error: 4 };
 
@@ -13,12 +23,42 @@ export default function Channels() {
   const [retrying, setRetrying] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // ChannelQrDialog state
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [dialogMode, setDialogMode] = useState<DialogMode>('qr');
+  const [dialogQrDataUrl, setDialogQrDataUrl] = useState<string>('');
+  const [dialogIsConnected, setDialogIsConnected] = useState(false);
+
+  // AbortController for the in-flight /qr or /pair request. Navigating away from
+  // the Channels page aborts the ongoing link flow so no request is left
+  // dangling and no setState lands on an unmounted component.
+  const linkAbortRef = useRef<AbortController | null>(null);
+  const startLinkRequest = () => {
+    linkAbortRef.current?.abort();
+    const controller = new AbortController();
+    linkAbortRef.current = controller;
+    return controller;
+  };
+  const isLinkAborted = (controller: AbortController) => controller.signal.aborted;
+
+  // On unmount: cancel any in-flight link flow (no leaks / dangling requests)
+  useEffect(() => {
+    return () => { linkAbortRef.current?.abort(); };
+  }, []);
+
   const fetchChannels = useCallback(async () => {
     try {
       setLoading(true); setError(null);
       const response = await fetch('/api/channels');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      setChannels(await response.json());
+      const data: Channel[] = await response.json();
+      setChannels(data);
+
+      // Check if WhatsApp is now connected — auto-close dialog
+      const whatsapp = data.find((ch) => ch.type === 'whatsapp');
+      if (whatsapp?.status === 'connected') {
+        setDialogIsConnected(true);
+      }
     } catch {
       setError('Failed to load channel status');
     } finally { setLoading(false); setRetrying(false); }
@@ -53,6 +93,92 @@ export default function Channels() {
   const statusColor = (s: string) => s === 'connected' ? 'bg-emerald-500' : s === 'disconnected' || s === 'error' ? 'bg-red-500' : 'bg-yellow-500';
 
   const sortedChannels = [...channels].sort((a, b) => (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99));
+
+  // ── WhatsApp QR dialog helpers ───────────────────────────────────────
+
+  const openQrDialog = async () => {
+    const controller = startLinkRequest();
+    setDialogVisible(true);
+    setDialogMode('qr');
+    setDialogQrDataUrl('');
+    setDialogIsConnected(false);
+    // Fire QR request
+    try {
+      const res = await fetch('/api/channels/whatsapp/qr', { method: 'POST', signal: controller.signal });
+      const data = await res.json();
+      if (isLinkAborted(controller)) return;
+      if (res.ok && data.qrDataUrl) {
+        setDialogQrDataUrl(data.qrDataUrl);
+        setDialogMode('qr');
+      } else {
+        setDialogMode('timeout');
+      }
+    } catch {
+      if (isLinkAborted(controller)) return;
+      setDialogMode('timeout');
+    }
+  };
+
+  const openDialogAfterReset = async () => {
+    await fetch('/api/channels/whatsapp/reset', { method: 'POST' });
+    openQrDialog();
+  };
+
+  const closeDialog = () => {
+    linkAbortRef.current?.abort();
+    setDialogVisible(false);
+    setDialogMode('qr');
+    setDialogQrDataUrl('');
+    setDialogIsConnected(false);
+    fetchChannels();
+  };
+
+  const handleRetryQr = async () => {
+    const controller = startLinkRequest();
+    setDialogMode('qr');
+    setDialogQrDataUrl('');
+    try {
+      const res = await fetch('/api/channels/whatsapp/qr', { method: 'POST', signal: controller.signal });
+      const data = await res.json();
+      if (isLinkAborted(controller)) return;
+      if (res.ok && data.qrDataUrl) {
+        setDialogQrDataUrl(data.qrDataUrl);
+        setDialogMode('qr');
+      } else {
+        setDialogMode('timeout');
+      }
+    } catch {
+      if (isLinkAborted(controller)) return;
+      setDialogMode('timeout');
+    }
+  };
+
+  const handleTryPairing = () => {
+    setDialogMode('pairing');
+  };
+
+  const handlePairingSubmit = async (phone: string) => {
+    const controller = startLinkRequest();
+    setDialogMode('pairing_wait');
+    try {
+      const res = await fetch('/api/channels/whatsapp/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+        signal: controller.signal,
+      });
+      if (isLinkAborted(controller)) return;
+      if (!res.ok) {
+        setDialogMode('pairing_error');
+      }
+      // If ok, the dialog will auto-close when connected status is detected
+    } catch {
+      if (isLinkAborted(controller)) return;
+      setDialogMode('pairing_error');
+    }
+  };
+
+  const handleScanTimeout = useCallback(() => setDialogMode('timeout'), []);
 
   if (loading && channels.length === 0) return <div className="flex items-center justify-center h-full bg-white"><div className="text-zinc-500">Loading…</div></div>;
 
@@ -107,14 +233,34 @@ export default function Channels() {
                     )}
                     <div className="flex items-center gap-2 pt-1">
                       {ch.status === 'connected' && (
-                        <button onClick={() => action(ch.type, 'logout')} className="rounded-lg bg-zinc-200 text-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-300 transition-colors">Logout</button>
+                        <>
+                          {ch.type === 'whatsapp' && (
+                            <button onClick={openDialogAfterReset} className="rounded-lg bg-zinc-200 text-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-300 transition-colors">Switch account</button>
+                          )}
+                          <button onClick={() => action(ch.type, 'logout')} className="rounded-lg bg-zinc-200 text-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-300 transition-colors">Logout</button>
+                        </>
                       )}
                       {ch.status === 'disconnected' && (
                         <>
-                          <button onClick={() => action(ch.type, 'login')} className="rounded-lg bg-zinc-200 text-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-300 transition-colors">Login</button>
-                          <button onClick={() => action(ch.type, 'reconnect')} disabled={reconnecting.has(ch.type)} className="rounded-lg bg-zinc-900 text-white px-3 py-1.5 text-xs hover:bg-zinc-800 disabled:opacity-40 transition-colors">
-                            {reconnecting.has(ch.type) ? '…' : 'Reconnect'}
-                          </button>
+                          {ch.type === 'whatsapp' ? (
+                            <button onClick={openQrDialog} className="rounded-lg bg-zinc-900 text-white px-3 py-1.5 text-xs hover:bg-zinc-800 transition-colors">Connect</button>
+                          ) : (
+                            <>
+                              <button onClick={() => action(ch.type, 'login')} className="rounded-lg bg-zinc-200 text-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-300 transition-colors">Login</button>
+                              <button onClick={() => action(ch.type, 'reconnect')} disabled={reconnecting.has(ch.type)} className="rounded-lg bg-zinc-900 text-white px-3 py-1.5 text-xs hover:bg-zinc-800 disabled:opacity-40 transition-colors">
+                                {reconnecting.has(ch.type) ? '…' : 'Reconnect'}
+                              </button>
+                            </>
+                          )}
+                        </>
+                      )}
+                      {ch.status === 'error' && (
+                        <>
+                          {ch.type === 'whatsapp' ? (
+                            <button onClick={openDialogAfterReset} className="rounded-lg bg-zinc-900 text-white px-3 py-1.5 text-xs hover:bg-zinc-800 transition-colors">Reconnect</button>
+                          ) : (
+                            <button onClick={() => action(ch.type, 'login')} className="rounded-lg bg-zinc-200 text-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-300 transition-colors">Login</button>
+                          )}
                         </>
                       )}
                       {(ch.status === 'connecting' || ch.status === 'reconnecting') && (
@@ -128,6 +274,19 @@ export default function Channels() {
           </div>
         )}
       </div>
+
+      {/* ChannelQrDialog */}
+      <ChannelQrDialog
+        visible={dialogVisible}
+        mode={dialogMode}
+        qrDataUrl={dialogQrDataUrl}
+        isConnected={dialogIsConnected}
+        onClose={closeDialog}
+        onRetryQr={handleRetryQr}
+        onTryPairing={handleTryPairing}
+        onPairingSubmit={handlePairingSubmit}
+        onScanTimeout={handleScanTimeout}
+      />
     </div>
   );
 }

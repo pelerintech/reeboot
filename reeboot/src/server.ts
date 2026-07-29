@@ -516,6 +516,173 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
     return c.json({ message: `${type} logged out.` }, 200);
   });
 
+  // ── WhatsApp QR / pairing / reset endpoints ────────────────────────────
+
+  app.post('/api/channels/whatsapp/qr', async (c) => {
+    const adapter = _channelAdapters.get('whatsapp');
+    if (!adapter) {
+      return c.json({ error: 'WhatsApp channel not configured' }, 404);
+    }
+
+    const authDir = join(reebotDir, 'channels', 'whatsapp', 'auth');
+
+    // Stop adapter and clear auth for a fresh link
+    try { await adapter.stop(); } catch { /* may already be stopped */ }
+    try {
+      const { rmSync, mkdirSync } = await import('fs');
+      rmSync(authDir, { recursive: true, force: true });
+      mkdirSync(authDir, { recursive: true });
+    } catch { /* auth dir may not exist yet */ }
+
+    // Start linking using linkWhatsAppDevice
+    const { linkWhatsAppDevice } = await import('./channels/whatsapp.js');
+    const { toDataURL } = await import('qrcode');
+
+    return await new Promise<Response>((resolve) => {
+      let settled = false;
+
+      linkWhatsAppDevice({
+        authDir,
+        onQr: async (qr: string) => {
+          if (settled) return;
+          settled = true;
+          try {
+            const qrDataUrl = await toDataURL(qr, { width: 280, margin: 2 });
+            resolve(c.json({ qrDataUrl }, 200));
+          } catch {
+            resolve(c.json({ error: 'Failed to render QR code' }, 500));
+          }
+        },
+        onSuccess: async () => {
+          try { await adapter.start(); } catch (err: any) {
+            getLogger().warn({ component: 'server', err }, '[qr] Failed to restart WhatsApp adapter after link');
+          }
+        },
+        onTimeout: () => {
+          if (!settled) {
+            settled = true;
+            resolve(c.json({ error: 'QR not generated within timeout' }, 408));
+          }
+        },
+        timeoutMs: 120_000,
+      }).catch((err: any) => {
+        if (!settled) {
+          settled = true;
+          getLogger().error({ component: 'server', err }, '[qr] linkWhatsAppDevice failed');
+          resolve(c.json({ error: 'QR link failed: ' + (err?.message ?? 'unknown') }, 500));
+        }
+      });
+    });
+  });
+
+  // ── WhatsApp pairing / reset ────────────────────────────────────────────
+
+  app.post('/api/channels/whatsapp/pair', async (c) => {
+    const adapter = _channelAdapters.get('whatsapp');
+    if (!adapter) {
+      return c.json({ error: 'WhatsApp channel not configured' }, 404);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const phone: string = (body?.phone ?? '').trim();
+    if (!phone) {
+      return c.json({ error: 'phone is required' }, 400);
+    }
+
+    const authDir = join(reebotDir, 'channels', 'whatsapp', 'auth');
+
+    // Stop adapter and clear auth for fresh pairing
+    try { await adapter.stop(); } catch { /* may already be stopped */ }
+    try {
+      const { rmSync, mkdirSync } = await import('fs');
+      rmSync(authDir, { recursive: true, force: true });
+      mkdirSync(authDir, { recursive: true });
+    } catch { /* auth dir may not exist yet */ }
+
+    // Create Baileys socket with phone number for pairing
+    const {
+      makeWASocket,
+      useMultiFileAuthState,
+      DisconnectReason,
+      Browsers,
+      fetchLatestWaWebVersion,
+    } = await import('@whiskeysockets/baileys');
+
+    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    let version: [number, number, number];
+    try {
+      const result = await fetchLatestWaWebVersion({});
+      version = result.version;
+    } catch {
+      version = [2, 3000, 1027934701];
+    }
+
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      browser: Browsers.ubuntu('Chrome'),
+      pairingCode: true,
+      phoneNumber: phone,
+      logger: getLogger().child({ component: 'whatsapp-pair' }),
+    });
+
+    return await new Promise<Response>((resolve) => {
+      let settled = false;
+      const PAIR_TIMEOUT_MS = 120_000;
+
+      const timeoutHandle = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          try { sock.end(undefined); } catch { /* ignore */ }
+          resolve(c.json({ error: 'Pairing timed out. Try again.' }, 408));
+        }
+      }, PAIR_TIMEOUT_MS);
+
+      sock.ev.on('creds.update', saveCreds);
+
+      sock.ev.on('connection.update', (update: any) => {
+        const { connection, lastDisconnect } = update;
+
+        if (connection === 'open' && !settled) {
+          settled = true;
+          clearTimeout(timeoutHandle);
+          // Start the adapter with fresh auth
+          adapter.start().catch((err: any) => {
+            getLogger().warn({ component: 'server', err }, '[pair] Failed to start adapter after pairing');
+          });
+          resolve(c.json({ status: 'paired' }, 200));
+        }
+
+        if (connection === 'close' && !settled) {
+          const statusCode = lastDisconnect?.error?.output?.statusCode;
+          if (statusCode === DisconnectReason.loggedOut) {
+            settled = true;
+            clearTimeout(timeoutHandle);
+            resolve(c.json({ error: 'Pairing rejected: device was logged out' }, 500));
+          }
+        }
+      });
+    });
+  });
+
+  app.post('/api/channels/whatsapp/reset', async (c) => {
+    const adapter = _channelAdapters.get('whatsapp');
+    if (!adapter) {
+      return c.json({ error: 'WhatsApp channel not configured' }, 404);
+    }
+
+    const authDir = join(reebotDir, 'channels', 'whatsapp', 'auth');
+
+    try { await adapter.stop(); } catch { /* may already be stopped */ }
+    try {
+      const { rmSync, mkdirSync } = await import('fs');
+      rmSync(authDir, { recursive: true, force: true });
+      mkdirSync(authDir, { recursive: true });
+    } catch { /* auth dir may not exist yet */ }
+
+    return c.json({ status: 'reset' }, 200);
+  });
+
   // ── Reload & Restart ────────────────────────────────────────────────────
 
   app.post('/api/reload', async (c) => {
