@@ -60,6 +60,7 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
   const mcpEnabled           = (core as any).mcp ?? true;
   const delegateEnabled      = (core as any).delegate ?? true;
   const injectionGuardEnabled = (core as any).injection_guard ?? true;
+  const jinaReaderEnabled     = (core as any).jina_reader ?? true;
   const renderViewsEnabled   = (core as any).render_views   ?? true;
 
   const factories: ExtensionFactory[] = [];
@@ -165,6 +166,15 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
   if (webSearchEnabled) {
     factories.push(withAdapter(async (api) => {
       const mod = await importExt('web-search');
+      if (mod?.default) await (mod.default as any)(api, config);
+    }));
+  }
+
+  // Jina web reader — optional self-hosted sidekick (health-checked on load).
+  // Whether tools are registered is decided internally based on config.web + health.
+  if (jinaReaderEnabled) {
+    factories.push(withAdapter(async (api) => {
+      const mod = await importExt('jina-reader');
       if (mod?.default) await (mod.default as any)(api, config);
     }));
   }

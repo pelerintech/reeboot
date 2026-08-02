@@ -43,6 +43,7 @@ const ExtensionsCoreConfigSchema = z.object({
   token_meter: z.boolean().default(true),
   mcp: z.boolean().default(true),
   injection_guard: z.boolean().default(true),
+  jina_reader: z.boolean().default(true),
 });
 
 const McpPermissionsSchema = z.object({
@@ -197,6 +198,14 @@ const SearchConfigSchema = z.object({
   searxngBaseUrl: z.string().default('http://localhost:8888'),
 });
 
+const WebConfigSchema = z.object({
+  jina_base_url: z.string().default(''),   // e.g. 'http://localhost:3000' — '' means no sidekick
+  enabled: z.boolean().default(true),       // master switch for the extension
+  default_engine: z.enum(['auto', 'curl', 'browser']).default('auto'),
+});
+
+export type WebConfig = z.infer<typeof WebConfigSchema>;
+
 const HeartbeatConfigSchema = z.object({
   enabled: z.boolean().default(false),
   interval: z.string().default('every 5m'),
@@ -329,6 +338,7 @@ export const ConfigSchema = z.object({
   session: SessionConfigSchema.default({}),
   credentialProxy: CredentialProxyConfigSchema.default({}),
   search: SearchConfigSchema.default({}),
+  web: WebConfigSchema.default({}),
   heartbeat: HeartbeatConfigSchema.default({}),
   skills: SkillsConfigSchema.default({}),
   mcp: McpConfigSchema.default({}),

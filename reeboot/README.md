@@ -206,6 +206,53 @@ conversation id — no pre-registered context and no cross-customer leakage.
 
 ---
 
+## Web Reader (Jina)
+
+Reeboot ships with a lightweight web reader (`fetch_url`) that uses Readability to
+strip static HTML. As an optional self-hosted power-up, you can attach a **Jina
+Reader sidekick** (`ghcr.io/jina-ai/reader:oss`, Apache-2.0) that reads far more —
+JS-rendered pages, PDFs, Word/Excel/PPT documents, and VLM-captioned images — and
+returns clean LLM-ready Markdown.
+
+When the sidekick is running, the agent gains a `jina_read` tool plus system-prompt
+guidance on when to prefer it over `fetch_url`. The "search that reads" `jina_search`
+tool (top results **with** full fetched content) is only registered when the sidekick
+actually supports the search route — on builds that don't, the agent keeps using the
+existing `web_search` rather than being handed a tool that can't return results.
+
+### Run the sidekick
+
+```bash
+docker run --rm -p 3000:8081 ghcr.io/jina-ai/reader:oss
+```
+
+### Enable it in config
+
+Set `config.web.jina_base_url` in `~/.reeboot/config.json` to the sidekick's address:
+
+```json
+{
+  "web": {
+    "jina_base_url": "http://localhost:3000",
+    "enabled": true,
+    "default_engine": "auto"
+  }
+}
+```
+
+- `jina_base_url` — empty/unset means **no sidekick** (the self-contained baseline;
+  reeboot keeps its existing `fetch_url`/`web_search` tools).
+- `enabled` — master switch for the extension.
+- `default_engine` — `auto` (default; lets the container pick curl vs. headless
+  Chrome), `curl`, or `browser`.
+
+On load, reeboot health-checks the sidekick. If it is unreachable, reeboot degrades
+gracefully to the existing `fetch_url`/`web_search` tools instead of failing — exactly
+like the SearXNG→DuckDuckGo web-search fallback. Target URLs are still subject to the
+website blocklist before being delegated to the local container.
+
+---
+
 ## Development
 
 ```bash

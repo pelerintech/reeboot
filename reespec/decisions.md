@@ -539,3 +539,34 @@ Post-evaluation gap remediation revealed that `server.ts` only called `setDefaul
 ### WhatsApp reconnection webchat timers + AbortController are stable across polling re-renders — 2026-07-28 (Request: whatsapp-web-reconnect)
 
 Post-evaluation remediation added two webchat behaviours required by the specs: (1) `ChannelQrDialog` shows a "QR not working? Try phone number instead" fallback link after 30s and fires `onScanTimeout` after 2 min of an unscanned QR; (2) `Channels.tsx` passes an `AbortSignal` to the `/qr` and `/pair` fetches and aborts on unmount so navigation away cancels the in-flight link flow (no leaks / dangling requests / setState-on-unmounted). The critical detail: the dialog's timer effect depends on `onScanTimeout`, so `Channels.tsx` MUST pass a stable callback (`useCallback`) — otherwise the 5s channel-status poll re-renders Channels every 5s, passing a fresh inline arrow, which re-runs the dialog effect and resets the 30s/120s timers so they never fire. `handleScanTimeout` is therefore `useCallback(() => setDialogMode('timeout'), [])`. The other dialog callbacks (onClose/onRetryQr/onTryPairing/onPairingSubmit) remain plain functions — they are not in the timer effect deps (only used in onClick handlers), and the auto-close effect's re-runs are harmless because it early-returns when `isConnected` is false. The abort guards (`if (isLinkAborted(controller)) return`) prevent setState after navigation-away even when the mock fetch resolves post-abort; a real `fetch` would reject with AbortError and land in the same guard.
+
+### Jina web-reader sidekick with self-host fallback — 2026-08-02 (Request: jina-web-reader)
+
+Web reading is powered by an optional self-hosted Jina Reader sidekick
+(`ghcr.io/jina-ai/reader:oss`, Apache-2.0, permissive) rather than a hosted
+`r.jina.ai` API dependency, keeping reeboot self-contained ("self-contained with
+optional self-hosted power-ups"). When `config.web.jina_base_url` is unset or the
+sidekick is unhealthy, the extension registers nothing and reeboot keeps its existing
+`fetch_url`/`web_search` baseline — the same graceful-degradation philosophy as the
+SearXNG→DuckDuckGo web-search fallback, so the agent never loses capability it already
+has. A new `web` config block (not overloading `search`) was added with
+`jina_base_url`/`enabled`/`default_engine`. The browser/interactive tier (Steel,
+browser-use, Playwright-driven browsing) was explicitly deferred — this request is
+read/extract/search only. Security posture: the website blocklist (`isDomainBlocked`)
+is applied to any target hostname BEFORE the URL is delegated to the local container,
+so blocked URLs never reach the sidekick; `jina_read` is the must-have and `jina_search`
+is best-effort.
+
+**Refinement (2026-08-02): `jina_search` is NOT registered when the search route is
+unavailable.** The OSS image smoke-test confirmed the search-that-reads route returns
+400 (`Domain 'search' could not be resolved`), so while `jina_read` was confirmed working
+against the real container, `jina_search` was initially implemented as a best-effort tool
+that degraded to an explicit "search unavailable on this build" result. That was
+reconsidered: registering a tool known to never return a usable result pollutes the
+agent's tool set and prompts for no benefit — especially since a working `web_search`
+already exists. The `jinaSearch()` implementation is kept for future builds that add the
+route, but the tool is now gated behind a load-time search-route probe: `jina_search` is
+registered (and its guidance injected) only when `GET {base}/search` actually responds
+OK, mirroring the "never advertise a dead tool" philosophy. On the current OSS build the
+agent sees only `jina_read` + its guidance and continues to use `web_search` for search.
+See request artifacts for full context.
