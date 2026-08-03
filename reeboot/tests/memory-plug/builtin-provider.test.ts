@@ -94,4 +94,17 @@ describe('memory tool routed through the active provider', () => {
     await callTool(tool, { action: 'add', target: 'memory', content: 'default note' });
     expect(readFileSync(join(dir, 'MEMORY.md'), 'utf-8')).toContain('default note');
   });
+
+  it('falls back to builtin when a valid-but-unregistered provider is configured (S3)', async () => {
+    // 'mem0' is a valid enum value, but no provider is registered for it.
+    // Graceful degradation: memory must NOT be silently disabled; the builtin
+    // backend stays active rather than crashing startup.
+    const { pi, getTool } = makeMockPi();
+    const dir = join(tmpDir, 'memories');
+    makeMemoryExtension(pi as any, baseConfig('mem0') as any, dir, []);
+    const tool = getTool('memory');
+    expect(tool).toBeDefined(); // memory tool remains available
+    await callTool(tool, { action: 'add', target: 'memory', content: 'fallback note' });
+    expect(readFileSync(join(dir, 'MEMORY.md'), 'utf-8')).toContain('fallback note');
+  });
 });

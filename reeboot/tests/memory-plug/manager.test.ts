@@ -33,4 +33,15 @@ describe('MemoryManager', () => {
     mgr.select('does-not-exist');
     expect(mgr.active.id).toBe('builtin');
   });
+
+  it('logs a warning when an unregistered provider falls back to builtin', () => {
+    const warns: string[] = [];
+    const mgr = new MemoryManager(fakeProvider('builtin'), (m) => warns.push(m));
+    mgr.register(fakeProvider('dreem'));
+    // 'mem0' is a valid enum value but no provider is registered for it.
+    mgr.select('mem0');
+    expect(mgr.active.id).toBe('builtin');
+    expect(warns.length).toBeGreaterThan(0);
+    expect(warns[0]).toMatch(/falling back to/i);
+  });
 });

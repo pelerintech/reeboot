@@ -8,6 +8,8 @@
  * memory-manager extension; future backends (dreem, mem0) implement the same contract.
  */
 
+import { getLogger } from './observability/logger.js';
+
 export type MemoryTarget = 'memory' | 'user';
 
 export interface MemoryProvider {
@@ -30,14 +32,18 @@ export interface MemoryProvider {
  * Selects and holds the single active memory provider.
  * - Defaults to `builtin`.
  * - `select(id)` switches to a registered provider, falling back to `builtin`
- *   (with a warning) when the id is unknown or unavailable. Graceful degradation:
+ *   (with a logged warning) when the id is unknown or unavailable. Graceful degradation:
  *   memory is never silently disabled and startup never crashes on a bad provider.
  */
 export class MemoryManager {
   private providers = new Map<string, MemoryProvider>();
   private activeProvider: MemoryProvider;
 
-  constructor(private readonly builtin: MemoryProvider) {
+  constructor(
+    private readonly builtin: MemoryProvider,
+    /** Injectable logger for the graceful-degradation fallback; defaults to the global logger. */
+    private readonly warn: (msg: string) => void = (msg) => getLogger().warn(msg)
+  ) {
     this.providers.set(builtin.id, builtin);
     this.activeProvider = builtin;
   }
@@ -55,6 +61,10 @@ export class MemoryManager {
       return provider;
     }
     // Fallback — unknown or unloadable provider never disables memory silently.
+    this.warn(
+      `[memory] provider '${id}' is not available (not registered or failed to load); ` +
+        `falling back to 'builtin'`
+    );
     this.activeProvider = this.builtin;
     return this.activeProvider;
   }
