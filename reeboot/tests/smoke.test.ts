@@ -14,6 +14,8 @@ import { describe, it, expect } from 'vitest';
 import { resolve, dirname } from 'path';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = resolve(__dirname, '..', 'dist');
@@ -95,7 +97,7 @@ describe('dist/ smoke — exported shapes', () => {
     requiresDist();
     const mod = await import(resolve(distDir, 'extensions/loader.js'));
     const loader = mod.createLoader(
-      { id: 'main', workspacePath: '/tmp' },
+      { id: 'main', workspacePath: join(tmpdir(), 'reeboot-smoke') },
       { extensions: { core: {} } } as any
     );
     expect((loader as any).agentDir).toMatch(/\.reeboot[/\\]agent$/);

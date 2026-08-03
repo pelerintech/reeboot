@@ -9,6 +9,12 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { drainEventLoop } from './helpers/event-drain.js';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-trust-'));
 
 // ─── Task 4: IncomingMessage trust field ─────────────────────────────────────
 
@@ -86,7 +92,7 @@ describe('Orchestrator attaches trust', () => {
     bus.publish(msg);
 
     // Allow async dispatch to complete
-    await new Promise(r => setTimeout(r, 10));
+    await drainEventLoop();
 
     expect(promptCalls.length).toBe(1);
     expect(promptCalls[0].options?.trust).toBe('end-user');
@@ -104,7 +110,7 @@ describe('PiAgentRunner per-turn trust', () => {
     // Minimal mock loader
     const loader = { reload: vi.fn().mockResolvedValue(undefined) } as any;
 
-    const runner = new PiAgentRunner({ id: 'main', workspacePath: '/tmp' }, loader);
+    const runner = new PiAgentRunner({ id: 'main', workspacePath: WORKSPACE }, loader);
 
     // Inject a mock session to avoid pi SDK calls
     // Fire agent_end asynchronously so the subscribe callback's unsubscribe ref is ready
@@ -128,7 +134,7 @@ describe('PiAgentRunner per-turn trust', () => {
   it('defaults to owner when no options passed', async () => {
     const { PiAgentRunner } = await import('@src/agent-runner/pi-runner.js');
     const loader = { reload: vi.fn().mockResolvedValue(undefined) } as any;
-    const runner = new PiAgentRunner({ id: 'main', workspacePath: '/tmp' }, loader);
+    const runner = new PiAgentRunner({ id: 'main', workspacePath: WORKSPACE }, loader);
 
     const mockSession = {
       subscribe: vi.fn().mockImplementation((cb: any) => {

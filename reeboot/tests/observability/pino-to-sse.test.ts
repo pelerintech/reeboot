@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
 
 describe('OB-6-A: pino logs feed into sseEmitter', () => {
   it('a pino log record emitted via getLogger() appears in sseEmitter', async () => {
@@ -18,7 +19,7 @@ describe('OB-6-A: pino logs feed into sseEmitter', () => {
     logger.warn({ component: 'test' }, 'pino-to-sse test record');
 
     // Give async write time to flush
-    await new Promise(r => setTimeout(r, 50));
+    await drainEventLoop();
 
     sseEmitter.off('log', listener);
 

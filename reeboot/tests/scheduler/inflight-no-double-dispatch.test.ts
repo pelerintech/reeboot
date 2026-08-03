@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
 import Database from 'better-sqlite3';
 
 describe('Scheduler in-flight guard (E4)', () => {
@@ -54,7 +55,7 @@ describe('Scheduler in-flight guard (E4)', () => {
     const poll1 = (scheduler as any)._poll();
 
     // Give the event loop a tick for _runTask to start and add to _inFlight
-    await new Promise((r) => setTimeout(r, 50));
+    await drainEventLoop();
 
     // Second poll — task is in flight, should NOT dispatch again
     await (scheduler as any)._poll();
@@ -109,7 +110,7 @@ describe('Scheduler in-flight guard (E4)', () => {
 
     // First poll — task is in flight
     const poll1 = (scheduler as any)._poll();
-    await new Promise((r) => setTimeout(r, 50));
+    await drainEventLoop();
 
     // cancelJob must not throw and should clean up _inFlight
     expect(() => scheduler.cancelJob('t3')).not.toThrow();

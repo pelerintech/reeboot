@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const CACHE_DIR = join(tmpdir(), 'reeboot-hf-cache');
 
 // Mock @huggingface/transformers before any module imports
 vi.mock('@huggingface/transformers', () => {
@@ -12,7 +16,7 @@ vi.mock('@huggingface/transformers', () => {
 
   return {
     pipeline: vi.fn().mockResolvedValue(mockExtractor),
-    env: { cacheDir: '/tmp/hf-cache' },
+    env: { cacheDir: CACHE_DIR },
   };
 });
 

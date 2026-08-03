@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
 import Database from 'better-sqlite3';
 import { runResilienceMigration, runObservabilityMigration } from '@src/db/schema.js';
 
@@ -37,7 +38,7 @@ describe('OB-5-C: rate_limit_warning events row is inserted', () => {
         'x-ratelimit-remaining-tokens': '3000', // below 5000 threshold
       },
     });
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const event = db.prepare("SELECT * FROM events WHERE type = 'rate_limit_warning'").get() as any;
     expect(event).toBeDefined();
@@ -59,7 +60,7 @@ describe('OB-5-C: rate_limit_warning events row is inserted', () => {
         'x-ratelimit-remaining-tokens': '50000', // well above threshold
       },
     });
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const event = db.prepare("SELECT * FROM events WHERE type = 'rate_limit_warning'").get();
     expect(event).toBeUndefined();

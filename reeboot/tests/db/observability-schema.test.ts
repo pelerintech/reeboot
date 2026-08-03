@@ -15,7 +15,7 @@ function columnExists(db: Database.Database, table: string, column: string): boo
 }
 
 describe('observability schema migration', () => {
-  it('new tables do NOT exist before migration on a fresh DB', () => {
+  it('new observability tables do NOT exist before migration on a fresh DB', () => {
     const db = new Database(':memory:');
     // Apply only base resilience schema (no observability)
     runResilienceMigration(db);
@@ -24,7 +24,9 @@ describe('observability schema migration', () => {
     expect(tableExists(db, 'session_events')).toBe(false);
     expect(tableExists(db, 'rate_limits')).toBe(false);
     expect(tableExists(db, 'operational_logs')).toBe(false);
-    expect(columnExists(db, 'turn_journal', 'closed_at')).toBe(false);
+    // turn_journal is a resilience (not observability) table; the resilience
+    // migration owns its lifecycle `closed_at` column idempotently.
+    expect(columnExists(db, 'turn_journal', 'closed_at')).toBe(true);
   });
 
   it('runObservabilityMigration creates all four tables', async () => {

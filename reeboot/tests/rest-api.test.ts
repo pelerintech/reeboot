@@ -1,50 +1,35 @@
 /**
- * REST API tests (Hono version)
+ * REST API tests (socket-free via buildApp + app.request)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import Database from 'better-sqlite3';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import { mkdirSync, rmSync } from 'fs';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { buildTestApp, type TestAppHost } from './helpers/test-app.js';
 
-let startServer: any;
-let stopServer: any;
-let tmpDir: string;
-let db: Database.Database;
+let host: TestAppHost;
 
-beforeEach(async () => {
-  tmpDir = join(tmpdir(), `reeboot-rest-test-${Date.now()}`);
-  mkdirSync(tmpDir, { recursive: true });
-  db = new Database(join(tmpDir, 'test.db'));
-
-  vi.resetModules();
-  ({ startServer, stopServer } = await import('@src/server.js'));
+beforeAll(async () => {
+  host = await buildTestApp();
 });
 
-afterEach(async () => {
-  try { await stopServer(); } catch { /* ignore */ }
-  try { db.close(); } catch { /* ignore */ }
-  rmSync(tmpDir, { recursive: true, force: true });
+afterAll(async () => {
+  await host.stop();
+  host.cleanup();
 });
 
-async function startTestServer() {
-  const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-  return { port, base: `http://localhost:${port}` };
+async function api(path: string, init?: any): Promise<Response> {
+  return host.app.request(`http://localhost${path}`, init);
 }
 
 describe('GET /api/contexts', () => {
   it('returns an array (may be empty or have main)', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/contexts`);
+    const res = await api('/api/contexts');
     expect(res.status).toBe(200);
     const body = await res.json() as any[];
     expect(Array.isArray(body)).toBe(true);
   });
 
   it('returns main context after server starts', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/contexts`);
+    const res = await api('/api/contexts');
     const body = await res.json() as any[];
     const main = body.find((c: any) => c.id === 'main');
     expect(main).toBeDefined();
@@ -53,8 +38,7 @@ describe('GET /api/contexts', () => {
 
 describe('POST /api/contexts', () => {
   it('creates context and returns 201 with context object', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/contexts`, {
+    const res = await api('/api/contexts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'work', model_provider: 'anthropic', model_id: 'claude-sonnet-4-20250514' }),
@@ -66,8 +50,7 @@ describe('POST /api/contexts', () => {
   });
 
   it('missing name returns 400', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/contexts`, {
+    const res = await api('/api/contexts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model_provider: 'anthropic' }),
@@ -78,13 +61,12 @@ describe('POST /api/contexts', () => {
   });
 
   it('new context appears in GET /api/contexts list', async () => {
-    const { base } = await startTestServer();
-    await fetch(`${base}/api/contexts`, {
+    await api('/api/contexts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'personal', model_provider: 'anthropic', model_id: 'claude-sonnet-4-20250514' }),
     });
-    const res = await fetch(`${base}/api/contexts`);
+    const res = await api('/api/contexts');
     const list = await res.json() as any[];
     expect(list.some((c: any) => c.name === 'personal')).toBe(true);
   });
@@ -92,24 +74,21 @@ describe('POST /api/contexts', () => {
 
 describe('GET /api/contexts/:id/sessions', () => {
   it('returns 200 with array for existing context', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/contexts/main/sessions`);
+    const res = await api('/api/contexts/main/sessions');
     expect(res.status).toBe(200);
     const body = await res.json() as any[];
     expect(Array.isArray(body)).toBe(true);
   });
 
   it('returns 404 for unknown context', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/contexts/nonexistent/sessions`);
+    const res = await api('/api/contexts/nonexistent/sessions');
     expect(res.status).toBe(404);
   });
 });
 
 describe('GET /api/channels', () => {
   it('returns 200 with empty array when no config', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/channels`);
+    const res = await api('/api/channels');
     expect(res.status).toBe(200);
     const body = await res.json() as any[];
     expect(Array.isArray(body)).toBe(true);
@@ -118,16 +97,14 @@ describe('GET /api/channels', () => {
 
 describe('POST /api/channels/:type/login', () => {
   it('unknown type returns 404', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/channels/unknown/login`, { method: 'POST' });
+    const res = await api('/api/channels/unknown/login', { method: 'POST' });
     expect(res.status).toBe(404);
   });
 });
 
 describe('POST /api/channels/:type/logout', () => {
   it('unknown type returns 404', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/channels/unknown/logout`, { method: 'POST' });
+    const res = await api('/api/channels/unknown/logout', { method: 'POST' });
     expect(res.status).toBe(404);
   });
 });

@@ -2,6 +2,8 @@
 
 > Your personal AI agent. Runs locally. Talks to you from anywhere.
 
+[![codecov](https://codecov.io/gh/pelerintech/reeboot/branch/main/graph/badge.svg)](https://codecov.io/gh/pelerintech/reeboot)
+
 One command to install. One conversation to configure. Then it's yours — running on your machine, connected to your WhatsApp or Signal, available in your browser, remembering everything you tell it.
 
 ---

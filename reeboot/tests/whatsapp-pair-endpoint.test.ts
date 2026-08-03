@@ -1,52 +1,57 @@
 /**
- * Pairing endpoint tests: POST /api/channels/whatsapp/pair
+ * WhatsApp pairing/QR/reset endpoints (behavioral, socket-free).
  *
- * Uses source-code inspection to verify the pairing endpoint
- * is registered and handles phone number input correctly.
+ * These routes require a configured WhatsApp adapter; with none configured they
+ * must reject with 404 through the real route handler. The full pairing/QR
+ * success flow (which needs mocked Baileys) is covered under the whatsapp
+ * mocking task.
  */
 
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { buildTestApp, type TestAppHost } from './helpers/test-app.js';
 
-const SERVER_SRC = resolve(__dirname, '../src/server.ts');
+let host: TestAppHost;
 
-describe('POST /api/channels/whatsapp/pair endpoint', () => {
-  it('route is registered in server.ts', () => {
-    const src = readFileSync(SERVER_SRC, 'utf-8');
-    expect(src).toContain("'/api/channels/whatsapp/pair'");
+beforeAll(async () => {
+  host = await buildTestApp();
+});
+
+afterAll(async () => {
+  await host.stop();
+  host.cleanup();
+});
+
+async function api(path: string, init?: any): Promise<Response> {
+  return host.app.request(`http://localhost${path}`, init);
+}
+
+describe('POST /api/channels/whatsapp/pair', () => {
+  it('returns 404 when the whatsapp channel is not configured', async () => {
+    const res = await api('/api/channels/whatsapp/pair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: '+15551234567' }),
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/not configured/i);
   });
+});
 
-  it('validates phone number is present (400 if missing)', () => {
-    const src = readFileSync(SERVER_SRC, 'utf-8');
-
-    const pairIdx = src.indexOf("'/api/channels/whatsapp/pair'");
-    const handler = src.slice(pairIdx, pairIdx + 2000);
-    expect(handler).toContain('phone is required');
-    expect(handler).toContain('400');
+describe('POST /api/channels/whatsapp/qr', () => {
+  it('returns 404 when the whatsapp channel is not configured', async () => {
+    const res = await api('/api/channels/whatsapp/qr', { method: 'POST' });
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/not configured/i);
   });
+});
 
-  it('stops adapter and clears auth before pairing', () => {
-    const src = readFileSync(SERVER_SRC, 'utf-8');
-
-    const pairIdx = src.indexOf("'/api/channels/whatsapp/pair'");
-    const handler = src.slice(pairIdx, pairIdx + 1500);
-    expect(handler).toContain('adapter.stop()');
-    expect(handler).toContain('rmSync(authDir');
-  });
-
-  it('uses Baileys with pairingCode and phoneNumber', () => {
-    const src = readFileSync(SERVER_SRC, 'utf-8');
-
-    const pairIdx = src.indexOf("'/api/channels/whatsapp/pair'");
-    const handler = src.slice(pairIdx, pairIdx + 3000);
-    expect(handler).toContain('pairingCode: true');
-    expect(handler).toContain('phoneNumber: phone');
-  });
-
-  it('returns paired status on successful pairing', () => {
-    const src = readFileSync(SERVER_SRC, 'utf-8');
-    // The string appears later in the handler, use a larger slice
-    expect(src).toContain("status: 'paired'");
+describe('POST /api/channels/whatsapp/reset', () => {
+  it('returns 404 when the whatsapp channel is not configured', async () => {
+    const res = await api('/api/channels/whatsapp/reset', { method: 'POST' });
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/not configured/i);
   });
 });

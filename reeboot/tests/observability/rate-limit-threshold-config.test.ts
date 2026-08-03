@@ -3,6 +3,7 @@
  * A custom threshold passed to makeObservabilityExtension should override 5000.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
 import Database from 'better-sqlite3';
 import { runResilienceMigration, runObservabilityMigration } from '@src/db/schema.js';
 
@@ -41,7 +42,7 @@ describe('OB-5-C: rate_limit_warn_threshold is configurable', () => {
       provider: 'test-provider',
       headers: { 'x-ratelimit-remaining-tokens': '800' },
     });
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const event = db.prepare("SELECT * FROM events WHERE type = 'rate_limit_warning'").get() as any;
     expect(event).toBeDefined();
@@ -63,7 +64,7 @@ describe('OB-5-C: rate_limit_warn_threshold is configurable', () => {
       provider: 'test-provider',
       headers: { 'x-ratelimit-remaining-tokens': '2000' },
     });
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const event = db.prepare("SELECT * FROM events WHERE type = 'rate_limit_warning'").get();
     expect(event).toBeUndefined();
@@ -83,7 +84,7 @@ describe('OB-5-C: rate_limit_warn_threshold is configurable', () => {
       provider: 'test-provider',
       headers: { 'x-ratelimit-remaining-tokens': '4999' },
     });
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const event = db.prepare("SELECT * FROM events WHERE type = 'rate_limit_warning'").get() as any;
     expect(event).toBeDefined();

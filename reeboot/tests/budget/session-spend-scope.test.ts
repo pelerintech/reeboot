@@ -40,9 +40,9 @@ function toSqliteUtc(d: Date): string {
 
 describe('Session spend scoping', () => {
   let tmpDir: string;
-  let port: number;
-  let stopServer: () => Promise<void>;
+  let closeServer: () => Promise<void>;
   let db: Database.Database;
+  let app: any;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'session-scope-test-'));
@@ -58,7 +58,6 @@ describe('Session spend scoping', () => {
        VALUES ('main', 1000, 500, 'test', 1.00, 'user_message', ?)`
     ).run(pastTs);
 
-    // Now import server module — this sets module-level startTime = Date.now()
     writeFileSync(join(tmpDir, 'config.json'), JSON.stringify({
       channels: { web: { enabled: true } },
       budget: { daily_cost_usd: 10.0 },
@@ -68,24 +67,17 @@ describe('Session spend scoping', () => {
     const config = loadConfig(join(tmpDir, 'config.json'));
 
     const server = await import('@src/server.js');
-    const result = await server.startServer({
-      port: 0,
-      logLevel: 'silent',
-      db,
-      reebotDir: tmpDir,
-      config,
-    });
-    port = result.port;
-    stopServer = server.stopServer;
+    app = await server.buildApp({ logLevel: 'silent', db, reebotDir: tmpDir, config });
+    closeServer = server.stopServer;
   });
 
   afterEach(async () => {
-    try { await stopServer(); } catch { /* already stopped */ }
+    try { await closeServer(); } catch { /* already stopped */ }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('session_cost_usd excludes rows from before server start', async () => {
-    const res = await fetch(`http://localhost:${port}/api/settings/budget`);
+    const res = await app.request('/api/settings/budget');
     expect(res.status).toBe(200);
     const body = await res.json() as any;
 
@@ -97,7 +89,7 @@ describe('Session spend scoping', () => {
   });
 
   it('session_tokens excludes rows from before server start', async () => {
-    const res = await fetch(`http://localhost:${port}/api/settings/budget`);
+    const res = await app.request('/api/settings/budget');
     expect(res.status).toBe(200);
     const body = await res.json() as any;
 

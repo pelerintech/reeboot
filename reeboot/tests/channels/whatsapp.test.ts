@@ -7,8 +7,11 @@
  * Use startAndConnect() helper to start the adapter and emit 'open' concurrently.
  */
 
-import { describe, it, expect, beforeEach, vi, type MockedFunction } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockedFunction } from 'vitest';
 import { EventEmitter } from 'events';
+import { mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { MessageBus } from '@src/channels/interface.js';
 
 // ─── Baileys mock ─────────────────────────────────────────────────────────────
@@ -47,6 +50,7 @@ vi.mock('@whiskeysockets/baileys', () => ({
 describe('WhatsAppAdapter', () => {
   let adapter: any;
   let bus: MessageBus;
+  let authDir: string;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -56,10 +60,16 @@ describe('WhatsAppAdapter', () => {
     mockSocket.readMessages = vi.fn().mockResolvedValue(undefined);
     mockSocket.sendPresenceUpdate = vi.fn().mockResolvedValue(undefined);
 
-    // Provide a temp auth dir
+    // Provide a temp auth dir (per-test, under os.tmpdir())
+    authDir = mkdtempSync(join(tmpdir(), 'wa-auth-'));
     const { WhatsAppAdapter } = await import('@src/channels/whatsapp.js');
     bus = new MessageBus();
-    adapter = new WhatsAppAdapter('/tmp/test-wa-auth');
+    adapter = new WhatsAppAdapter(authDir);
+  });
+
+  afterEach(() => {
+    try { adapter.disconnect?.(); } catch { /* ignore */ }
+    rmSync(authDir, { recursive: true, force: true });
   });
 
   /**
@@ -91,7 +101,7 @@ describe('WhatsAppAdapter', () => {
   it('saved auth state is loaded without QR (useMultiFileAuthState called)', async () => {
     await adapter.init({ enabled: true }, bus);
     await startAndConnect();
-    expect(mockUseMultiFileAuthState).toHaveBeenCalledWith('/tmp/test-wa-auth');
+    expect(mockUseMultiFileAuthState).toHaveBeenCalledWith(authDir);
   });
 
   it('incoming text message is emitted on bus', async () => {

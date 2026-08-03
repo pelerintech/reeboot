@@ -16,6 +16,9 @@ coverage/
 .vitest/
 node_modules/.vite/
 
+# ─── Scratch / temp (never commit) ─────────────────────────────────────────────
+.tmp/
+
 # ─── Runtime data (never commit user data or secrets) ─────────────────────────
 *.db
 *.sqlite

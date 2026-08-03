@@ -1,4 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-loop-'));
 
 const mocks = vi.hoisted(() => ({ calls: [] as any[] }));
 
@@ -19,8 +24,8 @@ describe('agent loop filters tools by auth level', () => {
     const { runReeAgentLoop } = await import('@src/runtime/ree-agent-loop.js');
 
     const context: any = {
-      cwd: '/tmp/w',
-      workspacePath: '/tmp/w',
+      cwd: WORKSPACE,
+      workspacePath: WORKSPACE,
       config: { agent: { model: { provider: 'openai' } } },
       ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
       hasUI: false,

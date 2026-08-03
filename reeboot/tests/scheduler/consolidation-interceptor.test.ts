@@ -35,7 +35,7 @@ describe('consolidation interceptor', () => {
       bus: fakeBus as any,
       runConsolidation: runConsolidationSpy,
       llmCall: stubLlmCall,
-      memoriesDir: '/tmp/test-memories',
+      memoriesDir: mkdtempSync(join(tmpdir(), 'reeboot-memories-')),
       memoryCharLimit: 2200,
       userCharLimit: 1375,
     });
@@ -61,7 +61,7 @@ describe('consolidation interceptor', () => {
       bus: fakeBus as any,
       runConsolidation: runConsolidationSpy,
       llmCall: vi.fn(),
-      memoriesDir: '/tmp/test-memories',
+      memoriesDir: mkdtempSync(join(tmpdir(), 'reeboot-memories-')),
       memoryCharLimit: 2200,
       userCharLimit: 1375,
     });

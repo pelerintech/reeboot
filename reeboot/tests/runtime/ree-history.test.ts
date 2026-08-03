@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync } from 'fs';
+import { mkdirSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { ExtensionContext } from '@src/extensions/extension-api.js';
 
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-history-'));
+
 const mockContext: ExtensionContext = {
-  cwd: '/tmp/test-workspace',
-  workspacePath: '/tmp/test-workspace',
+  cwd: WORKSPACE,
+  workspacePath: WORKSPACE,
   config: { agent: { model: { provider: 'openai' } } },
   ui: {
     select: async () => undefined,

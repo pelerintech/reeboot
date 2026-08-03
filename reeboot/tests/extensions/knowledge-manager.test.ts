@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import Database from 'better-sqlite3';
-import { mkdirSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, rmSync, existsSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { loadVecExtension } from '../../src/db/index.js';
@@ -81,6 +81,36 @@ function makeMockPi(config: Record<string, unknown>, db: Database.Database): Moc
   return pi;
 }
 
+let rawDir: string;
+let wikiTmp: string;
+
+beforeAll(() => {
+  rawDir = mkdtempSync(join(tmpdir(), 'reeboot-kn-raw-'));
+  wikiTmp = mkdtempSync(join(tmpdir(), 'reeboot-kn-wiki-'));
+  mkdirSync(join(rawDir, 'owner'), { recursive: true });
+  mkdirSync(join(wikiTmp, 'concepts'), { recursive: true });
+  mkdirSync(join(wikiTmp, 'sources'), { recursive: true });
+  mkdirSync(join(wikiTmp, 'comparisons'), { recursive: true });
+});
+
+afterAll(() => {
+  rmSync(rawDir, { recursive: true, force: true });
+  rmSync(wikiTmp, { recursive: true, force: true });
+});
+
+
+vi.mock('../../src/knowledge/watcher.js', () => {
+  const pending: string[] = [];
+  class FakeKnowledgeWatcher {
+    start() {}
+    pause() {}
+    resume() {}
+    stop() {}
+    getPendingFiles() { return [...pending]; }
+  }
+  return { KnowledgeWatcher: FakeKnowledgeWatcher, __pending: pending };
+});
+
 describe('knowledge-manager extension — knowledge_search with wiki augmentation', () => {
   let db: Database.Database;
   let wikiDir: string;
@@ -139,7 +169,7 @@ describe('knowledge-manager extension — knowledge_search with wiki augmentatio
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir });
 
     const searchHandler = pi.tools.get('knowledge_search')!;
     const result = await searchHandler('call-id', { query: 'contract consent', limit: 3 });
@@ -180,7 +210,7 @@ describe('knowledge-manager extension — knowledge_search with wiki augmentatio
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
     const searchHandler = pi.tools.get('knowledge_search')!;
     const result = await searchHandler('call-id', { query: 'some query' });
@@ -226,7 +256,7 @@ describe('knowledge-manager extension — knowledge_search tool', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
     const searchHandler = pi.tools.get('knowledge_search')!;
     const result = await searchHandler('call-id', { query: 'contract consent', limit: 3 });
@@ -256,7 +286,7 @@ describe('knowledge-manager extension — knowledge_search tool', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
     const searchHandler = pi.tools.get('knowledge_search')!;
     const result = await searchHandler('call-id', { query: 'nonexistent topic' });
@@ -296,17 +326,17 @@ describe('knowledge-manager extension — knowledge_ingest tool', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
     const ingestHandler = pi.tools.get('knowledge_ingest')!;
     const result = await ingestHandler('call-id', {
-      filePath: '/tmp/raw/owner/contract.pdf',
+      filePath: join(rawDir, 'owner', 'contract.pdf'),
       sourceTier: 'owner',
       confidence: 'high',
     });
 
     expect(ingestDocument).toHaveBeenCalledWith(
-      '/tmp/raw/owner/contract.pdf',
+      join(rawDir, 'owner', 'contract.pdf'),
       'owner',
       'high',
       expect.objectContaining({ enabled: true }),
@@ -328,6 +358,7 @@ describe('knowledge-manager extension — watcher lifecycle', () => {
     rawDir = join(tmpdir(), `lifecycle-test-${Date.now()}`);
     mkdirSync(join(rawDir, 'owner'), { recursive: true });
     mkdirSync(join(rawDir, 'template'), { recursive: true });
+    (async () => { const { __pending } = await import('../../src/knowledge/watcher.js'); __pending.length = 0; })();
     vi.clearAllMocks();
   });
 
@@ -351,16 +382,12 @@ describe('knowledge-manager extension — watcher lifecycle', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
-    // Manually inject a pending file into the watcher
-    // We need to find the watcher instance — use a spy
-    // Instead, write a file and wait for debounce
-    const { writeFileSync } = await import('fs');
-    writeFileSync(join(rawDir, 'owner', 'new-doc.md'), '# New document', 'utf-8');
-
-    // Wait for watcher debounce
-    await new Promise((res) => setTimeout(res, 500));
+    // Deterministically inject a pending file into the (mocked) watcher queue,
+    // avoiding real fs.watch timing and fd leaks.
+    const { __pending } = await import('../../src/knowledge/watcher.js');
+    __pending.push(join(rawDir, 'owner', 'new-doc.md'));
 
     // Fire agent_end
     const agentEndHandler = pi.handlers['agent_end'];
@@ -387,7 +414,7 @@ describe('knowledge-manager extension — watcher lifecycle', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
     const agentEndHandler = pi.handlers['agent_end'];
     await agentEndHandler();
@@ -409,7 +436,7 @@ describe('knowledge-manager extension — watcher lifecycle', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
     const shutdownHandler = pi.handlers['session_shutdown'];
     expect(shutdownHandler).toBeDefined();
@@ -461,7 +488,7 @@ describe('knowledge-manager extension — wiki tools', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir });
 
     const fileHandler = pi.tools.get('knowledge_file')!;
     await fileHandler('call-id', {
@@ -499,7 +526,7 @@ describe('knowledge-manager extension — wiki tools', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir });
 
     const fileHandler = pi.tools.get('knowledge_file')!;
     await fileHandler('call-id', {
@@ -533,7 +560,7 @@ describe('knowledge-manager extension — wiki tools', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir });
 
     const lintHandler = pi.tools.get('knowledge_lint')!;
     const result = await lintHandler('call-id', {});
@@ -568,7 +595,7 @@ describe('knowledge-manager extension — wiki tools', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir });
 
     // File two low-confidence pages
     const fileHandler = pi.tools.get('knowledge_file')!;
@@ -613,7 +640,7 @@ describe('knowledge-manager extension — wiki tools', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir });
 
     // Create a wiki page then delete it from disk (leaving orphan db entry)
     const { join: pathJoin } = await import('path');
@@ -665,7 +692,7 @@ describe('knowledge-manager extension — wiki system prompt injection', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir: tmpWiki });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: tmpWiki });
 
     const handler = pi.handlers['before_agent_start'];
     expect(handler).toBeDefined();
@@ -695,7 +722,7 @@ describe('knowledge-manager extension — wiki system prompt injection', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
     // before_agent_start is always registered (close-while-processing pattern for watcher)
     const handler = pi.handlers['before_agent_start'];
@@ -744,7 +771,7 @@ describe('knowledge-manager extension — tool registration', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: wikiTmp });
 
     expect(pi.tools.has('knowledge_search')).toBe(true);
     expect(pi.tools.has('knowledge_ingest')).toBe(true);
@@ -770,7 +797,7 @@ describe('knowledge-manager extension — tool registration', () => {
       },
     };
     const pi = makeMockPi(config, db);
-    makeKnowledgeExtension(pi as any, { rawDir: '/tmp/raw', wikiDir: tmpWiki });
+    makeKnowledgeExtension(pi as any, { rawDir, wikiDir: tmpWiki });
 
     expect(pi.tools.has('knowledge_search')).toBe(true);
     expect(pi.tools.has('knowledge_ingest')).toBe(true);

@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-wiring-'));
 import type { ExtensionContext, ContextConfig } from '@src/agent-runner/interface.js';
 
 const mockContext: ExtensionContext = {
-  cwd: '/tmp/test-workspace',
-  workspacePath: '/tmp/test-workspace',
+  cwd: WORKSPACE,
+  workspacePath: WORKSPACE,
   config: { agent: { model: { provider: 'openai' } } },
   ui: {
     select: async () => undefined,
@@ -18,7 +23,7 @@ const mockConfig = { agent: { model: { provider: 'openai' } } };
 
 const runnerContext: ContextConfig = {
   id: 'main',
-  workspacePath: '/tmp/test-workspace',
+  workspacePath: WORKSPACE,
 };
 
 // ─── Task 26: extension subset wired into the production path ────────────────
@@ -65,8 +70,12 @@ describe('Extension subset wiring — createRunner sets factories on the runtime
     const runner: any = createRunner(runnerContext, { ...mockConfig, sdk: 'ree' } as any);
 
     // The runner exposes its runtime (read-only) for introspection/testing.
+    const REE_FACTORY_MODULES = [
+      'observability', 'session-name', 'token-meter', 'capabilities',
+      'ree-session-search', 'injection-guard', 'trust-enforcer', 'delegate',
+    ];
     expect(runner.runtime).toBeDefined();
-    expect(runner.runtime.factories.length).toBe(7);
+    expect(runner.runtime.factories.length).toBe(REE_FACTORY_MODULES.length);
   });
 });
 

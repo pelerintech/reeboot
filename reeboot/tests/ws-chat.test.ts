@@ -1,109 +1,78 @@
 /**
- * WebSocket Chat Endpoint Tests (Hono version)
+ * WebSocket Chat handler tests (handler-level, no socket).
+ *
+ * Drives the real /ws/chat/:contextId handler callbacks (onOpen / onMessage /
+ * onClose) directly with fixture payloads and a fake ws, asserting the emitted
+ * frames — the design-recommended socket-free approach.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import Database from 'better-sqlite3';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import { mkdirSync, rmSync } from 'fs';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { buildTestApp, type TestAppHost } from './helpers/test-app.js';
+import { wsChatHandler } from '../src/server.js';
 
-let startServer: any;
-let stopServer: any;
-let tmpDir: string;
-let db: Database.Database;
+let host: TestAppHost;
 
-function wsConnect(url: string): Promise<{ ws: WebSocket; messages: any[] }> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    const messages: any[] = [];
-    ws.onmessage = (e) => {
-      try { messages.push(JSON.parse(e.data as string)); } catch { messages.push(e.data); }
-    };
-    ws.onopen = () => resolve({ ws, messages });
-    ws.onerror = (e) => reject(e);
+beforeAll(async () => {
+  host = await buildTestApp();
+});
+
+afterAll(async () => {
+  await host.stop();
+  host.cleanup();
+});
+
+function fakeWs() {
+  const sends: any[] = [];
+  const closed: Array<{ code?: number; reason?: string }> = [];
+  const ws = {
+    send: (data: string) => {
+      try { sends.push(JSON.parse(data)); } catch { sends.push(data); }
+    },
+    close: (code?: number, reason?: string) => closed.push({ code, reason }),
+  };
+  return { ws, sends, closed };
+}
+
+function handler(contextId: string, overrides: Record<string, any> = {}) {
+  return wsChatHandler({
+    db: host.db,
+    contextId,
+    clientIp: '127.0.0.1',
+    serverToken: undefined,
+    isReeMode: false,
+    ...overrides,
   });
 }
 
-function waitForMessage(messages: any[], predicate: (m: any) => boolean, timeout = 2000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const check = () => {
-      const found = messages.find(predicate);
-      if (found) return resolve(found);
-      if (Date.now() - start > timeout) return reject(new Error('Timeout waiting for message'));
-      setTimeout(check, 50);
-    };
-    check();
-  });
-}
-
-beforeEach(async () => {
-  tmpDir = join(tmpdir(), `reeboot-ws-test-${Date.now()}`);
-  mkdirSync(tmpDir, { recursive: true });
-  db = new Database(join(tmpDir, 'test.db'));
-
-  vi.resetModules();
-  ({ startServer, stopServer } = await import('@src/server.js'));
-});
-
-afterEach(async () => {
-  try { await stopServer(); } catch { /* ignore */ }
-  try { db.close(); } catch { /* ignore */ }
-  rmSync(tmpDir, { recursive: true, force: true });
-});
-
-describe('WS /ws/chat/:contextId', () => {
-  it('valid context "main" receives connected message', async () => {
-    const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-    const { ws, messages } = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
-
-    const connected = await waitForMessage(messages, m => m.type === 'connected');
+describe('WS /ws/chat/:contextId — handler level', () => {
+  it('valid context "main" receives connected message with a sessionId', () => {
+    const { ws, sends, closed } = fakeWs();
+    handler('main').onOpen({}, ws);
+    expect(closed.length).toBe(0);
+    const connected = sends.find((m: any) => m.type === 'connected');
+    expect(connected).toBeDefined();
     expect(connected.contextId).toBe('main');
     expect(connected.sessionId).toBeDefined();
-
-    ws.close();
   });
 
-  it('unknown context closes with code 4004', async () => {
-    const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-
-    const closeCode = await new Promise<number>((resolve) => {
-      const ws = new WebSocket(`ws://localhost:${port}/ws/chat/nonexistent-ctx`);
-      ws.onclose = (e) => resolve(e.code);
-    });
-
-    expect(closeCode).toBe(4004);
+  it('unknown context closes with code 4004 (pi gating)', () => {
+    const { ws, closed } = fakeWs();
+    handler('nonexistent-ctx').onOpen({}, ws);
+    expect(closed[0]?.code).toBe(4004);
   });
 
-  it('message while busy returns error without starting new turn', async () => {
-    const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-    const { ws, messages } = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
-
-    await waitForMessage(messages, m => m.type === 'connected');
-
-    // Send two messages quickly
-    ws.send(JSON.stringify({ type: 'message', content: 'first' }));
-    ws.send(JSON.stringify({ type: 'message', content: 'second' }));
-
-    // We should get a busy error for the second message
-    const busyError = await waitForMessage(messages, m => m.type === 'error' && m.message?.includes('busy'), 3000).catch(() => null);
-    ws.close();
-    // Just verify no crash
-    expect(true).toBe(true);
-  });
-
-  it('invalid JSON receives error', async () => {
-    const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-    const { ws, messages } = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
-
-    await waitForMessage(messages, m => m.type === 'connected');
-
-    ws.send('not-json');
-
-    const err = await waitForMessage(messages, m => m.type === 'error');
+  it('invalid JSON receives an error frame', async () => {
+    const { ws, sends } = fakeWs();
+    await handler('main').onMessage({ data: 'not-json' }, ws);
+    const err = sends.find((m: any) => m.type === 'error');
+    expect(err).toBeDefined();
     expect(err.message).toMatch(/Invalid JSON/i);
+  });
 
-    ws.close();
+  it('message while bus not initialized yields a not-initialized error (no crash)', async () => {
+    const { ws, sends, closed } = fakeWs();
+    await handler('main').onMessage({ data: JSON.stringify({ type: 'message', content: 'hi' }) }, ws);
+    expect(sends.some((m: any) => m.type === 'error')).toBe(true);
+    expect(closed.length).toBe(0);
   });
 });

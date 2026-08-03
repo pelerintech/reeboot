@@ -151,7 +151,7 @@ describe('protected-paths expanded', () => {
   it('allows write to /tmp', async () => {
     const { toolCallHandler } = await loadExtension();
     const result = await toolCallHandler(
-      { toolName: 'write', args: { path: '/tmp/output.txt' } },
+      { toolName: 'write', args: { path: join(tmpdir(), 'output.txt') } },
       { hasUI: false },
     );
     expect(result).toBeUndefined();

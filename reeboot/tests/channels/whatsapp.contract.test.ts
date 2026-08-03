@@ -3,8 +3,12 @@
  */
 
 import { describe, beforeEach, vi } from 'vitest';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { runChannelContractTests } from './contract/runContractTests.js';
 import type { Tier1Factory } from './contract/runContractTests.js';
+
+const WA_AUTH = join(tmpdir(), 'reeboot-wa-auth');
 
 // ─── Baileys mock (mirror whatsapp.test.ts setup) ─────────────────────────────
 
@@ -47,7 +51,7 @@ vi.mock('fs', async (importOriginal) => {
 let WhatsAppAdapterClass: any;
 
 const whatsappFactory: Tier1Factory = (_bus) => {
-  const adapter = new WhatsAppAdapterClass('/tmp/test-wa-auth');
+  const adapter = new WhatsAppAdapterClass(WA_AUTH);
   const ownJid = '40700000001@s.whatsapp.net';
 
   return {

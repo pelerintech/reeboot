@@ -96,6 +96,17 @@ export function runResilienceMigration(db: import('better-sqlite3').Database): v
     )
   `);
 
+  // Ensure the `closed_at` column exists. This migration creates turn_journal
+  // itself, but runObservabilityMigration (which adds closed_at) may run before
+  // this table exists on a fresh DB — so add it here too, idempotently, to keep
+  // this migration self-contained regardless of ordering.
+  {
+    const tjCols = (db.pragma('table_info(turn_journal)') as Array<{ name: string }>).map(c => c.name);
+    if (!tjCols.includes('closed_at')) {
+      db.exec(`ALTER TABLE turn_journal ADD COLUMN closed_at TEXT`);
+    }
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS turn_journal_steps (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,

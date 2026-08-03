@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import Database from 'better-sqlite3';
 import { runResilienceMigration, runObservabilityMigration } from '@src/db/schema.js';
+
+const SESSION_FILE = join(mkdtempSync(join(tmpdir(), 'reeboot-sess-')), 'session.jsonl');
 
 function makeDb(): Database.Database {
   const db = new Database(':memory:');
@@ -32,7 +38,7 @@ describe('Observability extension — session lifecycle', () => {
     makeObservabilityExtension(pi as any, db);
 
     pi.emit('session_shutdown', { reason: 'quit', sessionId: 'main' });
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const row = db.prepare("SELECT * FROM session_events LIMIT 1").get() as any;
     expect(row).toBeDefined();
@@ -54,7 +60,7 @@ describe('Observability extension — session lifecycle', () => {
     ).run();
 
     pi.emit('session_shutdown', { reason: 'quit', sessionId: 'main' });
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const row = db.prepare("SELECT * FROM session_events LIMIT 1").get() as any;
     expect(row).toBeDefined();
@@ -70,7 +76,7 @@ describe('Observability extension — session lifecycle', () => {
     makeObservabilityExtension(pi as any, db);
 
     pi.emit('session_shutdown', { reason: 'reload', sessionId: 'main' });
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const row = db.prepare("SELECT * FROM session_events LIMIT 1").get() as any;
     expect(row.reason).toBe('reload');
@@ -84,10 +90,10 @@ describe('Observability extension — session lifecycle', () => {
     const pi = makePi(db);
     makeObservabilityExtension(pi as any, db);
 
-    pi.emit('session_shutdown', { reason: 'quit', sessionId: 'main', targetSessionFile: '/tmp/session.jsonl' });
-    await new Promise(r => setTimeout(r, 20));
+    pi.emit('session_shutdown', { reason: 'quit', sessionId: 'main', targetSessionFile: SESSION_FILE });
+    await drainEventLoop();
 
     const row = db.prepare("SELECT * FROM session_events LIMIT 1").get() as any;
-    expect(row.session_path).toBe('/tmp/session.jsonl');
+    expect(row.session_path).toBe(SESSION_FILE);
   });
 });

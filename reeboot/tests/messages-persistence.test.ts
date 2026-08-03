@@ -5,6 +5,7 @@
  * - assistant message written to messages table on success (Task 8)
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { drainEventLoop } from './helpers/event-drain.js';
 import Database from 'better-sqlite3';
 import { runResilienceMigration, runObservabilityMigration } from '../src/db/schema.js';
 import { createContextsTable } from '../src/context.js';
@@ -184,7 +185,7 @@ describe('Orchestrator — user message persistence', () => {
     }));
 
     // Wait for turn to complete
-    await new Promise(r => setTimeout(r, 100));
+    await drainEventLoop();
 
     const rows = db.prepare("SELECT role, content, channel, peer_id FROM messages WHERE role = 'user'").all() as any[];
     expect(rows).toHaveLength(1);
@@ -203,7 +204,7 @@ describe('Orchestrator — user message persistence', () => {
       raw: null,
     }));
 
-    await new Promise(r => setTimeout(r, 100));
+    await drainEventLoop();
 
     const rows = db.prepare("SELECT * FROM messages").all();
     expect(rows).toHaveLength(0);
@@ -216,7 +217,7 @@ describe('Orchestrator — user message persistence', () => {
       channelType: 'whatsapp', peerId: '+40X', content: 'hello', raw: null,
     }));
 
-    await new Promise(r => setTimeout(r, 100));
+    await drainEventLoop();
 
     const rows = db.prepare("SELECT role, content FROM messages ORDER BY rowid").all() as any[];
     expect(rows).toHaveLength(2);
@@ -232,7 +233,7 @@ describe('Orchestrator — user message persistence', () => {
       channelType: 'whatsapp', peerId: '+40X', content: 'ping', raw: null,
     }));
 
-    await new Promise(r => setTimeout(r, 100));
+    await drainEventLoop();
 
     const rows = db.prepare("SELECT role FROM messages").all() as any[];
     // Only user row — no assistant row for empty response
@@ -249,7 +250,7 @@ describe('Orchestrator — user message persistence', () => {
       raw: null,
     }));
 
-    await new Promise(r => setTimeout(r, 300));
+    await drainEventLoop();
 
     const userRows = db.prepare("SELECT role, content FROM messages WHERE role = 'user'").all() as any[];
     expect(userRows).toHaveLength(1);
@@ -269,7 +270,7 @@ describe('Orchestrator — user message persistence', () => {
       raw: null,
     }));
 
-    await new Promise(r => setTimeout(r, 100));
+    await drainEventLoop();
 
     const rows = db.prepare("SELECT * FROM messages").all();
     expect(rows).toHaveLength(0);

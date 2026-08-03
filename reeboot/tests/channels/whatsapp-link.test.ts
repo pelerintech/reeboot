@@ -10,6 +10,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'events';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const AUTH_DIR = join(tmpdir(), 'reeboot-wa-link');
 
 // ─── Socket factory ───────────────────────────────────────────────────────────
 // Each makeWASocket() call pushes a fresh socket into createdSockets.
@@ -94,7 +98,7 @@ describe('linkWhatsAppDevice', () => {
     const onTimeout = vi.fn();
 
     const linkPromise = linkWhatsAppDevice({
-      authDir: '/tmp/test-link',
+      authDir: AUTH_DIR,
       onQr,
       onSuccess,
       onTimeout,
@@ -132,7 +136,7 @@ describe('linkWhatsAppDevice', () => {
     const onTimeout = vi.fn();
 
     const linkPromise = linkWhatsAppDevice({
-      authDir: '/tmp/test-link',
+      authDir: AUTH_DIR,
       onQr,
       onSuccess,
       onTimeout,
@@ -159,7 +163,7 @@ describe('linkWhatsAppDevice', () => {
 
     // Use a short real timeout — 80ms is enough for CI
     const linkPromise = linkWhatsAppDevice({
-      authDir: '/tmp/test-link',
+      authDir: AUTH_DIR,
       onQr,
       onSuccess,
       onTimeout,
@@ -181,7 +185,7 @@ describe('linkWhatsAppDevice', () => {
     const onTimeout = vi.fn();
 
     linkWhatsAppDevice({
-      authDir: '/tmp/test-link',
+      authDir: AUTH_DIR,
       onQr,
       onSuccess,
       onTimeout,
@@ -210,7 +214,7 @@ describe('linkWhatsAppDevice', () => {
     const onTimeout = vi.fn();
 
     const linkPromise = linkWhatsAppDevice({
-      authDir: '/tmp/test-link',
+      authDir: AUTH_DIR,
       onQr: vi.fn(),
       onSuccess,
       onTimeout,

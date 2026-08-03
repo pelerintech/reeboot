@@ -96,6 +96,9 @@ let _credProxy: ServerType | null = null;
 // Periodic retention timer handle
 let _retentionTimer: ReturnType<typeof setInterval> | null = null;
 
+// WebSocket injection fn (bound to the built app, used by startServer)
+let _injectWebSocket: ((server: ServerType) => void) | null = null;
+
 // ─── Auth helper ─────────────────────────────────────────────────────────────
 
 function isLoopback(ip: string): boolean {
@@ -108,13 +111,19 @@ function extractToken(c: any): string | undefined {
   return c.req.query('token') ?? undefined;
 }
 
-// ─── startServer ─────────────────────────────────────────────────────────────
+// ─── buildApp ──────────────────────────────────────────────────────────────
 
-export async function startServer(opts: ServerOptions = {}): Promise<{ port: number; host: string }> {
-  const port = opts.port ?? 3000;
-  const host = opts.host ?? '127.0.0.1';
+/** Build the full Hono app (routes + WS handlers) without binding a socket. */
+export async function buildApp(opts: ServerOptions = {}): Promise<Hono> {
   const reebotDir = opts.reebotDir ?? join(homedir(), '.reeboot');
   const serverToken = opts.token;
+
+  // Initialise the logger first so nothing else falls back to the real-home
+  // default (which is unwritable in sandboxed/CI environments).
+  {
+    const loggingConfig = (opts.config as any)?.logging ?? {};
+    initLogger({ level: loggingConfig.level ?? 'info', logDir: join(reebotDir, 'logs') }, undefined);
+  }
 
   const app = new Hono();
 
@@ -171,7 +180,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   // ── Re-initialise logger with DB so warn+ records persist to operational_logs ──
   {
     const loggingConfig = (opts.config as any)?.logging ?? {};
-    initLogger({ level: loggingConfig.level ?? 'info' }, db);
+    initLogger({ level: loggingConfig.level ?? 'info', logDir: join(reebotDir, 'logs') }, db);
   }
 
   // ── Channel & Orchestrator init ─────────────────────────────────────────
@@ -917,135 +926,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   // ── WebSocket: /ws/chat/:contextId ──────────────────────────────────────
 
   const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
+  _injectWebSocket = injectWebSocket;
 
   app.get('/ws/chat/:contextId', upgradeWebSocket((c) => {
     const contextId = c.req.param('contextId')!;
     const clientIp = (c.env as any)?.incoming?.socket?.remoteAddress ?? '';
-
-    const sessionId = nanoid();
-    // ree mode: the path segment is the conversationId (isolation axis). It is
-    // NOT a pre-registered context — runners are created dynamically. The
-    // nanoid sessionId stays the per-connection reply-routing token (peerId).
-    const isReeMode = (opts.config as any)?.sdk === 'ree';
-
-    return {
-      onOpen(_event, ws) {
-        // Auth check for non-loopback connections
-        if (serverToken) {
-          if (!isLoopback(clientIp)) {
-            const provided = extractToken(c);
-            if (provided !== serverToken) {
-              ws.close(1008, 'Unauthorized');
-              return;
-            }
-          }
-        }
-
-        // pi mode: validate context exists (static runner map).
-        // ree mode: dynamic conversation ids are never in `contexts` — skip the
-        // gate. Per-customer isolation comes from conversationId → chat. Invalid /
-        // reserved ids are rejected at message time (before dispatch).
-        if (!isReeMode) {
-          const ctx = getContextById(db, contextId);
-          if (!ctx) {
-            ws.close(4004, 'Unknown context');
-            return;
-          }
-        }
-
-        // Register peer with WebAdapter for reply routing
-        // wsSend is a no-op — streaming events deliver everything via sendEvent
-        const wsSend = async () => {};
-        const wsEvent = (event: any) => {
-          try { ws.send(JSON.stringify(event)); } catch { /* connection may be closed */ }
-        };
-        webAdapter.registerPeer(sessionId, wsSend, wsEvent);
-
-        // Send connected event with unique sessionId
-        ws.send(JSON.stringify({ type: 'connected', contextId, sessionId }));
-      },
-
-      onMessage: async (event, ws) => {
-        let msg: any;
-        try {
-          msg = JSON.parse(event.data as string);
-        } catch {
-          ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
-          return;
-        }
-
-        // ree mode: validate the conversation id before any dispatch. Reject
-        // reserved/invalid ids with an error frame and do not publish.
-        if (isReeMode && !isValidConversationId(contextId)) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            message: `Invalid or reserved conversation id: "${contextId}"`,
-          }));
-          return;
-        }
-
-        if (msg.type === 'cancel') {
-          // Publish a cancellation signal to the bus.
-          // The orchestrator detects action: 'cancel' and calls runner.abort().
-          if (_bus) {
-            _bus.publish(createIncomingMessage({
-              channelType: 'web',
-              peerId: sessionId,
-              conversationId: isReeMode ? contextId : undefined,
-              content: '',
-              raw: null,
-              action: 'cancel',
-            }));
-          }
-          ws.send(JSON.stringify({ type: 'cancelled' }));
-          return;
-        }
-
-        if (msg.type === 'action') {
-          if (!_bus) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Server not fully initialized' }));
-            return;
-          }
-
-          // Build structured content from the action message
-          let actionContent: string;
-          if (msg.action === 'confirm') {
-            actionContent = `[User confirmed: ${msg.value ?? false}]`;
-          } else if (msg.action === 'form_submit') {
-            actionContent = `[Form Response: ${JSON.stringify(msg.fields ?? {})}]`;
-          } else {
-            actionContent = `[Action: ${JSON.stringify(msg)}]`;
-          }
-
-          _bus.publish(createIncomingMessage({
-            channelType: 'web',
-            peerId: sessionId,
-            conversationId: isReeMode ? contextId : undefined,
-            content: actionContent,
-            raw: null,
-          }));
-          return;
-        }
-
-        if (msg.type === 'message') {
-          if (!_bus) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Server not fully initialized' }));
-            return;
-          }
-          _bus.publish(createIncomingMessage({
-            channelType: 'web',
-            peerId: sessionId,
-            conversationId: isReeMode ? contextId : undefined,
-            content: msg.content ?? '',
-            raw: null,
-          }));
-        }
-      },
-
-      onClose(_event, ws) {
-        webAdapter.unregisterPeer(sessionId);
-      },
-    };
+    return wsChatHandler({
+      db,
+      contextId,
+      clientIp,
+      serverToken,
+      token: extractToken(c),
+      isReeMode: (opts.config as any)?.sdk === 'ree',
+    });
   }));
 
   // ── A2A: Agent-to-Agent protocol ─────────────────────────────────────────
@@ -1222,10 +1115,162 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
     return c.json({ error: 'Not found' }, 404);
   });
 
-  // ── Start HTTP server ───────────────────────────────────────────────────
+  return app;
+}
+
+// ─── WebSocket chat handler (drivable without a socket) ────────────────────
+// The real per-connection WS handler, exported so tests can invoke onOpen /
+// onMessage / onClose directly with fixture payloads and a fake ws — no TCP
+// or browser socket required. Production route registration below calls it.
+
+export function wsChatHandler(opts: {
+  db: Database.Database;
+  contextId: string;
+  clientIp: string;
+  serverToken?: string;
+  /** The auth token extracted from the connection (if serverToken is set). */
+  token?: string;
+  isReeMode: boolean;
+}): {
+  onOpen(_event: unknown, ws: any): void;
+  onMessage(event: any, ws: any): Promise<void>;
+  onClose(_event: unknown, ws: any): void;
+} {
+  const { db, contextId, clientIp, serverToken, token, isReeMode } = opts;
+  const sessionId = nanoid();
+  // ree mode: the path segment is the conversationId (isolation axis). It is
+  // NOT a pre-registered context — runners are created dynamically. The
+  // nanoid sessionId stays the per-connection reply-routing token (peerId).
+  return {
+      onOpen(_event, ws) {
+        // Auth check for non-loopback connections
+        if (serverToken) {
+          if (!isLoopback(clientIp)) {
+            const provided = token;
+            if (provided !== serverToken) {
+              ws.close(1008, 'Unauthorized');
+              return;
+            }
+          }
+        }
+
+        // pi mode: validate context exists (static runner map).
+        // ree mode: dynamic conversation ids are never in `contexts` — skip the
+        // gate. Per-customer isolation comes from conversationId → chat. Invalid /
+        // reserved ids are rejected at message time (before dispatch).
+        if (!isReeMode) {
+          const ctx = getContextById(db, contextId);
+          if (!ctx) {
+            ws.close(4004, 'Unknown context');
+            return;
+          }
+        }
+
+        // Register peer with WebAdapter for reply routing
+        // wsSend is a no-op — streaming events deliver everything via sendEvent
+        const wsSend = async () => {};
+        const wsEvent = (event: any) => {
+          try { ws.send(JSON.stringify(event)); } catch { /* connection may be closed */ }
+        };
+        webAdapter.registerPeer(sessionId, wsSend, wsEvent);
+
+        // Send connected event with unique sessionId
+        ws.send(JSON.stringify({ type: 'connected', contextId, sessionId }));
+      },
+
+      onMessage: async (event, ws) => {
+        let msg: any;
+        try {
+          msg = JSON.parse(event.data as string);
+        } catch {
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+          return;
+        }
+
+        // ree mode: validate the conversation id before any dispatch. Reject
+        // reserved/invalid ids with an error frame and do not publish.
+        if (isReeMode && !isValidConversationId(contextId)) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: `Invalid or reserved conversation id: "${contextId}"`,
+          }));
+          return;
+        }
+
+        if (msg.type === 'cancel') {
+          // Publish a cancellation signal to the bus.
+          // The orchestrator detects action: 'cancel' and calls runner.abort().
+          if (_bus) {
+            _bus.publish(createIncomingMessage({
+              channelType: 'web',
+              peerId: sessionId,
+              conversationId: isReeMode ? contextId : undefined,
+              content: '',
+              raw: null,
+              action: 'cancel',
+            }));
+          }
+          ws.send(JSON.stringify({ type: 'cancelled' }));
+          return;
+        }
+
+        if (msg.type === 'action') {
+          if (!_bus) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Server not fully initialized' }));
+            return;
+          }
+
+          // Build structured content from the action message
+          let actionContent: string;
+          if (msg.action === 'confirm') {
+            actionContent = `[User confirmed: ${msg.value ?? false}]`;
+          } else if (msg.action === 'form_submit') {
+            actionContent = `[Form Response: ${JSON.stringify(msg.fields ?? {})}]`;
+          } else {
+            actionContent = `[Action: ${JSON.stringify(msg)}]`;
+          }
+
+          _bus.publish(createIncomingMessage({
+            channelType: 'web',
+            peerId: sessionId,
+            conversationId: isReeMode ? contextId : undefined,
+            content: actionContent,
+            raw: null,
+          }));
+          return;
+        }
+
+        if (msg.type === 'message') {
+          if (!_bus) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Server not fully initialized' }));
+            return;
+          }
+          _bus.publish(createIncomingMessage({
+            channelType: 'web',
+            peerId: sessionId,
+            conversationId: isReeMode ? contextId : undefined,
+            content: msg.content ?? '',
+            raw: null,
+          }));
+        }
+      },
+
+      onClose(_event, ws) {
+        webAdapter.unregisterPeer(sessionId);
+      },
+  };
+}
+
+// ─── startServer ─────────────────────────────────────────────────────────────
+
+/** Build the app, bind a real socket, and listen. */
+export async function startServer(opts: ServerOptions = {}): Promise<{ port: number; host: string }> {
+  const port = opts.port ?? 3000;
+  const host = opts.host ?? '127.0.0.1';
+  const app = await buildApp(opts);
 
   const server = createAdaptorServer({ fetch: app.fetch });
-  injectWebSocket(server);
+  if (_injectWebSocket) _injectWebSocket(server);
 
   await new Promise<void>((resolve) => {
     server.listen(port, host, () => resolve());

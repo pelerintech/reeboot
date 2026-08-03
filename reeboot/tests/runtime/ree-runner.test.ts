@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import type { AgentRunner, RunnerEvent, ContextConfig, MessageTrust } from '@src/agent-runner/interface.js';
 import type { ExtensionContext } from '@src/extensions/extension-api.js';
 import { getReeFactories } from '@src/extensions/loader.js';
 
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-runner-'));
+
 const mockContext: ExtensionContext = {
-  cwd: '/tmp/test-workspace',
-  workspacePath: '/tmp/test-workspace',
+  cwd: WORKSPACE,
+  workspacePath: WORKSPACE,
   config: { agent: { model: { provider: 'openai' } } },
   ui: {
     select: async () => undefined,
@@ -20,7 +26,7 @@ const mockConfig = { agent: { model: { provider: 'openai' } } };
 
 const runnerContext: ContextConfig = {
   id: 'main',
-  workspacePath: '/tmp/test-workspace',
+  workspacePath: WORKSPACE,
 };
 
 // ─── Task 13: ReeAgentRunner — implements AgentRunner ────────────────────────
@@ -204,8 +210,8 @@ describe('ReeAgentLoop — module exports', () => {
     };
 
     const ctx = {
-      cwd: '/tmp',
-      workspacePath: '/tmp',
+      cwd: WORKSPACE,
+      workspacePath: WORKSPACE,
       config: {},
       ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
       hasUI: false,
@@ -288,7 +294,7 @@ describe('ReeAgentRunner — tool execution', () => {
     };
     const chat = runtime.getOrCreateChat(runnerContext.id, {
       context: {
-        cwd: '/tmp', workspacePath: '/tmp', config,
+        cwd: WORKSPACE, workspacePath: WORKSPACE, config,
         ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
         hasUI: false,
       },
@@ -354,7 +360,7 @@ describe('ReeAgentRunner — abort', () => {
     const promptPromise = runner.prompt('hang', () => {});
 
     // Give the prompt a tick to start
-    await new Promise((r) => setTimeout(r, 10));
+    await drainEventLoop();
 
     // Abort should trigger the chat's AbortController
     runner.abort();
@@ -950,7 +956,7 @@ describe('ReeAgentRunner — prompt after reset/abort (A1)', () => {
     const runner = new ReeAgentRunner(runtime, runnerContext, config);
 
     const promptPromise = runner.prompt('hang', () => {});
-    await new Promise((r) => setTimeout(r, 10));
+    await drainEventLoop();
     runner.abort();
 
     await expect(promptPromise).rejects.toThrow(/abort/i);
@@ -1034,7 +1040,7 @@ describe('ReeAgentRunner — token usage (A2)', () => {
     // Subscribe to agent_end
     const chat = runtime.getOrCreateChat(runnerContext.id, {
       context: {
-        cwd: '/tmp', workspacePath: '/tmp', config,
+        cwd: WORKSPACE, workspacePath: WORKSPACE, config,
         ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
         hasUI: false,
       },
@@ -1159,7 +1165,7 @@ describe('ReeAgentRunner — tool errors (A4)', () => {
 
     const chat = runtime.getOrCreateChat(runnerContext.id, {
       context: {
-        cwd: '/tmp', workspacePath: '/tmp', config,
+        cwd: WORKSPACE, workspacePath: WORKSPACE, config,
         ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
         hasUI: false,
       },
@@ -1190,8 +1196,8 @@ describe('ReeAgentRunner — tool errors (A4)', () => {
     };
 
     const ctx = {
-      cwd: '/tmp',
-      workspacePath: '/tmp',
+      cwd: WORKSPACE,
+      workspacePath: WORKSPACE,
       config: {},
       ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
       hasUI: false,
@@ -1303,7 +1309,7 @@ describe('ReeAgentRunner — missing scenario tests', () => {
 
     // Register a before_agent_start handler that injects text
     const chat = runtime.getOrCreateChat(runnerContext.id, {
-      context: { cwd: '/tmp', workspacePath: '/tmp', config,
+      context: { cwd: WORKSPACE, workspacePath: WORKSPACE, config,
         ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
         hasUI: false },
     });
@@ -1371,7 +1377,7 @@ describe('ReeAgentRunner — missing scenario tests', () => {
     const runner = new ReeAgentRunner(runtime, runnerContext, config);
 
     const chat = runtime.getOrCreateChat(runnerContext.id, {
-      context: { cwd: '/tmp', workspacePath: '/tmp', config,
+      context: { cwd: WORKSPACE, workspacePath: WORKSPACE, config,
         ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
         hasUI: false },
     });
@@ -1442,7 +1448,7 @@ describe('ReeAgentRunner — missing scenario tests', () => {
     const runner = new ReeAgentRunner(runtime, runnerContext, config);
 
     const chat = runtime.getOrCreateChat(runnerContext.id, {
-      context: { cwd: '/tmp', workspacePath: '/tmp', config,
+      context: { cwd: WORKSPACE, workspacePath: WORKSPACE, config,
         ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
         hasUI: false },
     });

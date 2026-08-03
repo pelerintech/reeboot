@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { homedir } from 'os'
 import type { Prompter } from './prompter.js'
 import { InquirerPrompter } from './prompter.js'
@@ -36,7 +36,9 @@ export async function runSetupWizard(opts: WizardOptions = {}): Promise<void> {
   const configPath = opts.configPath
     ?? process.env.REEBOOT_CONFIG_PATH
     ?? join(homedir(), '.reeboot', 'config.json')
-  const configDir = opts.configDir ?? join(homedir(), '.reeboot')
+  // Default the home dir from the config path so an injected (e.g. temp)
+  // configPath keeps the wizard fully inside that dir — no real-home writes.
+  const configDir = opts.configDir ?? dirname(configPath)
   const deps = opts._deps ?? {}
 
   console.log('\n🚀 Welcome to Reeboot Setup Wizard\n')

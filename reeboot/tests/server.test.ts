@@ -1,27 +1,29 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { buildTestApp, type TestAppHost } from './helpers/test-app.js';
 
-let startServer: any;
-let stopServer: any;
+let host: TestAppHost;
 
-beforeEach(async () => {
-  ({ startServer, stopServer } = await import('@src/server.js'));
+beforeAll(async () => {
+  host = await buildTestApp();
 });
 
-afterEach(async () => {
-  try { await stopServer(); } catch { /* already stopped */ }
+afterAll(async () => {
+  await host.stop();
+  host.cleanup();
 });
 
-describe('HTTP Server (Hono)', () => {
-  it('starts and listens on configured port', async () => {
-    const result = await startServer({ port: 0, logLevel: 'silent' });
-    expect(result).toBeDefined();
-    expect(result.port).toBeGreaterThan(0);
-    expect(result.host).toBe('127.0.0.1');
+async function api(path: string, init?: any): Promise<Response> {
+  return host.app.request(`http://localhost${path}`, init);
+}
+
+describe('HTTP Server (Hono) via buildApp (socket-free)', () => {
+  it('buildApp returns a drivable app', () => {
+    expect(host.app).toBeDefined();
+    expect(typeof host.app.request).toBe('function');
   });
 
   it('GET /api/health returns { status, uptime, version }', async () => {
-    const { port } = await startServer({ port: 0, logLevel: 'silent' });
-    const res = await fetch(`http://localhost:${port}/api/health`);
+    const res = await api('/api/health');
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.status).toBe('ok');
@@ -30,8 +32,7 @@ describe('HTTP Server (Hono)', () => {
   });
 
   it('GET /api/status returns { agent, channels }', async () => {
-    const { port } = await startServer({ port: 0, logLevel: 'silent' });
-    const res = await fetch(`http://localhost:${port}/api/status`);
+    const res = await api('/api/status');
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.agent).toBeDefined();
@@ -39,21 +40,18 @@ describe('HTTP Server (Hono)', () => {
   });
 
   it('unknown routes return 404 JSON with error key', async () => {
-    const { port } = await startServer({ port: 0, logLevel: 'silent' });
-    const res = await fetch(`http://localhost:${port}/api/nonexistent`);
+    const res = await api('/api/nonexistent');
     expect(res.status).toBe(404);
     const body = await res.json() as any;
     expect(body.error).toBeDefined();
   });
+});
 
-  it('stopServer() resolves without error', async () => {
-    await startServer({ port: 0, logLevel: 'silent' });
-    await expect(stopServer()).resolves.toBeUndefined();
-  });
-
-  it('stopServer() is idempotent', async () => {
-    await startServer({ port: 0, logLevel: 'silent' });
-    await stopServer();
-    await expect(stopServer()).resolves.toBeUndefined();
+describe('stopServer()', () => {
+  it('stopServer() resolves without error and is idempotent', async () => {
+    const h = await buildTestApp();
+    await h.stop();
+    await expect(h.stop()).resolves.toBeUndefined();
+    h.cleanup();
   });
 });

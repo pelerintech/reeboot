@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
 import Database from 'better-sqlite3';
 import { runResilienceMigration, runObservabilityMigration } from '@src/db/schema.js';
 
@@ -45,7 +46,7 @@ describe('OB-2-E: swallowed_reply event emitted from _reply()', () => {
 
     // Publish a heartbeat message that will trigger a disk check / system reply
     bus.publish(createIncomingMessage({ channelType: 'heartbeat', peerId: 'heartbeat', content: 'tick', raw: null }));
-    await new Promise(r => setTimeout(r, 100));
+    await drainEventLoop();
 
     // Check for swallowed_reply event
     const events = db.prepare("SELECT * FROM events WHERE type = 'swallowed_reply'").all() as any[];
@@ -72,7 +73,7 @@ describe('OB-2-E: swallowed_reply event emitted from _reply()', () => {
     const msg = { channelType: 'heartbeat', peerId: 'heartbeat', content: 'tick', raw: null } as any;
     await (orc as any)._reply(msg, 'Error: disk full', false /* NOT isAgentResponse */);
 
-    await new Promise(r => setTimeout(r, 50));
+    await drainEventLoop();
 
     const events = db.prepare("SELECT * FROM events WHERE type = 'swallowed_reply'").all() as any[];
     expect(events.length).toBeGreaterThan(0);

@@ -2,6 +2,8 @@
 
 > Your personal AI agent. Runs locally. Talks to you from anywhere.
 
+[![codecov](https://codecov.io/gh/pelerintech/reeboot/branch/main/graph/badge.svg)](https://codecov.io/gh/pelerintech/reeboot)
+
 ---
 
 ## Install

@@ -28,6 +28,8 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-inj-'));
+
 function makeTrustTestEnv() {
   const tmpDir = mkdtempSync(join(tmpdir(), 'reeboot-skill-trust-'));
   const userCatalogDir = join(tmpDir, 'user-catalog');
@@ -173,7 +175,7 @@ describe('PiAgentRunner message wrapping', () => {
     const { capturedContent, mockSession, mockLoader } = makeMockRunner();
 
     const runner = new PiAgentRunner(
-      { id: 'main', workspacePath: '/tmp/test' },
+      { id: 'main', workspacePath: WORKSPACE },
       mockLoader as any,
     );
     (runner as any)._session = mockSession;
@@ -194,7 +196,7 @@ describe('PiAgentRunner message wrapping', () => {
     const { capturedContent, mockSession, mockLoader } = makeMockRunner();
 
     const runner = new PiAgentRunner(
-      { id: 'main', workspacePath: '/tmp/test' },
+      { id: 'main', workspacePath: WORKSPACE },
       mockLoader as any,
     );
     (runner as any)._session = mockSession;
@@ -212,7 +214,7 @@ describe('PiAgentRunner message wrapping', () => {
     const { capturedContent, mockSession, mockLoader } = makeMockRunner();
 
     const runner = new PiAgentRunner(
-      { id: 'main', workspacePath: '/tmp/test' },
+      { id: 'main', workspacePath: WORKSPACE },
       mockLoader as any,
     );
     (runner as any)._session = mockSession;

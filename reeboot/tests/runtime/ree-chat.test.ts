@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-chat-'));
 import type { ExtensionContext, ToolDefinition, ExtensionEventMap } from '@src/extensions/extension-api.js';
 
 const mockContext: ExtensionContext = {
-  cwd: '/tmp/test-workspace',
-  workspacePath: '/tmp/test-workspace',
+  cwd: WORKSPACE,
+  workspacePath: WORKSPACE,
   config: { agent: { model: { provider: 'openai' } } },
   ui: {
     select: async () => undefined,

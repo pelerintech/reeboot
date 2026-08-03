@@ -4,6 +4,7 @@
  * emits for that turn, so all of a turn's events share one 32-hex trace id.
  */
 import { describe, it, expect } from 'vitest';
+import { drainEventLoop } from './helpers/event-drain.js';
 import Database from 'better-sqlite3';
 import { runResilienceMigration, runObservabilityMigration } from '../src/db/schema.js';
 import { createContextsTable } from '../src/context.js';
@@ -101,7 +102,7 @@ describe('turn-trace-correlation', () => {
     bus.publish(createIncomingMessage({
       channelType: 'whatsapp', peerId: 'p1', content: 'hello', raw: null,
     }));
-    await new Promise(r => setTimeout(r, 150));
+    await drainEventLoop();
 
     const started = getEvents(db, 'turn_started');
     const completed = getEvents(db, 'turn_completed');
@@ -117,7 +118,7 @@ describe('turn-trace-correlation', () => {
     bus.publish(createIncomingMessage({
       channelType: 'whatsapp', peerId: 'p1', content: 'hello', raw: null,
     }));
-    await new Promise(r => setTimeout(r, 150));
+    await drainEventLoop();
 
     const started = getEvents(db, 'turn_started');
     expect(started).toHaveLength(1);
@@ -132,7 +133,7 @@ describe('turn-trace-correlation', () => {
     bus.publish(createIncomingMessage({
       channelType: 'whatsapp', peerId: 'p1', content: 'will fail', raw: null,
     }));
-    await new Promise(r => setTimeout(r, 300));
+    await drainEventLoop();
 
     const started = getEvents(db, 'turn_started');
     const failed = getEvents(db, 'turn_failed');
@@ -147,11 +148,11 @@ describe('turn-trace-correlation', () => {
     bus.publish(createIncomingMessage({
       channelType: 'whatsapp', peerId: 'p1', content: 'one', raw: null,
     }));
-    await new Promise(r => setTimeout(r, 150));
+    await drainEventLoop();
     bus.publish(createIncomingMessage({
       channelType: 'whatsapp', peerId: 'p1', content: 'two', raw: null,
     }));
-    await new Promise(r => setTimeout(r, 150));
+    await drainEventLoop();
 
     const started = getEvents(db, 'turn_started');
     expect(started).toHaveLength(2);

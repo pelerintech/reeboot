@@ -1,8 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync } from 'fs';
+
+// No-op fs.watch so start() attaches no real watcher (no fd leaks / EMFILE);
+// readFileSync/statSync stay real for the delete-on-unlink pipeline.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return { ...actual, watch: vi.fn(() => ({ close: vi.fn() })) };
+});
 
 describe('KnowledgeWatcher unlink', () => {
   let db: Database.Database;
@@ -28,18 +35,19 @@ describe('KnowledgeWatcher unlink', () => {
 
     rawDir = mkdtempSync(join(tmpdir(), 'test-watcher-unlink-'));
     mkdirSync(rawDir, { recursive: true });
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(rawDir, { recursive: true, force: true });
+    db.close();
   });
 
   it('S3: watcher invokes delete on unlink', async () => {
-    // Create a file and seed knowledge index with it
     const testFile = join(rawDir, 'a.md');
     writeFileSync(testFile, '# Test content', 'utf-8');
 
-    // Seed knowledge index rows
     db.prepare(`INSERT INTO knowledge_sources (id, path, hash, status, doc_id) VALUES (?, ?, ?, ?, ?)`)
       .run('src1', testFile, 'abc123', 'ingested', 'doc1');
     db.prepare(`INSERT INTO knowledge_chunks (doc_id, chunk_index, content) VALUES (?, ?, ?)`)
@@ -47,25 +55,18 @@ describe('KnowledgeWatcher unlink', () => {
     db.prepare(`INSERT INTO knowledge_fts (doc_id, content) VALUES (?, ?)`)
       .run('doc1', '# Test content');
 
-    // Create the watcher and start it
     const { KnowledgeWatcher } = await import('@src/knowledge/watcher.js');
     const watcher = new KnowledgeWatcher(db);
     watcher.start(rawDir);
 
-    // Delete the file
+    // Delete the file, then drive the fs event directly (deterministic).
     unlinkSync(testFile);
-
-    // Wait for watcher debounce (300ms) + a bit more
-    await new Promise((r) => setTimeout(r, 600));
+    watcher.handleFsEvent(rawDir, 'a.md');
+    await vi.advanceTimersByTimeAsync(10);
 
     watcher.stop();
 
-    // Assert index entries are gone
-    const sources = db.prepare('SELECT COUNT(*) as count FROM knowledge_sources WHERE id = ?').get('doc1') as any;
-    expect(sources.count).toBe(0);
-
-    // The doc_id source row is deleted, so chunks for that doc_id should also be gone
-    // (deleteKnowledgeSource deletes by the source's id, not doc_id)
+    // deleteKnowledgeSource runs synchronously on unlink — the source row is gone.
     const sourceRow = db.prepare('SELECT * FROM knowledge_sources WHERE path = ?').get(testFile) as any;
     expect(sourceRow).toBeUndefined();
   });

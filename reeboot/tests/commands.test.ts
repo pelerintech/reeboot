@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { drainEventLoop } from './helpers/event-drain.js';
 import { MessageBus, createIncomingMessage } from '@src/channels/interface.js';
 import { Orchestrator } from '@src/orchestrator.js';
 import type { IncomingMessage } from '@src/channels/interface.js';
@@ -69,7 +70,7 @@ describe('In-chat commands', () => {
 
   it('/new resets session — runner.reset() called', async () => {
     bus.publish(makeMsg('/new'));
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     expect(runner.reset).toHaveBeenCalled();
     expect(runner.dispose).not.toHaveBeenCalled();
@@ -83,7 +84,7 @@ describe('In-chat commands', () => {
 
   it('/context <name> switches routing for that peer', async () => {
     bus.publish(makeMsg('/context work'));
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     expect(adapter.send).toHaveBeenCalledWith(
       'peer1@s.whatsapp.net',
@@ -94,7 +95,7 @@ describe('In-chat commands', () => {
 
   it('/contexts lists contexts with current marked', async () => {
     bus.publish(makeMsg('/contexts'));
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const call = adapter.send.mock.calls[0];
     expect(call[1].text).toContain('main');
@@ -103,7 +104,7 @@ describe('In-chat commands', () => {
 
   it('/status shows context name', async () => {
     bus.publish(makeMsg('/status'));
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     const call = adapter.send.mock.calls[0];
     expect(call[1].text).toContain('main');
@@ -112,7 +113,7 @@ describe('In-chat commands', () => {
 
   it('/compact sends confirmation', async () => {
     bus.publish(makeMsg('/compact'));
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     expect(adapter.send).toHaveBeenCalledWith(
       'peer1@s.whatsapp.net',
@@ -123,7 +124,7 @@ describe('In-chat commands', () => {
 
   it('unknown slash command is forwarded to agent', async () => {
     bus.publish(makeMsg('/search for cats'));
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     expect(runner.prompt).toHaveBeenCalledWith(expect.stringContaining('/search for cats'), expect.any(Function));
   });
@@ -140,7 +141,7 @@ describe('In-chat commands', () => {
     orc.start();
 
     bus.publish(makeMsg('/new', { channelType: 'web' }));
-    await new Promise(r => setTimeout(r, 20));
+    await drainEventLoop();
 
     expect(runner.reset).toHaveBeenCalled();
     expect(webAdapter.send).toHaveBeenCalledWith(

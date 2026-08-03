@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-scan-'));
 
 describe('pi-runner tool output scanning', () => {
   let PiAgentRunner: any;
@@ -75,7 +80,7 @@ describe('pi-runner tool output scanning', () => {
     };
 
     const runner = new Fresh(
-      { id: 'main', workspacePath: '/tmp/test' },
+      { id: 'main', workspacePath: WORKSPACE },
       mockLoader,
       {
         security: { injection_guard: { enabled: true, external_source_tools: ['fetch_url', 'web_fetch'] } },
@@ -197,7 +202,7 @@ describe('pi-runner tool output scanning', () => {
     };
 
     const runner = new PAR(
-      { id: 'main', workspacePath: '/tmp/test' },
+      { id: 'main', workspacePath: WORKSPACE },
       mockLoader,
     );
 

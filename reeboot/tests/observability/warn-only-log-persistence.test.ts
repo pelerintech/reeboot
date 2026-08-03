@@ -5,6 +5,7 @@
  * web-api-readback.
  */
 import { describe, it, expect } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
 import Database from 'better-sqlite3';
 import { runResilienceMigration, runObservabilityMigration } from '@src/db/schema.js';
 
@@ -15,7 +16,7 @@ function makeDb(): Database.Database {
   return db;
 }
 
-async function flush() { await new Promise(r => setTimeout(r, 50)); }
+async function flush() { await drainEventLoop(); }
 
 describe('warn-only-log-persistence', () => {
   it('S1: warn log is persisted at level 40', async () => {

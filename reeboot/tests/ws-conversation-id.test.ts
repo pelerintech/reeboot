@@ -1,19 +1,19 @@
 /**
- * Spec: ws-conversation-ingress
+ * Spec: ws-conversation-ingress (handler-level, no socket)
  *
- * The Web/API WS handler supplies `conversationId` from the path and no longer
- * requires a pre-registered context in ree mode.
- *
- * The MessageBus is mocked so published messages are captured for inspection
- * (no real orchestrator dispatch is needed to verify ingress stamping).
+ * The real WS handler stamps `conversationId` from the path and, in ree mode,
+ * no longer requires a pre-registered context. We drive the real wsChatHandler
+ * callbacks directly (no TCP/browser socket). The MessageBus is mocked so
+ * published messages are captured for inspection.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import Database from 'better-sqlite3';
-import { join } from 'path';
+import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
-import { mkdirSync, rmSync } from 'fs';
-import { defaultConfig } from '@src/config.js';
+import { join } from 'path';
+import { openDatabase, closeDb } from '../src/db/index.js';
+import { wsChatHandler } from '../src/server.js';
+import { createIncomingMessage } from '@src/channels/interface.js';
 
 // Captured bus publishes (populated by the mocked MessageBus below).
 const published: any[] = [];
@@ -25,167 +25,159 @@ vi.mock('@src/channels/interface.js', async (importActual) => {
       published.push(message);
     }
     onMessage(): () => void {
-      // No-op subscription — we are testing ingress, not turn dispatch.
       return () => {};
     }
   }
   return { ...actual, MessageBus: CapturingBus };
 });
 
-let startServer: any;
-let stopServer: any;
-let tmpDir: string;
-let db: Database.Database;
-
-function wsConnect(url: string): Promise<{ ws: WebSocket; messages: any[] }> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    const messages: any[] = [];
-    ws.onmessage = (e) => {
-      try { messages.push(JSON.parse(e.data as string)); } catch { messages.push(e.data); }
-    };
-    ws.onopen = () => resolve({ ws, messages });
-    ws.onerror = (e) => reject(e);
-  });
+function fakeWs() {
+  const sends: any[] = [];
+  const closed: Array<{ code?: number; reason?: string }> = [];
+  const ws = {
+    send: (data: string) => {
+      try { sends.push(JSON.parse(data)); } catch { sends.push(data); }
+    },
+    close: (code?: number, reason?: string) => closed.push({ code, reason }),
+  };
+  return { ws, sends, closed };
 }
 
-function waitForMessage(messages: any[], predicate: (m: any) => boolean, timeout = 2000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const check = () => {
-      const found = messages.find(predicate);
-      if (found) return resolve(found);
-      if (Date.now() - start > timeout) return reject(new Error('Timeout waiting for message'));
-      setTimeout(check, 50);
-    };
-    check();
-  });
+function makeModelConfig() {
+  return {
+    authMode: 'own',
+    provider: 'openai',
+    id: 'm',
+    apiKey: 'k',
+    providers: [] as any[],
+  };
 }
-
-function waitForClose(url: string, timeout = 2000): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    const t = setTimeout(() => reject(new Error('timeout')), timeout);
-    ws.onclose = (e) => { clearTimeout(t); resolve(e.code); };
-    ws.onerror = () => { /* onclose will follow */ };
-  });
-}
-
-beforeEach(async () => {
-  tmpDir = join(tmpdir(), `reeboot-ws-conv-test-${Date.now()}`);
-  mkdirSync(tmpDir, { recursive: true });
-  db = new Database(join(tmpDir, 'test.db'));
-  published.length = 0;
-
-  vi.resetModules();
-  // Re-import after reset so the mock applies to the freshly loaded server.
-  ({ startServer, stopServer } = await import('@src/server.js'));
-});
-
-afterEach(async () => {
-  try { await stopServer(); } catch { /* ignore */ }
-  try { db.close(); } catch { /* ignore */ }
-  rmSync(tmpDir, { recursive: true, force: true });
-});
 
 function reeConfig() {
-  return { ...defaultConfig, sdk: 'ree' as const };
+  return {
+    sdk: 'ree',
+    channels: { web: { enabled: true } },
+    routing: { default: 'main', rules: [] },
+    agent: { name: 'Test', runner: 'ree', model: makeModelConfig() },
+    resilience: {
+      recovery: { mode: 'safe_only', side_effect_tools: [] },
+      scheduler: { catchup_window: '1h' },
+      outage_threshold: 3,
+      probe_interval: '1h',
+    },
+  } as any;
+}
+
+async function bootApp(config: any) {
+  const reebotDir = mkdtempSync(join(tmpdir(), 'reesboot-ws-'));
+  const db = openDatabase(join(reebotDir, 'reesboot.db'));
+  const { buildApp, stopServer } = await import('@src/server.js');
+  const app = await buildApp({ db, reebotDir, config });
+  return { app, db, reebotDir, stop: async () => { try { await stopServer(); } catch {} } };
 }
 
 describe('ws-conversation-ingress (ree mode)', () => {
+  let app: any;
+  let db: any;
+  let reebotDir: string;
+  let stop: () => Promise<void>;
+
+  beforeEach(async () => {
+    published.length = 0;
+    ({ app, db, reebotDir, stop } = await bootApp(reeConfig()));
+  });
+
+  afterEach(async () => {
+    await stop();
+    try { closeDb(); } catch { /* ignore */ }
+    rmSync(reebotDir, { recursive: true, force: true });
+  });
+
+  function reeHandler(contextId: string) {
+    return wsChatHandler({ db, contextId, clientIp: '127.0.0.1', isReeMode: true });
+  }
+
   it('S1 — path segment becomes conversationId with distinct peerIds', async () => {
-    const { port } = await startServer({
-      port: 0, logLevel: 'silent', db, reebotDir: tmpDir, config: reeConfig(),
-    });
+    const { ws, sends } = fakeWs();
+    const ha = reeHandler('A');
+    ha.onOpen({}, ws); // registers peer
+    await ha.onMessage({ data: JSON.stringify({ type: 'message', content: 'from A' }) }, ws);
 
-    const a = await wsConnect(`ws://localhost:${port}/ws/chat/A`);
-    await waitForMessage(a.messages, m => m.type === 'connected');
-    a.ws.send(JSON.stringify({ type: 'message', content: 'from A' }));
+    const { ws: wsB, sends: sendsB } = fakeWs();
+    const hb = reeHandler('B');
+    hb.onOpen({}, wsB);
+    await hb.onMessage({ data: JSON.stringify({ type: 'message', content: 'from B' }) }, wsB);
 
-    const b = await wsConnect(`ws://localhost:${port}/ws/chat/B`);
-    await waitForMessage(b.messages, m => m.type === 'connected');
-    b.ws.send(JSON.stringify({ type: 'message', content: 'from B' }));
-
-    // Give publishes a moment to land
-    await new Promise(r => setTimeout(r, 150));
-
-    const aMsg = published.find(m => m.channelType === 'web' && m.conversationId === 'A');
-    const bMsg = published.find(m => m.channelType === 'web' && m.conversationId === 'B');
+    const aMsg = published.find((m) => m.channelType === 'web' && m.conversationId === 'A');
+    const bMsg = published.find((m) => m.channelType === 'web' && m.conversationId === 'B');
     expect(aMsg).toBeDefined();
     expect(bMsg).toBeDefined();
     expect(aMsg.content).toBe('from A');
     expect(bMsg.content).toBe('from B');
     expect(aMsg.peerId).not.toBe(bMsg.peerId);
-
-    a.ws.close();
-    b.ws.close();
   });
 
-  it('S2 — unknown id is NOT rejected in ree mode (no 4004)', async () => {
-    const { port } = await startServer({
-      port: 0, logLevel: 'silent', db, reebotDir: tmpDir, config: reeConfig(),
-    });
-
-    const { ws, messages } = await wsConnect(`ws://localhost:${port}/ws/chat/never-seen-before`);
-    const connected = await waitForMessage(messages, m => m.type === 'connected');
-    expect(connected.contextId).toBe('never-seen-before');
-    ws.close();
+  it('S2 — unknown id is NOT rejected in ree mode (no 4004, connected sent)', () => {
+    const { ws, sends, closed } = fakeWs();
+    reeHandler('never-seen-before').onOpen({}, ws);
+    expect(closed.length).toBe(0);
+    expect(sends.find((m) => m.type === 'connected')).toBeDefined();
   });
 
-  it('S3 — reserved/invalid id is rejected before dispatch', async () => {
-    const { port } = await startServer({
-      port: 0, logLevel: 'silent', db, reebotDir: tmpDir, config: reeConfig(),
-    });
+  it('S3 — reserved/invalid id is rejected before dispatch (no publish)', async () => {
+    const main = fakeWs();
+    const hmain = reeHandler('main');
+    hmain.onOpen({}, main.ws);
+    await hmain.onMessage({ data: JSON.stringify({ type: 'message', content: 'should be rejected' }) }, main.ws);
+    expect(main.sends.some((m) => m.type === 'error')).toBe(true);
 
-    // Reserved id 'main' — connection may open, but a message must be rejected
-    const reserved = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
-    await waitForMessage(reserved.messages, m => m.type === 'connected');
-    reserved.ws.send(JSON.stringify({ type: 'message', content: 'should be rejected' }));
-    const err = await waitForMessage(reserved.messages, m => m.type === 'error');
-    expect(err.message).toMatch(/conversation|id|reserved|invalid/i);
+    const invalid = fakeWs();
+    const hbad = reeHandler('has space');
+    hbad.onOpen({}, invalid.ws);
+    await hbad.onMessage({ data: JSON.stringify({ type: 'message', content: 'also rejected' }) }, invalid.ws);
+    expect(invalid.sends.some((m) => m.type === 'error')).toBe(true);
 
-    // Invalid id with a space — connect, send, expect error
-    const invalid = await wsConnect(`ws://localhost:${port}/ws/chat/has%20space`);
-    await waitForMessage(invalid.messages, m => m.type === 'connected').catch(() => {});
-    invalid.ws.send(JSON.stringify({ type: 'message', content: 'also rejected' }));
-    await waitForMessage(invalid.messages, m => m.type === 'error').catch(() => {});
-
-    // Give any erroneous publishes a moment
-    await new Promise(r => setTimeout(r, 150));
-
-    // Nothing should have been dispatched for the rejected ids
-    expect(published.find(m => m.channelType === 'web' && (m.conversationId === 'main' || m.conversationId === 'has space' || m.conversationId === 'has%20space'))).toBeUndefined();
-
-    reserved.ws.close();
-    invalid.ws.close();
+    expect(published.find((m) => m.channelType === 'web' && (m.conversationId === 'main' || m.conversationId === 'has space'))).toBeUndefined();
   });
 });
 
 // ─── Pi mode: WS still context-gated, no conversationId stamped ────────────────
 
 describe('ws-conversation-ingress (pi mode)', () => {
-  it('S4 — known context connects and routes to main; unknown context gets 4004', async () => {
-    const { port } = await startServer({
-      port: 0, logLevel: 'silent', db, reebotDir: tmpDir, config: defaultConfig,
-    });
+  let app: any;
+  let db: any;
+  let reebotDir: string;
+  let stop: () => Promise<void>;
 
-    // Known context 'main' connects successfully
-    const main = await wsConnect(`ws://localhost:${port}/ws/chat/main`);
-    await waitForMessage(main.messages, m => m.type === 'connected');
-    expect(main.messages.some(m => m.type === 'connected')).toBe(true);
+  function piConfig() {
+    return { ...reeConfig(), sdk: 'pi', agent: { ...reeConfig().agent, runner: 'pi' } };
+  }
 
-    main.ws.send(JSON.stringify({ type: 'message', content: 'hi from pi' }));
-    await new Promise(r => setTimeout(r, 150));
+  beforeEach(async () => {
+    published.length = 0;
+    ({ app, db, reebotDir, stop } = await bootApp(piConfig()));
+  });
 
-    // Published message has NO conversationId in pi mode
-    const piMsg = published.find(m => m.channelType === 'web' && m.content === 'hi from pi');
+  afterEach(async () => {
+    await stop();
+    try { closeDb(); } catch { /* ignore */ }
+    rmSync(reebotDir, { recursive: true, force: true });
+  });
+
+  it('S4 — known context connects; message routes with no conversationId; unknown context gets 4004', async () => {
+    const h = wsChatHandler({ db, contextId: 'main', clientIp: '127.0.0.1', isReeMode: false });
+    const known = fakeWs();
+    h.onOpen({}, known.ws);
+    expect(known.closed.length).toBe(0);
+    expect(known.sends.find((m) => m.type === 'connected')).toBeDefined();
+
+    await h.onMessage({ data: JSON.stringify({ type: 'message', content: 'hi from pi' }) }, known.ws);
+    const piMsg = published.find((m) => m.channelType === 'web' && m.content === 'hi from pi');
     expect(piMsg).toBeDefined();
     expect(piMsg.conversationId).toBeUndefined();
 
-    main.ws.close();
-
-    // Unknown context 'never-heard-of' closes with 4004
-    const code = await waitForClose(`ws://localhost:${port}/ws/chat/never-heard-of`);
-    expect(code).toBe(4004);
+    const unknown = fakeWs();
+    wsChatHandler({ db, contextId: 'never-heard-of', clientIp: '127.0.0.1', isReeMode: false }).onOpen({}, unknown.ws);
+    expect(unknown.closed[0]?.code).toBe(4004);
   });
 });

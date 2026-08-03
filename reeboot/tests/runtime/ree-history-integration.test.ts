@@ -15,13 +15,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { unlinkSync, mkdirSync } from 'fs';
+import { unlinkSync, mkdirSync, mkdtempSync } from 'fs';
 import type { RunnerEvent, ContextConfig } from '@src/agent-runner/interface.js';
 import type { ExtensionContext } from '@src/extensions/extension-api.js';
 
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-hi-'));
+
 const mockContext: ExtensionContext = {
-  cwd: '/tmp/test-workspace',
-  workspacePath: '/tmp/test-workspace',
+  cwd: WORKSPACE,
+  workspacePath: WORKSPACE,
   config: { agent: { model: { provider: 'openai' } } },
   ui: {
     select: async () => undefined,
@@ -34,7 +36,7 @@ const mockContext: ExtensionContext = {
 
 const runnerContext: ContextConfig = {
   id: 'main',
-  workspacePath: '/tmp/test-workspace',
+  workspacePath: WORKSPACE,
 };
 
 const baseConfig = { agent: { model: { provider: 'openai' } } };
@@ -248,34 +250,39 @@ describe('ree-history integration — idle eviction prunes history (spec S4)', (
   });
 
   it('sweepIdle() prunes the chat_messages rows for the evicted chat', async () => {
-    const mockFetch = mockChatCompletionsFetch([{ content: 'to be pruned' }]);
-    const config = reeConfigWithMockFetch(mockFetch);
+    vi.useFakeTimers();
+    try {
+      const mockFetch = mockChatCompletionsFetch([{ content: 'to be pruned' }]);
+      const config = reeConfigWithMockFetch(mockFetch);
 
-    const runtime = new ReeRuntime({
-      config,
-      maxChats: 10,
-      idleTtlMs: 50, // 50ms TTL
-      maxHistoryPerChat: 50,
-      dbPath,
-    });
-    const runner = new ReeAgentRunner(runtime, { ...runnerContext, id: 'prune-chat' }, config);
+      const runtime = new ReeRuntime({
+        config,
+        maxChats: 10,
+        idleTtlMs: 50, // 50ms TTL
+        maxHistoryPerChat: 50,
+        dbPath,
+      });
+      const runner = new ReeAgentRunner(runtime, { ...runnerContext, id: 'prune-chat' }, config);
 
-    await runner.prompt('a turn', () => {});
+      await runner.prompt('a turn', () => {});
 
-    // Confirm rows exist before eviction
-    let db = new Database(dbPath);
-    let before = db.prepare('SELECT COUNT(*) as c FROM chat_messages WHERE chat_id = ?').get('prune-chat') as any;
-    db.close();
-    expect(before.c).toBe(2);
+      // Confirm rows exist before eviction
+      let db = new Database(dbPath);
+      let before = db.prepare('SELECT COUNT(*) as c FROM chat_messages WHERE chat_id = ?').get('prune-chat') as any;
+      db.close();
+      expect(before.c).toBe(2);
 
-    // Wait past the TTL, then sweep
-    await new Promise((r) => setTimeout(r, 80));
-    runtime.sweepIdle();
+      // Expire the idle TTL deterministically, then sweep
+      vi.advanceTimersByTime(100);
+      runtime.sweepIdle();
 
-    // Rows should be pruned (deleted)
-    db = new Database(dbPath);
-    let after = db.prepare('SELECT COUNT(*) as c FROM chat_messages WHERE chat_id = ?').get('prune-chat') as any;
-    db.close();
-    expect(after.c).toBe(0);
+      // Rows should be pruned (deleted)
+      db = new Database(dbPath);
+      let after = db.prepare('SELECT COUNT(*) as c FROM chat_messages WHERE chat_id = ?').get('prune-chat') as any;
+      db.close();
+      expect(after.c).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

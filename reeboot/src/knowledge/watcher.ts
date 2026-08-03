@@ -65,40 +65,51 @@ export class KnowledgeWatcher {
     this._pausedRawDir = null;
 
     this._watcher = watch(rawDir, { recursive: true }, (eventType, filename) => {
-      if (!this._running) return;
-      if (!filename) return;
-
-      // Resolve full path
-      const fullPath = join(rawDir, filename);
-
-      // Skip directories
-      try {
-        const stat = statSync(fullPath);
-        if (stat.isDirectory()) return;
-      } catch {
-        // File doesn't exist (delete event) — remove from index
-        try {
-          deleteKnowledgeSource(this._db, fullPath);
-        } catch {
-          // DB may be closed (test cleanup) — swallow silently
-        }
-        return;
-      }
-
-      // Skip hidden files and paths inside ignored directories
-      if (filename.startsWith('.') || filename.includes('/.')) return;
-
-      // Debounce: reset timer for this path
-      const existing = this._debounceTimers.get(fullPath);
-      if (existing) clearTimeout(existing);
-
-      const timer = setTimeout(() => {
-        this._debounceTimers.delete(fullPath);
-        this._processFile(fullPath);
-      }, DEBOUNCE_MS);
-
-      this._debounceTimers.set(fullPath, timer);
+      this.handleFsEvent(rawDir, filename as string);
     });
+  }
+
+  /**
+   * Processes a single filesystem event for a file under `rawDir`.
+   *
+   * Extracted from the `fs.watch` callback so tests can drive the debounce +
+   * pending-queue logic directly with injected events (no real fs-event timing)
+   * and so the unlink/processed behavior is fully deterministic.
+   */
+  handleFsEvent(rawDir: string, filename: string): void {
+    if (!this._running) return;
+    if (!filename) return;
+
+    // Resolve full path
+    const fullPath = join(rawDir, filename);
+
+    // Skip directories
+    try {
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) return;
+    } catch {
+      // File doesn't exist (delete event) — remove from index
+      try {
+        deleteKnowledgeSource(this._db, fullPath);
+      } catch {
+        // DB may be closed (test cleanup) — swallow silently
+      }
+      return;
+    }
+
+    // Skip hidden files and paths inside ignored directories
+    if (filename.startsWith('.') || filename.includes('/.')) return;
+
+    // Debounce: reset timer for this path
+    const existing = this._debounceTimers.get(fullPath);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this._debounceTimers.delete(fullPath);
+      this._processFile(fullPath);
+    }, DEBOUNCE_MS);
+
+    this._debounceTimers.set(fullPath, timer);
   }
 
   /**

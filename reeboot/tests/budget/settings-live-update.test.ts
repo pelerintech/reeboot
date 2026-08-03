@@ -24,7 +24,7 @@ function makeDb() {
 
 describe('TB-5-C: PUT /api/settings/budget updates live BudgetGuard', () => {
   let tmpDir: string;
-  let port: number;
+  let app: any;
   let stopServer: () => Promise<void>;
   let db: Database.Database;
 
@@ -46,14 +46,7 @@ describe('TB-5-C: PUT /api/settings/budget updates live BudgetGuard', () => {
     const config = loadConfig(join(tmpDir, 'config.json'));
 
     const server = await import('@src/server.js');
-    const result = await server.startServer({
-      port: 0,
-      logLevel: 'silent',
-      db,
-      reebotDir: tmpDir,
-      config,
-    });
-    port = result.port;
+    app = await server.buildApp({ logLevel: 'silent', db, reebotDir: tmpDir, config });
     stopServer = server.stopServer;
   });
 
@@ -64,15 +57,15 @@ describe('TB-5-C: PUT /api/settings/budget updates live BudgetGuard', () => {
 
   it('GET reflects PUT immediately without restart', async () => {
     // PUT a new daily cost limit
-    const putRes = await fetch(`http://localhost:${port}/api/settings/budget`, {
+    const putRes = await app.request('/api/settings/budget', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ daily_cost_usd: 20.0 }),
     });
     expect(putRes.status).toBe(200);
 
     // GET should immediately reflect the new value
-    const getRes = await fetch(`http://localhost:${port}/api/settings/budget`);
+    const getRes = await app.request('/api/settings/budget');
     const body = await getRes.json() as any;
     expect(body.limits.daily_cost_usd).toBe(20.0);
   });

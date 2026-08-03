@@ -1,86 +1,35 @@
 /**
- * Channel REST API tests (Hono version)
+ * Channel REST API tests (socket-free via buildApp + app.request)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import Database from 'better-sqlite3';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import { mkdirSync, rmSync } from 'fs';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { buildTestApp, type TestAppHost } from './helpers/test-app.js';
 
-let startServer: any;
-let stopServer: any;
-let tmpDir: string;
-let db: Database.Database;
+let host: TestAppHost;
 
-// Mock channel adapters so we don't actually start WhatsApp
-vi.mock('./channels/whatsapp.js', () => ({
-  WhatsAppAdapter: class {
-    async init() {}
-    async start() {}
-    async stop() {}
-    async send() {}
-    status() { return 'disconnected'; }
-  },
-  default: undefined,
-}));
-
-vi.mock('./channels/web.js', () => ({
-  WebAdapter: class {
-    async init() {}
-    async start() {}
-    async stop() {}
-    async send() {}
-    status() { return 'connected'; }
-    registerPeer() {}
-    unregisterPeer() {}
-    getBus() { return null; }
-  },
-  webAdapter: {
-    init: async () => {},
-    start: async () => {},
-    stop: async () => {},
-    send: async () => {},
-    status: () => 'connected',
-    registerPeer: () => {},
-    unregisterPeer: () => {},
-    getBus: () => null,
-  },
-  default: undefined,
-}));
-
-beforeEach(async () => {
-  tmpDir = join(tmpdir(), `reeboot-channel-api-test-${Date.now()}`);
-  mkdirSync(tmpDir, { recursive: true });
-  db = new Database(join(tmpDir, 'test.db'));
-
-  vi.resetModules();
-  ({ startServer, stopServer } = await import('@src/server.js'));
+beforeAll(async () => {
+  host = await buildTestApp();
 });
 
-afterEach(async () => {
-  try { await stopServer(); } catch { /* ignore */ }
-  try { db.close(); } catch { /* ignore */ }
-  rmSync(tmpDir, { recursive: true, force: true });
+afterAll(async () => {
+  await host.stop();
+  host.cleanup();
 });
 
-async function startTestServer() {
-  const { port } = await startServer({ port: 0, logLevel: 'silent', db, reebotDir: tmpDir });
-  return { port, base: `http://localhost:${port}` };
+async function api(path: string, init?: any): Promise<Response> {
+  return host.app.request(`http://localhost${path}`, init);
 }
 
 describe('GET /api/channels', () => {
   it('returns 200 with array', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/channels`);
+    const res = await api('/api/channels');
     expect(res.status).toBe(200);
     const body = await res.json() as any[];
     expect(Array.isArray(body)).toBe(true);
   });
 
   it('each item has type, status, connectedAt fields', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/channels`);
+    const res = await api('/api/channels');
     const body = await res.json() as any[];
     for (const ch of body) {
       expect(ch).toHaveProperty('type');
@@ -92,16 +41,14 @@ describe('GET /api/channels', () => {
 
 describe('POST /api/channels/:type/login', () => {
   it('unknown type returns 404', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/channels/unknown/login`, { method: 'POST' });
+    const res = await api('/api/channels/unknown/login', { method: 'POST' });
     expect(res.status).toBe(404);
   });
 });
 
 describe('POST /api/channels/:type/logout', () => {
   it('unknown type returns 404', async () => {
-    const { base } = await startTestServer();
-    const res = await fetch(`${base}/api/channels/unknown/logout`, { method: 'POST' });
+    const res = await api('/api/channels/unknown/logout', { method: 'POST' });
     expect(res.status).toBe(404);
   });
 });

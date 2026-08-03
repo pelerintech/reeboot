@@ -15,6 +15,10 @@ coverage/
 .vitest/
 node_modules/.vite/
 
+# ─── Test run / build output capture logs (never commit) ──────────────────────
+*.log
+.vitest_run.txt
+
 # ─── Runtime / secrets ────────────────────────────────────────────────────────
 *.db
 *.sqlite

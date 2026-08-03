@@ -9,11 +9,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MessageBus, createIncomingMessage } from '@src/channels/interface.js';
 import type { IncomingMessage } from '@src/channels/interface.js';
 import type { AgentRunner } from '@src/agent-runner/interface.js';
-import { defaultConfig } from '@src/config.js';
 import Database from 'better-sqlite3';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { mkdirSync, rmSync } from 'fs';
+import { mkdirSync, rmSync, mkdtempSync } from 'fs';
+import { openDatabase, closeDb } from '../src/db/index.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -298,60 +298,83 @@ describe('ree-dynamic-runner — lazy create/reuse (task 6)', () => {
   });
 });
 
-// ─── Task 7: server registers ree runner-factory (shared workspace) ─────────
+// ─── Task 7: server registers ree runner-factory (shared workspace) ─────────────────────────────────────────────────────
 
 describe('ree-shared-workspace — server runner-factory (task 7)', () => {
   let tmpDir: string;
   let db: Database.Database;
-  let startServer: any;
   let stopServer: any;
   const createdContexts: any[] = [];
 
+  function reeConfig() {
+    return {
+      sdk: 'ree',
+      channels: { web: { enabled: true } },
+      routing: { default: 'main', rules: [] },
+      agent: {
+        name: 'Test',
+        runner: 'ree',
+        model: { authMode: 'own', provider: 'openai', id: 'm', apiKey: 'k', providers: [] },
+      },
+      resilience: {
+        recovery: { mode: 'safe_only', side_effect_tools: [] },
+        scheduler: { catchup_window: '1h' },
+        outage_threshold: 3,
+        probe_interval: '1h',
+      },
+    } as any;
+  }
+
   beforeEach(async () => {
-    tmpDir = join(tmpdir(), `reeboot-ws-shared-${Date.now()}`);
-    mkdirSync(tmpDir, { recursive: true });
-    db = new Database(join(tmpDir, 'test.db'));
+    tmpDir = mkdtempSync(join(tmpdir(), `reeboot-ws-shared-${Date.now()}`));
+    db = openDatabase(join(tmpDir, 'test.db'));
     createdContexts.length = 0;
 
-    vi.resetModules();
     // Mock createRunner so we can capture the ContextConfig (workspacePath)
-    // passed for each lazily-created runner.
+    // passed for each lazily-created runner, without a real model/runner.
     vi.doMock('@src/agent-runner/index.js', async (importActual) => {
       const actual = await importActual<any>();
+      const fakeRunner = () => ({
+        prompt: async (_c: string, onEvent: any) => {
+          onEvent({ type: 'text_delta', delta: 'reply' });
+          onEvent({ type: 'message_end', runId: 'r', usage: {} });
+        },
+        abort: () => {},
+        dispose: async () => {},
+        reset: async () => {},
+        reload: async () => {},
+      });
       return {
         ...actual,
         createRunner: (ctx: any, config: any) => {
           createdContexts.push(ctx);
-          return actual.createRunner(ctx, config);
+          return fakeRunner();
         },
       };
     });
-    ({ startServer, stopServer } = await import('@src/server.js'));
+
+    const { buildApp } = await import('@src/server.js');
+    stopServer = (await import('@src/server.js')).stopServer;
+    await buildApp({ db, reebotDir: tmpDir, config: reeConfig() });
   });
 
   afterEach(async () => {
     try { await stopServer(); } catch { /* ignore */ }
-    try { db.close(); } catch { /* ignore */ }
+    try { closeDb(); } catch { /* ignore */ }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('S1 — runners for A and B share one workspace path (contexts/__ree__/workspace)', async () => {
-    const config = { ...defaultConfig, sdk: 'ree' as const };
-    const { port } = await startServer({
-      port: 0, logLevel: 'silent', db, reebotDir: tmpDir, config,
-    });
+    const { webAdapter } = await import('@src/channels/web.js');
+    const bus = webAdapter.getBus();
+    expect(bus).not.toBeNull();
 
-    // Connect two conversations and send a message to trigger lazy creation.
-    const a = await wsConnect(`ws://localhost:${port}/ws/chat/A`);
-    await waitForMessage(a.messages, m => m.type === 'connected');
-    a.ws.send(JSON.stringify({ type: 'message', content: 'hi' }));
+    // Drive the orchestrator to lazily create runners for two conversations,
+    // exactly as a WebSocket message would, but without a real socket.
+    bus!.publish(createIncomingMessage({ channelType: 'web', peerId: 'pA', conversationId: 'A', content: 'hi', raw: null }));
+    bus!.publish(createIncomingMessage({ channelType: 'web', peerId: 'pB', conversationId: 'B', content: 'hi', raw: null }));
 
-    const b = await wsConnect(`ws://localhost:${port}/ws/chat/B`);
-    await waitForMessage(b.messages, m => m.type === 'connected');
-    b.ws.send(JSON.stringify({ type: 'message', content: 'hi' }));
-
-    // Wait for the lazy factory to run on dispatch
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 200));
 
     const convCtx = createdContexts.filter(c => c.id === 'A' || c.id === 'B');
     expect(convCtx.length).toBeGreaterThanOrEqual(2);
@@ -363,9 +386,6 @@ describe('ree-shared-workspace — server runner-factory (task 7)', () => {
     expect(aCtx!.workspacePath).toContain('__ree__');
     expect(aCtx!.workspacePath).not.toContain('/A');
     expect(aCtx!.workspacePath).not.toContain('/B');
-
-    a.ws.close();
-    b.ws.close();
   });
 });
 
@@ -374,41 +394,76 @@ describe('ree-shared-workspace — server runner-factory (task 7)', () => {
 describe('ree-shared-workspace — turn-meta skip (task 8)', () => {
   let tmpDir: string;
   let db: Database.Database;
-  let startServer: any;
   let stopServer: any;
 
+  function reeConfig() {
+    return {
+      sdk: 'ree',
+      channels: { web: { enabled: true } },
+      routing: { default: 'main', rules: [] },
+      agent: {
+        name: 'Test',
+        runner: 'ree',
+        model: { authMode: 'own', provider: 'openai', id: 'm', apiKey: 'k', providers: [] },
+      },
+      resilience: {
+        recovery: { mode: 'safe_only', side_effect_tools: [] },
+        scheduler: { catchup_window: '1h' },
+        outage_threshold: 3,
+        probe_interval: '1h',
+      },
+    } as any;
+  }
+
   beforeEach(async () => {
-    tmpDir = join(tmpdir(), `reeboot-meta-skip-${Date.now()}`);
-    mkdirSync(tmpDir, { recursive: true });
-    db = new Database(join(tmpDir, 'test.db'));
-    vi.resetModules();
-    ({ startServer, stopServer } = await import('@src/server.js'));
+    tmpDir = mkdtempSync(join(tmpdir(), `reeboot-meta-skip-${Date.now()}`));
+    db = openDatabase(join(tmpDir, 'test.db'));
+
+    // Mock createRunner to avoid a real model/runner; the turn still flows
+    // through the orchestrator / turn-journal exactly as in production.
+    vi.doMock('@src/agent-runner/index.js', async (importActual) => {
+      const actual = await importActual<any>();
+      return {
+        ...actual,
+        createRunner: () => ({
+          prompt: async (_c: string, onEvent: any) => {
+            onEvent({ type: 'text_delta', delta: 'reply' });
+            onEvent({ type: 'message_end', runId: 'r', usage: {} });
+          },
+          abort: () => {},
+          dispose: async () => {},
+          reset: async () => {},
+          reload: async () => {},
+        }),
+      };
+    });
+
+    const { buildApp } = await import('@src/server.js');
+    stopServer = (await import('@src/server.js')).stopServer;
+    await buildApp({ db, reebotDir: tmpDir, config: reeConfig() });
   });
 
   afterEach(async () => {
     try { await stopServer(); } catch { /* ignore */ }
-    try { db.close(); } catch { /* ignore */ }
+    try { closeDb(); } catch { /* ignore */ }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('S2 — no per-conversation turn-meta file is written in ree mode', async () => {
-    const config = { ...defaultConfig, sdk: 'ree' as const, reebootDir: tmpDir } as any;
-    const { port } = await startServer({
-      port: 0, logLevel: 'silent', db, reebotDir: tmpDir, config,
-    });
+    const { webAdapter } = await import('@src/channels/web.js');
+    const bus = webAdapter.getBus();
+    expect(bus).not.toBeNull();
 
-    const a = await wsConnect(`ws://localhost:${port}/ws/chat/A`);
-    await waitForMessage(a.messages, m => m.type === 'connected');
-    a.ws.send(JSON.stringify({ type: 'message', content: 'hi' }));
-    await new Promise(r => setTimeout(r, 400));
+    // Drive a conversation turn like a WebSocket message, but without a socket.
+    bus!.publish(createIncomingMessage({ channelType: 'web', peerId: 'pA', conversationId: 'A', content: 'hi', raw: null }));
+    await new Promise(r => setTimeout(r, 200));
 
     const { existsSync } = await import('fs');
     const metaPath = join(tmpDir, 'contexts', 'A', 'workspace', '.reeboot_turn_meta.json');
     expect(existsSync(metaPath)).toBe(false);
     // The shared ree workspace exists, but no per-conversation dir was created.
     expect(existsSync(join(tmpDir, 'contexts', 'A'))).toBe(false);
-
-    a.ws.close();
+    expect(existsSync(join(tmpDir, 'contexts', '__ree__', 'workspace'))).toBe(true);
   });
 
   it('S2b — the ree token-meter records the turn with the default operationType (no meta file)', async () => {

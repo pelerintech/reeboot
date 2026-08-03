@@ -12,12 +12,14 @@ import { tmpdir } from 'os';
 import { mkdirSync, rmSync } from 'fs';
 import type { ExtensionAPI } from '../src/extensions/extension-api.js';
 
+const WORKSPACE = join(tmpdir(), 'reeboot-rss-');
+
 describe('ExtensionAPI — getCurrentChatId', () => {
   it('ReeExtensionAdapter exposes getCurrentChatId', async () => {
     const { ReeExtensionAdapter } = await import('../src/extensions/ree-adapter.js');
     const { ReeChat } = await import('../src/runtime/ree-chat.js');
 
-    const context = { cwd: '/tmp', workspacePath: '/tmp', config: {}, ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} }, hasUI: false };
+    const context = { cwd: WORKSPACE, workspacePath: WORKSPACE, config: {}, ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} }, hasUI: false };
     const chat = new ReeChat('test-chat', { maxHistory: 50, context, config: {} });
 
     const adapter = new ReeExtensionAdapter(chat);
@@ -51,7 +53,7 @@ describe('ree session_search extension', () => {
     const { ReeExtensionAdapter } = await import('../src/extensions/ree-adapter.js');
     const { ReeChat } = await import('../src/runtime/ree-chat.js');
 
-    const context = { cwd: '/tmp', workspacePath: '/tmp', config: {}, ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} }, hasUI: false };
+    const context = { cwd: WORKSPACE, workspacePath: WORKSPACE, config: {}, ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} }, hasUI: false };
     const chat = new ReeChat('test-chat', { maxHistory: 50, context, config: {} });
 
     const adapter = new ReeExtensionAdapter(chat);

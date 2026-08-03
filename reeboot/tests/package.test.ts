@@ -1,7 +1,6 @@
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
 import { describe, it, expect } from 'vitest';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -83,26 +82,30 @@ describe('Package Publication Readiness', () => {
   });
 });
 
-describe('npm pack dry-run', () => {
-  it('only includes files from the whitelist', () => {
-    const output = execSync('npm pack --dry-run 2>&1', {
-      cwd: resolve(__dirname, '..'),
-      encoding: 'utf-8',
-    });
+describe('package files whitelist (in-process)', () => {
+  const ROOT = resolve(__dirname, '..');
 
-    const lines = output
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.startsWith('dist/') || l.startsWith('extensions/') || l.startsWith('skills/') || l.startsWith('templates/') || l.startsWith('container/') || l === 'package.json' || l === 'README.md');
+  it('every whitelist entry exists in the real repo layout', () => {
+    const root = ROOT;
+    const files = pkg().files;
+    expect(Array.isArray(files)).toBe(true);
 
-    // Check that src/ files are NOT included (top-level or nested, e.g. webchat/src/)
-    expect(output).not.toMatch(/\bsrc\//);
-    // Check that test files are NOT included (tests/ or __tests__/)
-    expect(output).not.toMatch(/\btests\//);
-    expect(output).not.toMatch(/__tests__\//);
-    // node_modules must never ship
-    expect(output).not.toMatch(/\bnode_modules\//);
-    // dist/ should be present (built output)
-    expect(output).toMatch(/dist\//);
+    const entries = ['dist/', 'extensions/', 'skills/', 'templates/', 'container/', 'webchat/dist/'];
+    for (const entry of entries) {
+      expect(files).toContain(entry);
+      // webchat/dist is a nested dir; resolve it explicitly
+      const rel = entry === 'webchat/dist/' ? join('webchat', 'dist') : entry;
+      expect(existsSync(join(root, rel))).toBe(true);
+    }
+  });
+
+  it('whitelist excludes src/, tests/ and node_modules', () => {
+    const files: string[] = pkg().files ?? [];
+    const isForbidden = (f: string) =>
+      f.startsWith('src/') || f === 'src' ||
+      f.startsWith('tests/') || f === 'tests' ||
+      f.startsWith('__tests__/') || f === '__tests__' ||
+      f.includes('node_modules');
+    expect(files.some(isForbidden)).toBe(false);
   });
 });

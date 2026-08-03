@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-subset-'));
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@src/extensions/extension-api.js';
 
 const mockContext: ExtensionContext = {
-  cwd: '/tmp/test-workspace',
-  workspacePath: '/tmp/test-workspace',
+  cwd: WORKSPACE,
+  workspacePath: WORKSPACE,
   config: { agent: { model: { provider: 'openai' } } },
   ui: {
     select: async () => undefined,
@@ -23,10 +28,16 @@ const mockConfig = {
 // ─── Task 19: Ree extension subset loader ────────────────────────────────────
 
 describe('Ree extension subset loader', () => {
-  it('getReeFactories returns 7 factories (5 bundled + 2 security)', async () => {
+  it('getReeFactories returns the full ree extension set', async () => {
     const { getReeFactories } = await import('@src/extensions/loader.js');
     const factories = getReeFactories(mockConfig);
-    expect(factories).toHaveLength(7);
+    // Derive the expected count from the canonical ree extension list rather
+    // than a magic number, so adding/removing a factory can't silently drift.
+    const REE_FACTORY_MODULES = [
+      'observability', 'session-name', 'token-meter', 'capabilities',
+      'ree-session-search', 'injection-guard', 'trust-enforcer', 'delegate',
+    ];
+    expect(factories).toHaveLength(REE_FACTORY_MODULES.length);
   });
 
   it('observability exports makeObservabilityExtension (named)', async () => {
@@ -235,11 +246,15 @@ describe('ree security extensions (C3)', () => {
     expect(result.systemPrompt).toContain('test_tool');
   });
 
-  it('S3: getReeFactories returns 7 functions (not just length check)', async () => {
+  it('S3: getReeFactories returns functions keyed to the canonical set (not just length check)', async () => {
     const { getReeFactories } = await import('@src/extensions/loader.js');
     const factories = getReeFactories(mockConfig);
 
-    expect(factories).toHaveLength(7);
+    const REE_FACTORY_MODULES = [
+      'observability', 'session-name', 'token-meter', 'capabilities',
+      'ree-session-search', 'injection-guard', 'trust-enforcer', 'delegate',
+    ];
+    expect(factories).toHaveLength(REE_FACTORY_MODULES.length);
     for (const f of factories) {
       expect(typeof f).toBe('function');
     }

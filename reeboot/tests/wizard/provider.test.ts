@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 vi.mock('@src/wizard/detect-pi-auth.js', () => ({
   detectPiAuth: vi.fn(),
@@ -13,6 +16,16 @@ function makePrompter(answers: any[]) {
     confirm: vi.fn(async () => answers[i++]),
   };
 }
+
+let configDir: string;
+
+beforeAll(() => {
+  configDir = mkdtempSync(join(tmpdir(), 'reeboot-provider-'));
+});
+
+afterAll(() => {
+  rmSync(configDir, { recursive: true, force: true });
+});
 
 describe('runProviderStep — pi auth detection', () => {
   afterEach(() => {
@@ -32,7 +45,7 @@ describe('runProviderStep — pi auth detection', () => {
     const prompter = makePrompter(['pi']);
 
     const { runProviderStep } = await import('@src/wizard/steps/provider.js');
-    const result = await runProviderStep({ prompter: prompter as any, configDir: '/tmp' });
+    const result = await runProviderStep({ prompter: prompter as any, configDir });
 
     expect(result.authMode).toBe('pi');
     expect(result.provider).toBe('');
@@ -55,7 +68,7 @@ describe('runProviderStep — pi auth detection', () => {
     const prompter = makePrompter(['own', 'anthropic', 'sk-test-key', 'claude-sonnet-4-5']);
 
     const { runProviderStep } = await import('@src/wizard/steps/provider.js');
-    const result = await runProviderStep({ prompter: prompter as any, configDir: '/tmp' });
+    const result = await runProviderStep({ prompter: prompter as any, configDir });
 
     expect(result.authMode).toBe('own');
     expect(result.provider).toBe('anthropic');
@@ -72,7 +85,7 @@ describe('runProviderStep — pi auth detection', () => {
     const prompter = makePrompter(['anthropic', 'sk-direct-key', 'claude-sonnet-4-5']);
 
     const { runProviderStep } = await import('@src/wizard/steps/provider.js');
-    const result = await runProviderStep({ prompter: prompter as any, configDir: '/tmp' });
+    const result = await runProviderStep({ prompter: prompter as any, configDir });
 
     expect(result.authMode).toBe('own');
     expect(result.provider).toBe('anthropic');
@@ -139,7 +152,7 @@ describe('PROVIDERS list ordering and new local providers', () => {
     }
 
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    await runProviderStep({ prompter: prompter as any, configDir: '/tmp' })
+    await runProviderStep({ prompter: prompter as any, configDir })
 
     // The separator entry must be present in the choices passed to select
     const hasSeparatorInChoices = capturedChoices.some(
@@ -168,7 +181,7 @@ describe('local model auto-detection', () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const result = await runProviderStep({
       prompter: prompter as any,
-      configDir: '/tmp',
+      configDir,
       _deps: { fetchLocalModels: mockFetch },
     })
 
@@ -193,7 +206,7 @@ describe('local model auto-detection', () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const result = await runProviderStep({
       prompter: prompter as any,
-      configDir: '/tmp',
+      configDir,
       _deps: { fetchLocalModels: mockFetch },
     })
 
@@ -228,7 +241,7 @@ describe('cloud provider flow order: provider → api key → model', () => {
     }
 
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
-    await runProviderStep({ prompter: prompter as any, configDir: '/tmp' })
+    await runProviderStep({ prompter: prompter as any, configDir })
 
     // provider select must come before password (api key) which must come before model select
     const providerIdx = callOrder.findIndex(c => c === 'select:provider')
@@ -262,7 +275,7 @@ describe('cloud live model fetch', () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const result = await runProviderStep({
       prompter: prompter as any,
-      configDir: '/tmp',
+      configDir,
       _deps: { fetchCloudModels: mockFetch },
     })
 
@@ -287,7 +300,7 @@ describe('cloud live model fetch', () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const result = await runProviderStep({
       prompter: prompter as any,
-      configDir: '/tmp',
+      configDir,
       _deps: { fetchCloudModels: mockFetch },
     })
 
@@ -319,7 +332,7 @@ describe('cloud fallback warning fires in production path', () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     await runProviderStep({
       prompter: prompter as any,
-      configDir: '/tmp',
+      configDir,
       _deps: { fetchCloudModels: mockFetch },
     })
 
@@ -361,7 +374,7 @@ describe('OpenRouter: models fetched before API key prompt', () => {
     const { runProviderStep } = await import('@src/wizard/steps/provider.js')
     const result = await runProviderStep({
       prompter: prompter as any,
-      configDir: '/tmp',
+      configDir,
       _deps: { fetchCloudModels: mockFetch },
     })
 

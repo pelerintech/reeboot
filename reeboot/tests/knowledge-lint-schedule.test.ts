@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import Database from 'better-sqlite3';
 import { loadVecExtension } from '../src/db/index.js';
 import { runKnowledgeMigration } from '../src/db/schema.js';
@@ -9,6 +12,19 @@ vi.mock('../src/knowledge/embedder.js', () => ({
   embedOne: vi.fn().mockImplementation(async () => new Float32Array(768).fill(0.1)),
   resetEmbedder: vi.fn(),
 }));
+
+
+vi.mock('../src/knowledge/watcher.js', () => {
+  const pending: string[] = [];
+  class FakeKnowledgeWatcher {
+    start() {}
+    pause() {}
+    resume() {}
+    stop() {}
+    getPendingFiles() { return [...pending]; }
+  }
+  return { KnowledgeWatcher: FakeKnowledgeWatcher, __pending: pending };
+});
 
 vi.mock('../src/knowledge/ingest.js', () => ({
   ingestDocument: vi.fn().mockResolvedValue({ docId: 'id1', chunkCount: 1, confidence: 'medium' }),
@@ -24,6 +40,19 @@ function makeDb(): Database.Database {
   runKnowledgeMigration(db);
   return db;
 }
+
+let tempRaw: string;
+let tempWiki: string;
+
+beforeAll(() => {
+  tempRaw = mkdtempSync(join(tmpdir(), 'reeboot-lint-raw-'));
+  tempWiki = mkdtempSync(join(tmpdir(), 'reeboot-lint-wiki-'));
+});
+
+afterAll(() => {
+  rmSync(tempRaw, { recursive: true, force: true });
+  rmSync(tempWiki, { recursive: true, force: true });
+});
 
 describe('wiki lint scheduled task', () => {
   let db: Database.Database;
@@ -62,7 +91,7 @@ describe('wiki lint scheduled task', () => {
       }),
     };
 
-    makeKnowledgeExtension(mockPi as any, { rawDir: '/tmp/raw', wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(mockPi as any, { rawDir: tempRaw, wikiDir: tempWiki });
 
     const lintJob = registeredJobs.find((j) => j.id.includes('lint'));
     expect(lintJob).toBeDefined();
@@ -96,7 +125,7 @@ describe('wiki lint scheduled task', () => {
       }),
     };
 
-    makeKnowledgeExtension(mockPi as any, { rawDir: '/tmp/raw', wikiDir: '/tmp/wiki' });
+    makeKnowledgeExtension(mockPi as any, { rawDir: tempRaw, wikiDir: tempWiki });
 
     const lintJob = registeredJobs.find((j) => j.id.includes('lint'));
     expect(lintJob).toBeUndefined();

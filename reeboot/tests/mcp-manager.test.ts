@@ -140,11 +140,14 @@ describe('4: mcp list action', () => {
     mcpManagerExtension(pi as any, config);
 
     const result = await pi._callTool('mcp', { action: 'list', server: 'postgres' });
-    const text = result.content[0].text;
-    const parsed = JSON.parse(text);
 
-    expect(parsed).toHaveLength(2);
-    expect(parsed[0]).toMatchObject({ name: 'query', description: 'Run SQL' });
+    // Summary lives in text; the actual tool descriptors are returned as a
+    // data-table view (not JSON in text).
+    expect(result.content[0].text).toContain('Found 2 tools');
+    expect(result.view.type).toBe('data-table');
+    expect(result.view.columns).toEqual(['Name', 'Description']);
+    expect(result.view.rows).toHaveLength(2);
+    expect(result.view.rows[0]).toMatchObject({ name: 'query', description: 'Run SQL' });
     expect(mockClient.connect).toHaveBeenCalledTimes(1);
   });
 

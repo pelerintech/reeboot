@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { join } from 'path'
+import { tmpdir } from 'os'
 
 vi.mock('@src/wizard/detect-pi-auth.js', () => ({
   detectPiAuth: vi.fn().mockResolvedValue({ available: false }),
@@ -34,7 +36,7 @@ describe('__custom__ escape hatch on provider select', () => {
     const prompter = makePrompter(['__custom__', 'myco', 'sk-myco-key', 'myco/model-1'])
     const result = await runProviderStep({
       prompter: prompter as any,
-      configDir: '/tmp',
+      configDir: join(tmpdir(), 'reeboot-wiz'),
       _deps: { fetchLocalModels: async () => { throw new Error('no') }, fetchCloudModels: async () => { throw new Error('no') } },
     })
     expect(result.provider).toBe('myco')
@@ -46,7 +48,7 @@ describe('__custom__ escape hatch on provider select', () => {
     const prompter = makePrompter(['anthropic', 'sk-test', '__custom__', 'my-custom-model'])
     const result = await runProviderStep({
       prompter: prompter as any,
-      configDir: '/tmp',
+      configDir: join(tmpdir(), 'reeboot-wiz'),
       _deps: { fetchCloudModels: async () => { throw new Error('no') } },
     })
     expect(result.modelId).toBe('my-custom-model')

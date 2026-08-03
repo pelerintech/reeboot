@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -6,15 +6,19 @@ import { tmpdir } from 'os';
 import { loadVecExtension } from '../../src/db/index.js';
 import { runKnowledgeMigration } from '../../src/db/schema.js';
 
+// Replace node's fs.watch with a no-op so start() attaches no real watcher
+// (no fd leaks / EMFILE), while readFileSync/statSync etc. stay real so the
+// pending-queue logic is exercised against actual files.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return { ...actual, watch: vi.fn(() => ({ close: vi.fn() })) };
+});
+
 function makeDb(): Database.Database {
   const db = new Database(':memory:');
   loadVecExtension(db);
   runKnowledgeMigration(db);
   return db;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((res) => setTimeout(res, ms));
 }
 
 describe('KnowledgeWatcher', () => {
@@ -26,39 +30,40 @@ describe('KnowledgeWatcher', () => {
     mkdirSync(join(rawDir, 'owner'), { recursive: true });
     mkdirSync(join(rawDir, 'template'), { recursive: true });
     db = makeDb();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     db.close();
     try { rmSync(rawDir, { recursive: true, force: true }); } catch {}
   });
+
+  /** Drive one fs event and let the 300ms debounce elapse, deterministically. */
+  async function fire(rawDir: string, watcher: any, relPath: string) {
+    watcher.handleFsEvent(rawDir, relPath);
+    await vi.advanceTimersByTimeAsync(400);
+  }
 
   it('detects a new .md file after debounce window', async () => {
     const { KnowledgeWatcher } = await import('../../src/knowledge/watcher.js');
     const watcher = new KnowledgeWatcher(db);
     watcher.start(rawDir);
 
-    // Write a new file
     writeFileSync(join(rawDir, 'owner', 'test.md'), '# Hello world', 'utf-8');
+    await fire(rawDir, watcher, join('owner', 'test.md'));
 
-    // Wait for debounce (300ms) + generous buffer for parallelised CI runs
-    await delay(800);
-
-    const pending = watcher.getPendingFiles();
-    expect(pending.some((p) => p.endsWith('test.md'))).toBe(true);
-
+    expect(watcher.getPendingFiles().some((p) => p.endsWith('test.md'))).toBe(true);
     watcher.stop();
   });
 
   it('does not add already-ingested file (same hash) to pending', async () => {
     const { KnowledgeWatcher } = await import('../../src/knowledge/watcher.js');
 
-    // Pre-insert the file hash into knowledge_sources
     const filePath = join(rawDir, 'owner', 'known.md');
     const content = '# Already ingested document';
     writeFileSync(filePath, content, 'utf-8');
 
-    // Compute hash and insert into db
     const { createHash } = await import('crypto');
     const { readFileSync } = await import('fs');
     const hash = createHash('sha256').update(readFileSync(filePath)).digest('hex');
@@ -71,13 +76,9 @@ describe('KnowledgeWatcher', () => {
     const watcher = new KnowledgeWatcher(db);
     watcher.start(rawDir);
 
-    // Write the same file again
-    writeFileSync(filePath, content, 'utf-8');
-    await delay(500);
+    await fire(rawDir, watcher, join('owner', 'known.md'));
 
-    const pending = watcher.getPendingFiles();
-    expect(pending.every((p) => !p.endsWith('known.md'))).toBe(true);
-
+    expect(watcher.getPendingFiles().every((p) => !p.endsWith('known.md'))).toBe(true);
     watcher.stop();
   });
 
@@ -87,13 +88,12 @@ describe('KnowledgeWatcher', () => {
     watcher.start(rawDir);
 
     writeFileSync(join(rawDir, 'owner', 'clear-test.md'), '# Content', 'utf-8');
-    await delay(500);
+    await fire(rawDir, watcher, join('owner', 'clear-test.md'));
 
     expect(watcher.getPendingFiles().length).toBeGreaterThan(0);
 
     watcher.clearPending();
     expect(watcher.getPendingFiles()).toHaveLength(0);
-
     watcher.stop();
   });
 
@@ -102,13 +102,10 @@ describe('KnowledgeWatcher', () => {
     const watcher = new KnowledgeWatcher(db);
     watcher.start(rawDir);
 
-    // Write a binary file (contains null byte)
     writeFileSync(join(rawDir, 'owner', 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0d]));
-    await delay(500);
+    await fire(rawDir, watcher, join('owner', 'image.png'));
 
-    const pending = watcher.getPendingFiles();
-    expect(pending.every((p) => !p.endsWith('image.png'))).toBe(true);
-
+    expect(watcher.getPendingFiles().every((p) => !p.endsWith('image.png'))).toBe(true);
     watcher.stop();
   });
 
@@ -118,9 +115,8 @@ describe('KnowledgeWatcher', () => {
     watcher.start(rawDir);
     watcher.stop();
 
-    // Write file after stop
     writeFileSync(join(rawDir, 'owner', 'after-stop.md'), '# After stop', 'utf-8');
-    await delay(500);
+    await fire(rawDir, watcher, join('owner', 'after-stop.md'));
 
     expect(watcher.getPendingFiles()).toHaveLength(0);
   });
@@ -129,11 +125,9 @@ describe('KnowledgeWatcher', () => {
     const { KnowledgeWatcher } = await import('../../src/knowledge/watcher.js');
     const { createHash } = await import('crypto');
 
-    // Pre-insert the original file hash into knowledge_sources
     const filePath = join(rawDir, 'owner', 'modified.md');
-    const originalContent = '# Original content';
-    writeFileSync(filePath, originalContent, 'utf-8');
-    const originalHash = createHash('sha256').update(Buffer.from(originalContent)).digest('hex');
+    writeFileSync(filePath, '# Original content', 'utf-8');
+    const originalHash = createHash('sha256').update(Buffer.from('# Original content')).digest('hex');
 
     db.prepare(`
       INSERT INTO knowledge_sources (id, path, hash, source_tier, confidence, filename, format, status)
@@ -143,35 +137,27 @@ describe('KnowledgeWatcher', () => {
     const watcher = new KnowledgeWatcher(db);
     watcher.start(rawDir);
 
-    // Modify the file — new content = new hash
-    const newContent = '# Modified content with new text';
-    writeFileSync(filePath, newContent, 'utf-8');
-    await delay(500);
+    writeFileSync(filePath, '# Modified content with new text', 'utf-8');
+    await fire(rawDir, watcher, join('owner', 'modified.md'));
 
-    // Modified file should appear in pending (hash changed)
-    const pending = watcher.getPendingFiles();
-    expect(pending.some((p) => p.endsWith('modified.md'))).toBe(true);
-
+    expect(watcher.getPendingFiles().some((p) => p.endsWith('modified.md'))).toBe(true);
     watcher.stop();
   });
 
   it('ignores files in hidden directories (e.g. .git/ inside raw/)', async () => {
     const { KnowledgeWatcher } = await import('../../src/knowledge/watcher.js');
 
-    // Create a .git directory inside raw/
     const gitDir = join(rawDir, '.git');
     mkdirSync(gitDir, { recursive: true });
 
     const watcher = new KnowledgeWatcher(db);
     watcher.start(rawDir);
 
-    // Write a file inside .git/ — should be ignored
-    writeFileSync(join(gitDir, 'config'), '[core]\n\trepositoryformatversion = 0', 'utf-8');
-    await delay(500);
+    const inside = join('.git', 'config');
+    writeFileSync(join(rawDir, inside), '[core]\n\trepositoryformatversion = 0', 'utf-8');
+    await fire(rawDir, watcher, inside);
 
-    const pending = watcher.getPendingFiles();
-    expect(pending.every((p) => !p.includes('/.git/'))).toBe(true);
-
+    expect(watcher.getPendingFiles().every((p) => !p.includes('/.git/'))).toBe(true);
     watcher.stop();
   });
 });

@@ -38,6 +38,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "check": "npm run build && npm run test:run"
   },
   "dependencies": {
@@ -79,6 +80,7 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/qrcode": "^1.5.6",
     "@types/which": "^3.0.4",
+    "@vitest/coverage-v8": "^1.6.1",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vitest": "^1.6.1"

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { drainEventLoop } from '../helpers/event-drain.js';
 import Database from 'better-sqlite3';
 import { runResilienceMigration, runObservabilityMigration } from '@src/db/schema.js';
 
@@ -84,7 +85,7 @@ describe('Turn lifecycle audit events', () => {
     orc.start();
 
     bus.publish(createIncomingMessage({ channelType: 'whatsapp', peerId: 'peer1', content: 'hi', raw: null }));
-    await new Promise(r => setTimeout(r, 50));
+    await drainEventLoop();
 
     const events = db.prepare("SELECT * FROM events WHERE type = 'turn_started'").all() as any[];
     expect(events.length).toBeGreaterThan(0);
@@ -115,7 +116,7 @@ describe('Turn lifecycle audit events', () => {
     orc.start();
 
     bus.publish(createIncomingMessage({ channelType: 'whatsapp', peerId: 'peer1', content: 'hi', raw: null }));
-    await new Promise(r => setTimeout(r, 50));
+    await drainEventLoop();
 
     const events = db.prepare("SELECT * FROM events WHERE type = 'turn_completed'").all() as any[];
     expect(events.length).toBeGreaterThan(0);
@@ -144,7 +145,7 @@ describe('Turn lifecycle audit events', () => {
     orc.start();
 
     bus.publish(createIncomingMessage({ channelType: 'whatsapp', peerId: 'peer1', content: 'hi', raw: null }));
-    await new Promise(r => setTimeout(r, 100));
+    await drainEventLoop();
 
     const events = db.prepare("SELECT * FROM events WHERE type = 'turn_failed'").all() as any[];
     expect(events.length).toBeGreaterThan(0);

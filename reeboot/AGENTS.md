@@ -52,6 +52,17 @@ Both scripts build the Docker image, start a container with the target SDK confi
 
 Each script exits 0 on success, 1 on any test failure. Container logs are always printed for debugging.
 
+## Unit & behavioral tests
+
+The `npx vitest run` suite (inside `reeboot/`) is the always-green behavioral gate. It must pass fully in restricted sandboxes and in CI with **0 failed files / 0 failed tests / 0 errors and zero skips** — no `it.skip`/`test.skip`/`describe.skip`, no gated exclusions. Convention rules:
+
+- **Assert behavior through public interfaces, not artifacts.** Tests target what the system does (responses, state effects, ordering) via public interfaces — never the existence, naming, or placement of code/files/folders (no `fs.existsSync` existence checks, no `toMatch(/folder/)` path assertions).
+- **Mock adjacent/external services at the system boundary.** MCP, WhatsApp/baileys, the knowledge watcher/embedder, the scheduler clock, and the DB/logger home are faked or injected at their boundaries. Use the existing fake seams where possible: `FakePrompter` (`tests/helpers/fake-prompter.ts`), `InMemoryTransport` + `setMcpClients` (see `tests/runtime/ree-runner.test.ts` and `src/runtime/ree-runtime.ts`), and `vi.mock('@whiskeysockets/baileys')` (see `tests/channels/whatsapp.test.ts`).
+- **No sockets, no real home, no literal `/tmp`, no shelling, no real timing.** No test binds a real network socket, writes to the real `~/.reeboot`, uses a hardcoded `'/tmp/<name>'` path (always `mkdtempSync(join(tmpdir(), ...))`), shells out to `npm`/`docker`/network tooling, or waits on real wall-clock intervals (use `vi.useFakeTimers`/an injected clock).
+- **Never skip.** Every assertion runs; a green result is never produced via a skip or gated exclusion.
+- **Organize under `tests/<area>/*.test.ts` with vitest.** HTTP routes are exercised against the real app via the `buildApp`/`app.request` pattern (see `src/server.ts` `buildApp` and `tests/webhook-triggers/`); WebSocket handlers are driven directly at both ends without a real TCP/browser socket.
+- **Coverage regression gate.** `npm run test:coverage` (v8, `vitest.config.ts`) enforces a floor of 80% stmts/lines/funcs and 72% branches on the backend `src/` (the `webchat/` frontend is excluded — it has no unit tests and is tracked separately). New code must keep backend coverage above these levels; a drop fails the run.
+
 ## What the tests verify
 
 - **Docker build** — the image builds cleanly from source

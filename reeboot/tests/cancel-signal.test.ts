@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { drainEventLoop } from './helpers/event-drain.js';
 import { createIncomingMessage, MessageBus } from '../src/channels/interface.js';
 import { Orchestrator } from '../src/orchestrator.js';
 
@@ -69,7 +70,7 @@ describe('Orchestrator — cancel handling', () => {
     }));
 
     // Give the orchestrator a tick to dispatch
-    await new Promise((r) => setTimeout(r, 20));
+    await drainEventLoop();
 
     // Publish a cancel message while the context is busy
     bus.publish(createIncomingMessage({
@@ -81,7 +82,7 @@ describe('Orchestrator — cancel handling', () => {
     }));
 
     // Give the orchestrator a tick to process the cancel
-    await new Promise((r) => setTimeout(r, 20));
+    await drainEventLoop();
 
     expect(abortSpy).toHaveBeenCalledTimes(1);
 
@@ -120,7 +121,7 @@ describe('Orchestrator — cancel handling', () => {
       action: 'cancel',
     }));
 
-    await new Promise((r) => setTimeout(r, 20));
+    await drainEventLoop();
 
     expect(abortSpy).not.toHaveBeenCalled();
 
@@ -163,7 +164,7 @@ describe('Orchestrator — cancel handling', () => {
       raw: null,
     }));
 
-    await new Promise((r) => setTimeout(r, 20));
+    await drainEventLoop();
 
     // Send cancel while busy
     sendSpy.mockClear();
@@ -175,7 +176,7 @@ describe('Orchestrator — cancel handling', () => {
       action: 'cancel',
     }));
 
-    await new Promise((r) => setTimeout(r, 20));
+    await drainEventLoop();
 
     // The orchestrator should NOT have sent BUSY_REPLY or QUEUE_FULL_REPLY
     // for the cancel message. It should have aborted instead.

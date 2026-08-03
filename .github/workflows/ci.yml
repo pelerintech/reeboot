@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [main]
 
+# The actual application lives under reeboot/ (there is no root package.json),
+# so every shell step runs inside that directory.
+defaults:
+  run:
+    working-directory: reeboot
+
 jobs:
   # ── Test ───────────────────────────────────────────────────────────────────
   test:
@@ -29,8 +35,17 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run tests
-        run: npm test
+      - name: Run tests with coverage (enforces the 80%/72% gate)
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./reeboot/coverage/lcov.info
+          flags: unit
+          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   # ── Publish ────────────────────────────────────────────────────────────────
   publish:
@@ -84,8 +99,9 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./container/Dockerfile
+          # Paths are resolved from the repo root, not the run working-directory.
+          context: ./reeboot
+          file: ./reeboot/container/Dockerfile
           push: true
           tags: |
             reeboot/reeboot:latest

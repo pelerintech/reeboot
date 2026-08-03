@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { PiExtensionAdapter } from '@src/extensions/pi-adapter.js';
 import type { ExtensionContext, ExtensionEventMap } from '@src/extensions/extension-api.js';
+
+const TMP_WS = mkdtempSync(join(tmpdir(), 'reeboot-piws-'));
 
 describe('PiExtensionAdapter', () => {
   const mockContext: ExtensionContext = {
@@ -410,8 +415,8 @@ describe('PiExtensionAdapter', () => {
       const mockPi = createMockPiSession();
       const ctx: ExtensionContext = {
         ...mockContext,
-        cwd: '/tmp/workspace',
-        workspacePath: '/tmp/workspace',
+        cwd: TMP_WS,
+        workspacePath: TMP_WS,
       };
       const adapter = new PiExtensionAdapter(mockPi, ctx);
 

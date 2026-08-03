@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-runtime-'));
 import type { ExtensionContext, ToolDefinition } from '@src/extensions/extension-api.js';
 
 const mockContext: ExtensionContext = {
-  cwd: '/tmp/test-workspace',
-  workspacePath: '/tmp/test-workspace',
+  cwd: WORKSPACE,
+  workspacePath: WORKSPACE,
   config: { agent: { model: { provider: 'openai' } } },
   ui: {
     select: async () => undefined,
@@ -179,41 +184,49 @@ describe('ReeRuntime — idle eviction and chat limit', () => {
     ReeRuntime = mod.ReeRuntime;
   });
 
-  it('sweepIdle disposes chats exceeding idleTtlMs', async () => {
-    const runtime = new ReeRuntime({
-      config: mockConfig,
-      maxChats: 10,
-      idleTtlMs: 50,
-      maxHistoryPerChat: 50,
-    });
+  it('sweepIdle disposes chats exceeding idleTtlMs', () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = new ReeRuntime({
+        config: mockConfig,
+        maxChats: 10,
+        idleTtlMs: 50,
+        maxHistoryPerChat: 50,
+      });
 
-    runtime.createChat('idle-chat', { context: mockContext });
-    expect(runtime.chatCount).toBe(1);
+      runtime.createChat('idle-chat', { context: mockContext });
+      expect(runtime.chatCount).toBe(1);
 
-    // Wait for the TTL to expire
-    await new Promise((resolve) => setTimeout(resolve, 80));
-
-    runtime.sweepIdle();
-    expect(runtime.chatCount).toBe(0);
+      // Expire the idle TTL deterministically
+      vi.advanceTimersByTime(100);
+      runtime.sweepIdle();
+      expect(runtime.chatCount).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('sweepIdle keeps recently active chats', async () => {
-    const runtime = new ReeRuntime({
-      config: mockConfig,
-      maxChats: 10,
-      idleTtlMs: 50,
-      maxHistoryPerChat: 50,
-    });
+  it('sweepIdle keeps recently active chats', () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = new ReeRuntime({
+        config: mockConfig,
+        maxChats: 10,
+        idleTtlMs: 50,
+        maxHistoryPerChat: 50,
+      });
 
-    const chat = runtime.createChat('active-chat', { context: mockContext });
+      const chat = runtime.createChat('active-chat', { context: mockContext });
 
-    await new Promise((resolve) => setTimeout(resolve, 60));
+      // Let the TTL elapse, then touch to re-mark recent BEFORE sweeping
+      vi.advanceTimersByTime(100);
+      chat.touch();
 
-    // Touch the chat to update its lastActivityAt AFTER the wait
-    chat.touch();
-
-    runtime.sweepIdle();
-    expect(runtime.chatCount).toBe(1); // still there (touched just before sweep)
+      runtime.sweepIdle();
+      expect(runtime.chatCount).toBe(1); // still there (touched just before sweep)
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('maxChats enforces the limit by evicting oldest idle chat', () => {

@@ -6,6 +6,9 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'events';
+import { mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { MessageBus } from '@src/channels/interface.js';
 
 // ─── Baileys mock ─────────────────────────────────────────────────────────────
@@ -94,6 +97,7 @@ function emitOpen(sock: any) {
 describe('WhatsAppAdapter resilience', () => {
   let adapter: any;
   let bus: MessageBus;
+  let authDir: string;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -102,7 +106,8 @@ describe('WhatsAppAdapter resilience', () => {
 
     const { WhatsAppAdapter } = await import('@src/channels/whatsapp.js');
     bus = new MessageBus();
-    adapter = new WhatsAppAdapter('/tmp/test-wa-resilience-auth');
+    authDir = mkdtempSync(join(tmpdir(), 'wa-res-auth-'));
+    adapter = new WhatsAppAdapter(authDir);
     await adapter.init({ enabled: true }, bus);
   });
 
@@ -110,8 +115,7 @@ describe('WhatsAppAdapter resilience', () => {
     // Clean up: stop adapter to prevent dangling reconnect loops
     try { await adapter.stop(); } catch { /* ignore */ }
     vi.clearAllTimers();
-    // Drain any pending microtasks/macrotasks from async adapter internals
-    await new Promise(r => setTimeout(r, 20));
+    rmSync(authDir, { recursive: true, force: true });
   });
 
   // Helper: connect successfully
@@ -546,7 +550,7 @@ describe('WhatsAppAdapter resilience', () => {
     // Uses a short stallNotifyMs (200ms) injected via the second constructor argument
     // to trigger the event without waiting 5 real minutes.
     const { WhatsAppAdapter: WA } = await import('@src/channels/whatsapp.js');
-    const shortStallAdapter = new WA('/tmp/test-wa-stall', 200); // stallNotifyMs = 200ms
+    const shortStallAdapter = new WA(mkdtempSync(join(tmpdir(), 'wa-stall-')), 200); // stallNotifyMs = 200ms
     const { MessageBus: MB } = await import('@src/channels/interface.js');
     await shortStallAdapter.init({ enabled: true }, new MB());
 

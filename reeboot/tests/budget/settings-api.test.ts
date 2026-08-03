@@ -24,7 +24,7 @@ function makeDb() {
 
 describe('Budget settings API', () => {
   let tmpDir: string;
-  let port: number;
+  let app: any;
   let stopServer: () => Promise<void>;
   let db: Database.Database;
 
@@ -46,14 +46,7 @@ describe('Budget settings API', () => {
     const config = loadConfig(join(tmpDir, 'config.json'));
 
     const server = await import('@src/server.js');
-    const result = await server.startServer({
-      port: 0,
-      logLevel: 'silent',
-      db,
-      reebotDir: tmpDir,
-      config,
-    });
-    port = result.port;
+    app = await server.buildApp({ logLevel: 'silent', db, reebotDir: tmpDir, config });
     stopServer = server.stopServer;
   });
 
@@ -63,7 +56,7 @@ describe('Budget settings API', () => {
   });
 
   it('GET /api/settings/budget returns limits and spend', async () => {
-    const res = await fetch(`http://localhost:${port}/api/settings/budget`);
+    const res = await app.request('/api/settings/budget');
     expect(res.status).toBe(200);
     const body = await res.json() as any;
 
@@ -76,14 +69,14 @@ describe('Budget settings API', () => {
   });
 
   it('PUT /api/settings/budget updates config and is reflected in next GET', async () => {
-    const res = await fetch(`http://localhost:${port}/api/settings/budget`, {
+    const res = await app.request('/api/settings/budget', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ daily_cost_usd: 15.0 }),
     });
     expect(res.status).toBe(200);
 
-    const getRes = await fetch(`http://localhost:${port}/api/settings/budget`);
+    const getRes = await app.request('/api/settings/budget');
     const body = await getRes.json() as any;
     expect(body.limits.daily_cost_usd).toBe(15.0);
   });

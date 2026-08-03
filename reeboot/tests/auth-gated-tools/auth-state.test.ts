@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { applyAuthLevel } from '@src/extensions/ree-adapter.js';
 
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-auth-'));
+
 const context: any = {
-  cwd: '/tmp/w',
-  workspacePath: '/tmp/w',
+  cwd: WORKSPACE,
+  workspacePath: WORKSPACE,
   config: { agent: { model: { provider: 'openai' } } },
   ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
   hasUI: false,

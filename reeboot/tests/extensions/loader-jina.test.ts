@@ -11,6 +11,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'reeboot-lj-'));
 
 describe('loader wiring for jina-reader', () => {
   beforeEach(() => {
@@ -29,7 +34,7 @@ describe('loader wiring for jina-reader', () => {
     };
 
     const { getBundledFactories } = await import('@src/extensions/loader.js');
-    const factories = getBundledFactories({ id: 'test', workspacePath: '/tmp' } as any, config);
+    const factories = getBundledFactories({ id: 'test', workspacePath: WORKSPACE } as any, config);
 
     for (const factory of factories) {
       try { await (factory as any)(mockPi); } catch { /* ignore unrelated factory errors */ }

@@ -20,7 +20,7 @@ function assistantEntry(text = 'OK') {
 }
 
 function sessionEntry() {
-  return JSON.stringify({ type: 'session', version: 3, cwd: '/tmp' });
+  return JSON.stringify({ type: 'session', version: 3, cwd: join(tmpdir(), 'reeboot-res') });
 }
 
 let tmpDir: string;

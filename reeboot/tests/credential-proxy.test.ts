@@ -38,19 +38,34 @@ describe('credential proxy (Hono)', () => {
     expect(result).toBeNull();
   });
 
-  it('starts on loopback when enabled', async () => {
+  it('createProxyApp proxies for the enabled loopback config without binding a socket', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: async () => '{"id":"enabled-proxy"}',
+    });
+
     const config = {
       credentialProxy: { enabled: true, port: 0 },
       agent: { model: { provider: 'anthropic', apiKey: 'real-anthropic-key' } },
     };
-    const server = await startProxy(config);
-    expect(server).not.toBeNull();
 
-    const addr = server.address();
-    expect(addr).not.toBeNull();
-    if (typeof addr === 'object' && addr !== null) {
-      expect(addr.address).toBe('127.0.0.1');
-    }
+    const app = createProxyApp(config);
+    const req = new Request('http://localhost/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer placeholder-reeboot',
+        'X-Reeboot-Provider': 'anthropic',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'claude-opus-4-5', messages: [] }),
+    });
+
+    const res = await app.fetch(req);
+    expect(res.status).toBe(200);
+    const [, options] = mockFetch.mock.calls[0] as [string, { headers: Headers }];
+    expect(options.headers.get('Authorization')).toBe('Bearer real-anthropic-key');
   });
 
   it('forwards request with real API key replacing placeholder', async () => {

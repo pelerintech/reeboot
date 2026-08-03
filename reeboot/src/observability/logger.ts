@@ -2,7 +2,7 @@ import pino from 'pino';
 import { Writable } from 'stream';
 import { join } from 'path';
 import { homedir } from 'os';
-import { mkdirSync } from 'fs';
+import { mkdirSync, openSync, closeSync } from 'fs';
 import type { Database } from 'better-sqlite3';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -10,6 +10,8 @@ import type { Database } from 'better-sqlite3';
 export interface LoggerConfig {
   level?: string;
   retention_days?: number;
+  /** Override the logs directory (default: <homedir>/.reeboot/logs). */
+  logDir?: string;
 }
 
 // ─── Singleton state ──────────────────────────────────────────────────────────
@@ -123,19 +125,40 @@ function createDbStream(db: Database): Writable {
 export function createLogger(config: LoggerConfig = {}, db?: Database): pino.Logger {
   const level = config.level ?? 'info';
 
-  const logDir = join(homedir(), '.reeboot', 'logs');
-  mkdirSync(logDir, { recursive: true });
+  const logDir = config.logDir ?? join(homedir(), '.reeboot', 'logs');
 
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   const logFile = join(logDir, `reeboot-${date}.log`);
+
+  // The file stream is optional and graceful: if the log directory cannot be
+  // created (e.g. an unwritable home in a restricted/CI sandbox), fall back to
+  // the stdout + SSE streams rather than crashing or emitting an unhandled
+  // EPERM from pino's destination.
+  // Probe writability of the actual log file so we only attach the file stream
+  // when it can really be opened. In restricted/CI environments opening the
+  // file may be EPERM even when the parent dir exists — skip gracefully then.
+  let logDirCreated = false;
+  try {
+    mkdirSync(logDir, { recursive: true });
+    const fd = openSync(logFile, 'a');
+    closeSync(fd);
+    logDirCreated = true;
+  } catch {
+    logDirCreated = false;
+  }
 
   const sseStream = createSseStream();
 
   const streams: pino.StreamEntry[] = [
     { stream: pino.destination(1), level: level as pino.Level },             // stdout (all levels)
-    { stream: pino.destination(logFile), level: 'warn' as pino.Level }, // file (warn+)
     { stream: sseStream, level: level as pino.Level },                       // SSE fan-out (all levels)
   ];
+
+  // File stream (warn+) is appended only when the log dir was created; skipping
+  // it avoids opening an unwritable path in restricted/CI environments.
+  if (logDirCreated) {
+    streams.push({ stream: pino.destination(logFile), level: 'warn' as pino.Level });
+  }
 
   // Add DB persist stream when a database is provided
   if (db) {
