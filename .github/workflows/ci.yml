@@ -18,6 +18,8 @@ jobs:
   test:
     name: Test (Node 22)
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
     steps:
       - name: Checkout
@@ -44,7 +46,7 @@ jobs:
         # Repos/branches with no configured token (e.g. protected branches or
         # fork PRs) make the upload error out, so skip it when the token is
         # absent and tolerate any upload failure regardless.
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         continue-on-error: true
         with:
