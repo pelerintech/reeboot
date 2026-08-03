@@ -13,6 +13,7 @@
  */
 
 import type { ExtensionAPI } from './extension-api.js';
+import { MemoryManager, type MemoryProvider, type MemoryTarget } from '../memory-provider.js';
 import { Type } from 'typebox';
 import {
   mkdirSync,
@@ -568,6 +569,47 @@ export function registerServerJobs(
   });
 }
 
+// ─── Builtin memory provider ───────────────────────────────────────────────────
+
+/**
+ * The internal memory backend, exposed through the `MemoryProvider` seam so a
+ * configured alternate provider (dreem, mem0, ...) can replace it without the
+ * agent core knowing. Wraps the existing file-based MEMORY.md/USER.md logic.
+ */
+export function builtinMemoryProvider(
+  paths: MemoryFilePaths,
+  limits: { memory: number; user: number }
+): MemoryProvider {
+  return {
+    id: 'builtin',
+    add(target: MemoryTarget, content: string) {
+      return memoryAdd(paths, target, content, limits[target]);
+    },
+    replace(target: MemoryTarget, oldText: string, content: string) {
+      return memoryReplace(paths, target, oldText, content, limits[target]);
+    },
+    remove(target: MemoryTarget, content: string) {
+      return memoryRemove(paths, target, content, limits[target]);
+    },
+    read(target: MemoryTarget) {
+      const info = getTargetInfo(target, paths);
+      return info ? readMemoryFile(info.path) : '';
+    },
+    clear(target: MemoryTarget) {
+      const info = getTargetInfo(target, paths);
+      if (info) writeFileSync(info.path, info.header, 'utf-8');
+    },
+    buildSystemPromptContribution() {
+      return buildMemoryBlock(
+        this.read('memory'),
+        this.read('user'),
+        limits.memory,
+        limits.user
+      );
+    },
+  };
+}
+
 // ─── Extension factory (testable) ────────────────────────────────────────────
 
 /**
@@ -578,7 +620,8 @@ export function makeMemoryExtension(
   pi: ExtensionAPI,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   config: any = {},
-  memoriesDirOverride?: string
+  memoriesDirOverride?: string,
+  extraProviders: MemoryProvider[] = []
 ): void {
   const memoryConfig = config.memory ?? {
     enabled: true,
@@ -601,19 +644,23 @@ export function makeMemoryExtension(
     userPath: join(memoriesDir, 'USER.md'),
   };
 
+  // ── Memory provider seam ────────────────────────────────────────────────
+  // Exactly one provider is active. The builtin backend is the default and the
+  // fallback whenever a configured provider is unknown/unavailable.
+  const manager = new MemoryManager(
+    builtinMemoryProvider(paths, {
+      memory: memoryConfig.memoryCharLimit,
+      user: memoryConfig.userCharLimit,
+    })
+  );
+  for (const p of extraProviders) manager.register(p);
+  manager.select(memoryConfig.provider ?? 'builtin');
+
   // ── before_agent_start — inject frozen memory snapshot ──────────────────
   if (memoryConfig.enabled) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     pi.on('before_agent_start', async (event: any) => {
-      const memoryContent = readMemoryFile(paths.memoryPath);
-      const userContent = readMemoryFile(paths.userPath);
-
-      const block = buildMemoryBlock(
-        memoryContent,
-        userContent,
-        memoryConfig.memoryCharLimit,
-        memoryConfig.userCharLimit
-      );
+      const block = manager.active.buildSystemPromptContribution();
 
       return { systemPrompt: (event.systemPrompt ?? '') + block };
     });
@@ -690,9 +737,7 @@ export function makeMemoryExtension(
           if (!content) {
             result = 'Error: content is required for add action';
           } else {
-            const charLimit =
-              target === 'memory' ? memoryConfig.memoryCharLimit : memoryConfig.userCharLimit;
-            result = memoryAdd(paths, target, content, charLimit);
+            result = manager.active.add(target, content);
           }
         } else if (action === 'replace') {
           if (!old_text) {
@@ -700,17 +745,13 @@ export function makeMemoryExtension(
           } else if (!content) {
             result = 'Error: content is required for replace action';
           } else {
-            const charLimit =
-              target === 'memory' ? memoryConfig.memoryCharLimit : memoryConfig.userCharLimit;
-            result = memoryReplace(paths, target, old_text, content, charLimit);
+            result = manager.active.replace(target, old_text, content);
           }
         } else if (action === 'remove') {
           if (!old_text) {
             result = 'Error: old_text is required for remove action';
           } else {
-            const charLimit =
-              target === 'memory' ? memoryConfig.memoryCharLimit : memoryConfig.userCharLimit;
-            result = memoryRemove(paths, target, old_text, charLimit);
+            result = manager.active.remove(target, old_text);
           }
         } else {
           result = `Unknown action: ${action}`;

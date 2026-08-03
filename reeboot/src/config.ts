@@ -86,6 +86,24 @@ export type A2APeer = z.infer<typeof A2APeerSchema>;
 export type A2AServer = z.infer<typeof A2AServerSchema>;
 export type A2AConfig = z.infer<typeof A2AConfigSchema>;
 
+const WebhookDeliverSchema = z.object({
+  channel: z.string(),
+  peer: z.string(),
+});
+
+const WebhookSubscriptionSchema = z.object({
+  name: z.string(),
+  secret: z.string(),
+  map: z.enum(['json']).optional(),
+  prompt: z.string(),
+  deliver: WebhookDeliverSchema.optional(),
+  enabled: z.boolean().default(true),
+});
+
+export const WebhooksConfigSchema = z.array(WebhookSubscriptionSchema).default([]);
+export type WebhookSubscription = z.infer<typeof WebhookSubscriptionSchema>;
+export type WebhooksConfig = z.infer<typeof WebhooksConfigSchema>;
+
 const ExtensionsConfigSchema = z.object({
   core: ExtensionsCoreConfigSchema.default({}),
 });
@@ -145,6 +163,7 @@ const MemoryConsolidationSchema = z.object({
 });
 
 const MemoryConfigSchema = z.object({
+  provider: z.enum(['builtin', 'dreem', 'mem0']).default('builtin'),
   enabled: z.boolean().default(true),
   memoryCharLimit: z.number().int().default(2200),
   userCharLimit: z.number().int().default(1375),
@@ -343,6 +362,7 @@ export const ConfigSchema = z.object({
   skills: SkillsConfigSchema.default({}),
   mcp: McpConfigSchema.default({}),
   a2a: A2AConfigSchema.default({}),
+  webhooks: WebhooksConfigSchema,
   permissions: PermissionsConfigSchema.default({}),
   security: SecurityConfigSchema.default({}),
   contexts: z.array(ContextConfigEntrySchema).default([]),

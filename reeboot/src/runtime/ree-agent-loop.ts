@@ -18,6 +18,7 @@ import type { RunnerEvent } from '../agent-runner/interface.js';
 import type { ExtensionContext, ToolDefinition as ReeToolDefinition } from '../extensions/extension-api.js';
 import type { ModelMessage } from '@tanstack/ai';
 import type { ReeExtensionAdapter } from '../extensions/ree-adapter.js';
+import { applyAuthLevel } from '../extensions/ree-adapter.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -129,11 +130,10 @@ export async function runReeAgentLoop(
     userMessage,
   ];
 
-  // Convert reeboot tools to TanStack tools
+  // Convert the auth-level-visible subset of reeboot tools to TanStack tools.
   const reeAdapter = reeChat.adapter as unknown as ReeExtensionAdapter;
-  const tanstackTools = Array.from(reeChat.tools.values()).map((tool) =>
-    toTanStackTool(tool, reeAdapter.context),
-  );
+  const tandstackVisible = applyAuthLevel(reeChat.tools, reeChat.authLevel ?? 'anonymous');
+  const tanstackTools = tandstackVisible.map((tool) => toTanStackTool(tool, reeAdapter.context));
 
   // Accumulators
   let accumulatedText = '';

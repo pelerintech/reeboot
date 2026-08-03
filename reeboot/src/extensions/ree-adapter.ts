@@ -12,13 +12,15 @@
  */
 
 import { EventEmitter } from 'events';
-import type {
+import {
   ExtensionAPI,
   ExtensionEventMap,
   ExtensionContext,
   ExtensionHandler,
   ToolDefinition,
   ToolInfo,
+  AuthLevel,
+  AUTH_LEVEL_RANK,
 } from './extension-api.js';
 
 // ─── Minimal ReeChat interface (full class is in runtime/ree-chat.ts) ─────────
@@ -28,6 +30,7 @@ interface ReeChatLike {
   sessionId: string;
   emitter: EventEmitter;
   tools: Map<string, ToolDefinition>;
+  authLevel?: AuthLevel;
   commands: Map<string, { description?: string; handler: (args: string, ctx: ExtensionContext) => Promise<void> | void }>;
   sessionName: string | undefined;
   disposed: boolean;
@@ -86,6 +89,17 @@ export class ReeExtensionAdapter implements ExtensionAPI {
   /** Get the list of currently active tool names */
   getActiveTools(): string[] {
     return Array.from(this.chat.tools.keys());
+  }
+
+  /** Set the chat's auth level (raises/lowers which gated tools are visible). */
+  setAuthState(level: AuthLevel): void {
+    if (this.chat.disposed) return;
+    this.chat.authLevel = level;
+  }
+
+  /** Get the chat's current auth level. */
+  getAuthState(): AuthLevel {
+    return this.chat.authLevel ?? 'anonymous';
   }
 
   /** Register a custom slash command */
@@ -168,4 +182,21 @@ export class ReeExtensionAdapter implements ExtensionAPI {
       ...message,
     });
   }
+}
+
+/**
+ * Return the subset of a tool registry visible at a given auth level, ordered by
+ * tool name. Tools with no `minAuthLevel` (or below the level) are visible.
+ */
+export function applyAuthLevel(
+  tools: Map<string, ToolDefinition>,
+  level: AuthLevel
+): ToolDefinition[] {
+  const rank = AUTH_LEVEL_RANK[level] ?? 0;
+  const out: ToolDefinition[] = [];
+  for (const tool of tools.values()) {
+    const need = AUTH_LEVEL_RANK[tool.minAuthLevel ?? 'anonymous'] ?? 0;
+    if (rank >= need) out.push(tool);
+  }
+  return out;
 }

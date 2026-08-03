@@ -1158,6 +1158,57 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
     }
   });
 
+  // ── Webhook triggers ────────────────────────────────────────────────────
+  // Generic inbound webhook subscriptions (POST /webhook/:name). Each subscription
+  // is a config → agent-run primitive; HMAC-gated, delivered or returned per sub.
+  try {
+    const { buildWebhookApp } = await import('./webhooks.js');
+    const webhooks = (opts.config as any)?.webhooks ?? [];
+    const webhookApp = buildWebhookApp(webhooks, {
+      async runTask(task, { timeoutMs = 60 } = {}) {
+        const id = `webhook-${randomUUID()}`;
+        try {
+          const workspacePath = join(reebotDir, 'contexts', '__webhook__', id, 'workspace');
+          mkdirSync(workspacePath, { recursive: true });
+          const runner = createRunner(
+            { id, workspacePath },
+            { ...(opts.config as any), sdk: (opts.config as any)?.sdk ?? 'pi' }
+          );
+          if (!runner) return { ok: false, result: '', error: 'Failed to create runner' };
+          return await new Promise<{ ok: boolean; result: string; error?: string }>((resolve) => {
+            const segments: string[] = [];
+            const timer = setTimeout(() => {
+              runner.abort();
+              resolve({ ok: false, result: '', error: 'Timed out' });
+            }, timeoutMs * 1000);
+            runner.prompt(task, (event) => {
+              if (event.type === 'text_delta') segments.push(event.delta);
+              else if (event.type === 'message_end') {
+                clearTimeout(timer);
+                resolve({ ok: true, result: segments.join('') });
+              } else if (event.type === 'error') {
+                clearTimeout(timer);
+                resolve({ ok: false, result: '', error: event.message });
+              }
+            }).catch((err) => {
+              clearTimeout(timer);
+              resolve({ ok: false, result: '', error: String(err) });
+            });
+          }).finally(() => { runner.dispose().catch(() => {}); });
+        } catch (err: any) {
+          return { ok: false, result: '', error: err?.message ?? String(err) };
+        }
+      },
+      async deliver(target, text) {
+        const adapter = _channelAdapters.get(target.channel);
+        if (adapter && target.peer) {
+          await adapter.send(target.peer, { type: 'text', text });
+        }
+      },
+    });
+    app.route('/webhook', webhookApp);
+  } catch { /* webhook registration is optional */ }
+
   // ── Serve built WebChat SPA (catches all non-API routes) ────────────────
   try {
     const webchatDist = resolve(__dirname, '../webchat/dist');

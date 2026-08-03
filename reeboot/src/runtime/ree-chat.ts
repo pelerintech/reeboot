@@ -12,6 +12,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { AUTH_LEVEL_RANK } from '../extensions/extension-api.js';
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -22,6 +23,7 @@ import type {
   ToolResultEvent,
   AfterProviderResponseEvent,
   AgentEndEvent,
+  AuthLevel,
 } from '../extensions/extension-api.js';
 import { ReeExtensionAdapter } from '../extensions/ree-adapter.js';
 
@@ -112,6 +114,9 @@ export class ReeChat {
   /** Current session display name */
   public sessionName: string | undefined;
 
+  /** Auth level for this chat; gates which tools are visible (anonymous by default). */
+  public authLevel: AuthLevel = 'anonymous';
+
   /** Whether this chat has been disposed */
   public disposed: boolean;
 
@@ -147,6 +152,16 @@ export class ReeChat {
 
     // Create the adapter bound to this chat
     this._adapter = new ReeExtensionAdapter(this, options.context);
+
+    // Built-in command: raise the chat auth level after authentication succeeds.
+    // Usage: /auth_establish [customer|admin]  (defaults to customer)
+    this._adapter.registerCommand('auth_establish', {
+      description: 'Raise the chat auth level (anonymous|customer|admin) after authentication.',
+      handler: (args: string) => {
+        const level: AuthLevel = (args.trim() as AuthLevel) || 'customer';
+        this.authLevel = AUTH_LEVEL_RANK[level] !== undefined ? level : 'customer';
+      },
+    });
   }
 
   /**

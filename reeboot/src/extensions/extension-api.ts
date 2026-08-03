@@ -15,6 +15,15 @@
 
 import type { ToolView } from '../structured-views.js';
 
+/** Authentication levels used to gate tools for the multi-user backend. */
+export const AUTH_LEVELS = ['anonymous', 'customer', 'admin'] as const;
+export type AuthLevel = (typeof AUTH_LEVELS)[number];
+export const AUTH_LEVEL_RANK: Record<AuthLevel, number> = {
+  anonymous: 0,
+  customer: 1,
+  admin: 2,
+};
+
 /** Minimal tool definition — the subset all extensions need to register tools. */
 export interface ToolDefinition<TParams = any, TDetails = unknown> {
   /** Tool name (used in LLM tool calls) */
@@ -27,6 +36,8 @@ export interface ToolDefinition<TParams = any, TDetails = unknown> {
   promptSnippet?: string;
   /** Optional guideline bullets appended to the default system prompt Guidelines section */
   promptGuidelines?: string[];
+  /** Minimum auth level required for this tool to be visible. Omitted = available to all (anonymous). */
+  minAuthLevel?: AuthLevel;
   /** Parameter schema (TypeBox TSchema or plain JSON schema) */
   parameters: TParams;
   /** Execute the tool */
