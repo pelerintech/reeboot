@@ -148,11 +148,15 @@ this request; both are fixed here so the commit actually goes green on CI.
       dirs present, **no `~/.reeboot/config.json`**): `npm run build` exit 0;
       `npm run test:coverage` exit 0 — 285 files / 1862 tests, coverage 81.42% stmts
       / 76.14% branches / 81.67% funcs / 81.42% lines, gate (80/80/80/72) met; 0
-      `process.exit` errors. Codecov upload remains CI-only (secret).
+      `process.exit` errors. Codecov upload is best-effort: skipped when no
+      token is configured, `fail_ci_if_error: false`, `continue-on-error: true` —
+      never blocks the pipeline.
 
 - [x] **GREEN** — Full local pre-push sequence validated: `npm ci` resolution exit 0,
       `npm run build` exit 0, `npm run test:coverage` exit 0 (285 files / 1862 tests,
-      80/80/80/72 gate). The only CI non-replicated step is the Codecov upload
-      (secret-token bound, runs after tests), which is understood and accepted.
-      Unrelated pre-existing flake (`protected-paths-expanded`) documented and
-      confirmed non-reproducible on re-run.
+      80/80/80/72 gate). The only CI non-replicated step is the Codecov upload,
+      which is now **best-effort/non-blocking** (skipped when `CODECOV_TOKEN` is
+      unset; `fail_ci_if_error: false` + `continue-on-error: true`) so a protected
+      branch or missing secret cannot fail the run. Unrelated pre-existing flake
+      (`protected-paths-expanded`) documented and confirmed non-reproducible on
+      re-run.

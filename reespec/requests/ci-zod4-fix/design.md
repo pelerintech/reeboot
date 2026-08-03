@@ -72,8 +72,11 @@ ERESOLVE). Steps we can and must replicate before push:
 | Test + gate | `npm run test:coverage` (enforces 80/80/80/72) |
 
 Two **inherently CI-only** items, not locally gated:
-1. **Codecov upload** — needs a secret token; runs last; only fails on upload, not
-   on code. Verified locally only insofar as tests pass.
+1. **Codecov upload** — made **best-effort / non-blocking** in the workflow:
+   skipped when `CODECOV_TOKEN` is unset (common for protected branches / fork
+   PRs, where upload errors with "Token required") and set to
+   `fail_ci_if_error: false` + `continue-on-error: true` so it can never block the
+   pipeline. Verified locally only insofar as tests pass.
 2. **npm version drift** — CI `setup-node@22` ships npm 10.x; local is 11.16.0. Both
    resolve identically on lock v3, but we pin/document parity to avoid drift surprises.
 
@@ -104,3 +107,5 @@ Both were reproduced locally by simulating the fresh runner (CI-like `HOME`, no
 `~/.reeboot/config.json`) and are fixed. Full verification under that condition:
 `npm run build` exit 0; `npm run test:coverage` exit 0 (285 files / 1862 tests, coverage
 81.42% / 76.14% / 81.67% / 81.42%, gate met) with **0** `process.exit` errors.
+The Codecov upload step is best-effort: skipped when no token is configured and
+non-blocking (`fail_ci_if_error: false`, `continue-on-error: true`).

@@ -40,11 +40,17 @@ jobs:
         run: npm run test:coverage
 
       - name: Upload coverage to Codecov
+        # Coverage upload is best-effort and must never block the pipeline.
+        # Repos/branches with no configured token (e.g. protected branches or
+        # fork PRs) make the upload error out, so skip it when the token is
+        # absent and tolerate any upload failure regardless.
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
+        continue-on-error: true
         with:
           files: ./reeboot/coverage/lcov.info
           flags: unit
-          fail_ci_if_error: true
+          fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
