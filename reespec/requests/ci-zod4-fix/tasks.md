@@ -97,7 +97,58 @@ see the true resolution result rather than an EPERM.
       the clean `npm ci` step needs a cache already containing the better-sqlite3
       prebuild (or a working network + C/Python toolchain) — absent on CI/dev.
 
+## 7. Latent CI failures exposed by the first real CI run (pre-existing, not zod)
+
+The zod fix unblocked `npm ci`, so the GH Actions pipeline reached the **test phase
+for the first time**, exposing two pre-existing latent bugs that would fail CI
+independent of zod. Both were reproduced locally by simulating the fresh runner
+(empty/CI-like `HOME` with **no `~/.reeboot/config.json`**). Neither was caused by
+this request; both are fixed here so the commit actually goes green on CI.
+
+### 7a. `tests/package.test.ts` — `webchat/dist/` not present on fresh checkout
+
+- [x] **RED** — On a fresh checkout `webchat/dist/` does not exist (it is a `Vite`
+      build artifact that is **gitignored and never built by CI**; CI's `npm run
+      build` is the root `tsc` only). The whitelist test looped `existsSync(join(
+      root, rel))` over `['dist/','extensions/','skills/','templates/','container/',
+      'webchat/dist/']` and failed at the `webchat/dist/` entry. Reproduced by moving
+      `webchat/dist` aside: `tests/package.test.ts` failed exactly as on CI.
+- [x] **ACTION** — `tests/package.test.ts` now asserts on-disk existence only for
+      the committed source-layout entries; `'webchat/dist/'` is asserted to remain in
+      the publish `files` whitelist (a publish-time artifact, not source layout).
+- [x] **GREEN** — With `webchat/dist` absent, `tests/package.test.ts` passes (14
+      tests).
+
+### 7b. 9 unhandled `process.exit` rejections on a fresh runner (no config)
+
+- [x] **RED** — `src/index.ts:994` called `program.parse(process.argv)`
+      **unconditionally at module load**. Importing `@src/index.js` (as the tests
+      do) therefore ran the whole CLI against the **real default config path**; on a
+      runner with no `~/.reeboot/config.json` the default action called
+      `process.exit(1)` at import time — outside any test spy — surfacing as 9
+      vitest "unhandled rejection: process.exit" errors (exit 1). Reproduced with an
+      empty `HOME` running `entrypoint`/`cli-init`/`whatsapp-enable`; a real `HOME`
+      with an existing config masked it (exactly the stale-local masking this
+      request's pre-push gate exists to catch).
+- [x] **ACTION** — `src/index.ts` now guards direct execution: `program.parse()`
+      runs only when `realpathSync(process.argv[1]) === fileURLToPath(import.meta
+      .url)`, i.e. only when run as the CLI entrypoint, never on module import.
+      Added `realpathSync` to the `fs` import and a static `fileURLToPath` from
+      `'url'`.
+- [x] **GREEN** — Empty-`HOME` full `npm run test:run`: **285 files / 1862 tests,
+      exit 0, 0 `process.exit` errors**. Direct-run still works: `node dist/index.js
+      --version` → `2.6.0`, exit 0 (and the `index.test.ts` CLI-boundary subprocess
+      test passes).
+
 ## Integration (final)
+
+### Verification under the real CI condition (fresh/CI-like HOME, no config)
+
+- [x] **GREEN** — Full pre-push sequence reproduced under a CI-like `HOME` (cache
+      dirs present, **no `~/.reeboot/config.json`**): `npm run build` exit 0;
+      `npm run test:coverage` exit 0 — 285 files / 1862 tests, coverage 81.42% stmts
+      / 76.14% branches / 81.67% funcs / 81.42% lines, gate (80/80/80/72) met; 0
+      `process.exit` errors. Codecov upload remains CI-only (secret).
 
 - [x] **GREEN** — Full local pre-push sequence validated: `npm ci` resolution exit 0,
       `npm run build` exit 0, `npm run test:coverage` exit 0 (285 files / 1862 tests,

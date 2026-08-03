@@ -39,6 +39,28 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### Direct-entry guard on the CLI entrypoint — 2026-05-25 (Request: ci-zod4-fix)
+
+`src/index.ts` called `program.parse(process.argv)` unconditionally at module load, so
+importing `@src/index.js` (as tests do) executed the whole CLI against the real default
+config path; on a host with no `~/.reeboot/config.json` this fired `process.exit(1)` at
+import time, surfacing as vitest "unhandled rejection" failures. Decided to guard direct
+execution (`parse()` only when `realpathSync(process.argv[1]) === fileURLToPath(import
+.meta.url)`) rather than stub `process.exit` globally — the guard fixes the cause (the
+CLI should never auto-run on import) instead of masking the symptom, and keeps the
+existing `_deps`/`handleDefaultAction` testing seams intact. This is a general
+fix for any future importer (glue code, e2e harnesses) of the CLI module.
+
+### Publish whitelist vs source-layout assertion split — 2026-05-25 (Request: ci-zod4-fix)
+
+`tests/package.test.ts` asserted `existsSync` for every entry in the npm `files`
+whitelist, including `webchat/dist/` — a gitignored Vite build artifact never built by
+CI — so a fresh checkout failed the test even though the publish manifest was correct.
+Decided the test should assert on-disk existence only for committed source-layout
+entries and keep `webchat/dist/` as a separate publish-whitelist membership check.
+Distinguishes "what must exist in the repo" from "what the package ships" so build
+artifacts do not break CI on fresh checkouts.
+
 ### Delegate tool uses lazy dependency resolution + global runner factory setter — 2025-07-26 (Request: a2a-protocol)
 
 During execution, the evaluation found that the delegate extension was loaded with empty options `{}`

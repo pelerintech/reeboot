@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 import type { Prompter } from './wizard/prompter.js';
 
 const program = new Command();
@@ -991,4 +992,14 @@ program.on('command:*', () => {
   process.exit(1);
 });
 
-program.parse(process.argv);
+// Only run the CLI when executed directly as the entrypoint — never when this
+// module is imported (e.g. by tests or glue code). Unconditional parse() at
+// import time executes the default action against the real default config path;
+// on a host with no config that calls process.exit(1) outside any test scope,
+// surfacing as vitest "unhandled rejection" failures on fresh CI runners.
+const isCliEntry =
+  !!process.argv[1] &&
+  realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isCliEntry) {
+  program.parse(process.argv);
+}

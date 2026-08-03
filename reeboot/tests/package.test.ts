@@ -90,13 +90,18 @@ describe('package files whitelist (in-process)', () => {
     const files = pkg().files;
     expect(Array.isArray(files)).toBe(true);
 
-    const entries = ['dist/', 'extensions/', 'skills/', 'templates/', 'container/', 'webchat/dist/'];
+    // Source-layout entries must exist on disk.
+    const entries = ['dist/', 'extensions/', 'skills/', 'templates/', 'container/'];
     for (const entry of entries) {
       expect(files).toContain(entry);
-      // webchat/dist is a nested dir; resolve it explicitly
-      const rel = entry === 'webchat/dist/' ? join('webchat', 'dist') : entry;
-      expect(existsSync(join(root, rel))).toBe(true);
+      expect(existsSync(join(root, entry))).toBe(true);
     }
+
+    // webchat/dist is a publish-time build artifact: it is gitignored, never
+    // committed, and produced by the separate webchat Vite build (not by the
+    // root `tsc` build or CI). It therefore must NOT be required to exist on
+    // disk in a fresh source checkout — only to remain in the publish whitelist.
+    expect(files).toContain('webchat/dist/');
   });
 
   it('whitelist excludes src/, tests/ and node_modules', () => {

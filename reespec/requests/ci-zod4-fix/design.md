@@ -86,3 +86,21 @@ red/green.
 
 - **`@tanstack/ai` core on zod 4 runtime behaviour** — the one genuine unknown,
   gated by task 3 and by task 5 (full coverage) under the new tree.
+
+## Post-implementation findings (first real CI run)
+
+Unblocking `npm ci` let the GH Actions pipeline reach the test phase **for the first
+time**, exposing two pre-existing latent failures (neither zod-related):
+
+1. **`tests/package.test.ts`** required `webchat/dist/` to exist on disk — a gitignored
+   Vite artifact never built by CI — so a fresh checkout failed. Fixed by splitting the
+   `files`-whitelist membership assertion from the on-disk source-layout check.
+2. **Unconditional `program.parse()` at module load** (`src/index.ts`) executed the CLI
+   against the real default config path on import; on a runner with no
+   `~/.reeboot/config.json` it fired 9 unhandled `process.exit(1)` rejections. Fixed by
+   guarding `parse()` to run only when the module is the direct entrypoint.
+
+Both were reproduced locally by simulating the fresh runner (CI-like `HOME`, no
+`~/.reeboot/config.json`) and are fixed. Full verification under that condition:
+`npm run build` exit 0; `npm run test:coverage` exit 0 (285 files / 1862 tests, coverage
+81.42% / 76.14% / 81.67% / 81.42%, gate met) with **0** `process.exit` errors.
