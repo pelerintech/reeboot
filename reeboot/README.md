@@ -264,6 +264,23 @@ npm test          # vitest — full test suite
 npm run build     # compile TypeScript → dist/
 ```
 
+### Pre-push verification
+
+CI runs `npm ci` → `npm run build` → `npm run test:coverage`. Reproduce that exact
+sequence locally before pushing so a commit never fails CI on something locally
+checkable:
+
+```bash
+cd reeboot
+./scripts/verify-ci.sh
+```
+
+The script uses a fresh npm cache (default: `node_modules/.verify-cache`) so a stale
+cache can't mask the resolution result. CI's npm is bundled with Node 22 (npm ~10);
+local npm may differ but resolves identically on the v3 lockfile — Node `>=22` is
+unchanged. The only CI step not replicated here is the Codecov upload, which needs a
+secret token and runs only after tests pass.
+
 ---
 
 ## Docker

@@ -28,7 +28,7 @@ const ModelConfigSchema = z.object({
 const AgentConfigSchema = z.object({
   name: z.string().default('Reeboot'),
   runner: z.string().default('pi'),
-  model: ModelConfigSchema.default({}),
+  model: ModelConfigSchema.prefault(() => ({})),
   turnTimeout: z.number().int().default(300_000), // 5 min
 });
 
@@ -55,8 +55,8 @@ const McpServerSchema = z.object({
   name:        z.string().min(1),
   command:     z.string().min(1),
   args:        z.array(z.string()).default([]),
-  env:         z.record(z.string()).default({}),
-  permissions: McpPermissionsSchema.default({}),
+  env:         z.record(z.string(), z.string()).prefault(() => ({})),
+  permissions: McpPermissionsSchema.prefault(() => ({})),
 });
 
 const McpConfigSchema = z.object({
@@ -79,7 +79,7 @@ const A2AServerSchema = z.object({
 
 const A2AConfigSchema = z.object({
   peers:  z.array(A2APeerSchema).default([]),
-  server: A2AServerSchema.default({}),
+  server: A2AServerSchema.prefault(() => ({})),
 });
 
 export type A2APeer = z.infer<typeof A2APeerSchema>;
@@ -105,7 +105,7 @@ export type WebhookSubscription = z.infer<typeof WebhookSubscriptionSchema>;
 export type WebhooksConfig = z.infer<typeof WebhooksConfigSchema>;
 
 const ExtensionsConfigSchema = z.object({
-  core: ExtensionsCoreConfigSchema.default({}),
+  core: ExtensionsCoreConfigSchema.prefault(() => ({})),
 });
 
 const SkillsConfigSchema = z.object({
@@ -152,9 +152,9 @@ const SignalChannelSchema = z.object({
 });
 
 const ChannelsConfigSchema = z.object({
-  web: WebChannelSchema.default({}),
-  whatsapp: WhatsAppChannelSchema.default({}),
-  signal: SignalChannelSchema.default({}),
+  web: WebChannelSchema.prefault(() => ({})),
+  whatsapp: WhatsAppChannelSchema.prefault(() => ({})),
+  signal: SignalChannelSchema.prefault(() => ({})),
 });
 
 const MemoryConsolidationSchema = z.object({
@@ -167,7 +167,7 @@ const MemoryConfigSchema = z.object({
   enabled: z.boolean().default(true),
   memoryCharLimit: z.number().int().default(2200),
   userCharLimit: z.number().int().default(1375),
-  consolidation: MemoryConsolidationSchema.default({}),
+  consolidation: MemoryConsolidationSchema.prefault(() => ({})),
 });
 
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
@@ -236,7 +236,7 @@ const ViolationConfigSchema = z.object({
 });
 
 const PermissionsConfigSchema = z.object({
-  violations: ViolationConfigSchema.default({}),
+  violations: ViolationConfigSchema.prefault(() => ({})),
 });
 
 const InjectionGuardConfigSchema = z.object({
@@ -266,11 +266,11 @@ const AdvisoryConfigSchema = z.object({
 export type AdvisoryConfig = z.infer<typeof AdvisoryConfigSchema>;
 
 const SecurityConfigSchema = z.object({
-  injection_guard: InjectionGuardConfigSchema.default({}),
-  dangerous_commands: DangerousCommandsSchema.default({}),
-  website_blocklist: WebsiteBlocklistSchema.default({}),
+  injection_guard: InjectionGuardConfigSchema.prefault(() => ({})),
+  dangerous_commands: DangerousCommandsSchema.prefault(() => ({})),
+  website_blocklist: WebsiteBlocklistSchema.prefault(() => ({})),
   allow_private_urls: z.boolean().default(false),
-  advisories: AdvisoryConfigSchema.default({}),
+  advisories: AdvisoryConfigSchema.prefault(() => ({})),
 });
 
 const ContextToolsSchema = z.object({
@@ -279,7 +279,7 @@ const ContextToolsSchema = z.object({
 
 const ContextConfigEntrySchema = z.object({
   name: z.string(),
-  tools: ContextToolsSchema.default({}),
+  tools: ContextToolsSchema.prefault(() => ({})),
 });
 
 export type ContextConfig = z.infer<typeof ContextConfigEntrySchema>;
@@ -290,7 +290,7 @@ const KnowledgeWikiLintSchema = z.object({
 
 const KnowledgeWikiSchema = z.object({
   enabled: z.boolean().default(false),
-  lint: KnowledgeWikiLintSchema.default({}),
+  lint: KnowledgeWikiLintSchema.prefault(() => ({})),
 });
 
 const KnowledgeConfigSchema = z.object({
@@ -299,7 +299,7 @@ const KnowledgeConfigSchema = z.object({
   dimensions: z.number().int().default(768),
   chunkSize: z.number().int().default(512),
   chunkOverlap: z.number().int().default(64),
-  wiki: KnowledgeWikiSchema.default({}),
+  wiki: KnowledgeWikiSchema.prefault(() => ({})),
 });
 
 const ResilienceRecoverySchema = z.object({
@@ -312,8 +312,8 @@ const ResilienceSchedulerSchema = z.object({
 });
 
 const ResilienceSchema = z.object({
-  recovery: ResilienceRecoverySchema.default({}),
-  scheduler: ResilienceSchedulerSchema.default({}),
+  recovery: ResilienceRecoverySchema.prefault(() => ({})),
+  scheduler: ResilienceSchedulerSchema.prefault(() => ({})),
   outage_threshold: z.number().int().min(1).default(3),
   probe_interval: z.string().default('1h'),
 });
@@ -346,30 +346,30 @@ export type ReeConfig = z.infer<typeof ReeConfigSchema>;
 
 export const ConfigSchema = z.object({
   sdk: z.enum(['pi', 'ree']).default('pi'),
-  ree: ReeConfigSchema.default({}),
-  agent: AgentConfigSchema.default({}),
-  channels: ChannelsConfigSchema.default({}),
-  sandbox: SandboxConfigSchema.default({}),
-  logging: LoggingConfigSchema.default({}),
-  server: ServerConfigSchema.default({}),
-  extensions: ExtensionsConfigSchema.default({}),
-  routing: RoutingConfigSchema.default({}),
-  session: SessionConfigSchema.default({}),
-  credentialProxy: CredentialProxyConfigSchema.default({}),
-  search: SearchConfigSchema.default({}),
-  web: WebConfigSchema.default({}),
-  heartbeat: HeartbeatConfigSchema.default({}),
-  skills: SkillsConfigSchema.default({}),
-  mcp: McpConfigSchema.default({}),
-  a2a: A2AConfigSchema.default({}),
+  ree: ReeConfigSchema.prefault(() => ({})),
+  agent: AgentConfigSchema.prefault(() => ({})),
+  channels: ChannelsConfigSchema.prefault(() => ({})),
+  sandbox: SandboxConfigSchema.prefault(() => ({})),
+  logging: LoggingConfigSchema.prefault(() => ({})),
+  server: ServerConfigSchema.prefault(() => ({})),
+  extensions: ExtensionsConfigSchema.prefault(() => ({})),
+  routing: RoutingConfigSchema.prefault(() => ({})),
+  session: SessionConfigSchema.prefault(() => ({})),
+  credentialProxy: CredentialProxyConfigSchema.prefault(() => ({})),
+  search: SearchConfigSchema.prefault(() => ({})),
+  web: WebConfigSchema.prefault(() => ({})),
+  heartbeat: HeartbeatConfigSchema.prefault(() => ({})),
+  skills: SkillsConfigSchema.prefault(() => ({})),
+  mcp: McpConfigSchema.prefault(() => ({})),
+  a2a: A2AConfigSchema.prefault(() => ({})),
   webhooks: WebhooksConfigSchema,
-  permissions: PermissionsConfigSchema.default({}),
-  security: SecurityConfigSchema.default({}),
+  permissions: PermissionsConfigSchema.prefault(() => ({})),
+  security: SecurityConfigSchema.prefault(() => ({})),
   contexts: z.array(ContextConfigEntrySchema).default([]),
-  memory: MemoryConfigSchema.default({}),
-  knowledge: KnowledgeConfigSchema.default({}),
-  resilience: ResilienceSchema.default({}),
-  budget: BudgetConfigSchema.default({}),
+  memory: MemoryConfigSchema.prefault(() => ({})),
+  knowledge: KnowledgeConfigSchema.prefault(() => ({})),
+  resilience: ResilienceSchema.prefault(() => ({})),
+  budget: BudgetConfigSchema.prefault(() => ({})),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
