@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   MEMORY_SCOPES,
+  MEMORY_SOURCES,
   type MemoryScope,
   type MemoryRef,
   type MemoryHit,
   type CapabilityDef,
   type MemoryProvider,
+  type SessionTranscript,
+  type MemorySource,
+  type StoreOptions,
 } from '@src/memory-provider.js';
 
 describe('memory provider contract', () => {
@@ -59,5 +63,44 @@ describe('memory provider contract', () => {
     expect(hit.ref.id).toBe('abc123');
     expect(hit.scope).toBe('self');
     expect(hit.content).toBe('note');
+  });
+
+  it('store accepts a source signal and session/transcript input via opts (distillation is a provider job)', async () => {
+    // The contract names the source kinds that route through a single store action.
+    expect(MEMORY_SOURCES).toEqual(['entry', 'session', 'consolidation']);
+
+    const sources: MemorySource[] = ['entry', 'session', 'consolidation'];
+    for (const s of sources) {
+      const opts: StoreOptions = { source: s };
+      expect(opts.source).toBe(s);
+    }
+
+    // A raw session transcript is first-class input to store — the provider
+    // decides internally what distillation (if any) is required.
+    const transcript: SessionTranscript = [
+      { role: 'user', content: 'Can you research quantum computing?' },
+      { role: 'assistant', content: 'Quantum annealing vs gate-based models.' },
+    ];
+
+    const provider: MemoryProvider = {
+      id: 'fake',
+      async store(_scope: MemoryScope, content: string | SessionTranscript, opts?: StoreOptions): Promise<MemoryRef> {
+        void content; void opts;
+        return { id: 'opaque-handle' };
+      },
+      async update(_scope: MemoryScope, ref: MemoryRef) { void ref; },
+      async forget(_scope: MemoryScope, ref: MemoryRef) { void ref; },
+      async recall(_scope: MemoryScope, query: string, limit?: number): Promise<MemoryHit[]> {
+        void query; void limit; return [];
+      },
+      async clear(_scope: MemoryScope) {},
+      async grounding(opts?: { scope?: MemoryScope; maxChars?: number }): Promise<string> {
+        void opts; return '';
+      },
+      listCapabilities(): CapabilityDef[] { return []; },
+    };
+
+    // A provider must accept a transcript with the session source signal.
+    await provider.store('self', transcript, { source: 'session' });
   });
 });

@@ -17,6 +17,8 @@ import type {
   MemoryRef,
   MemoryHit,
   CapabilityDef,
+  SessionTranscript,
+  StoreOptions,
 } from '../memory-provider.js';
 import { STANDARD_CAPABILITIES } from '../memory-provider.js';
 import { getLogger } from '../observability/logger.js';
@@ -68,11 +70,14 @@ export function makeDreemProvider(config: DreemProviderConfig): MemoryProvider {
 
   return {
     id: 'dreem',
-    async store(scope: MemoryScope, content: string): Promise<MemoryRef> {
+    async store(scope: MemoryScope, content: string | SessionTranscript, opts?: StoreOptions): Promise<MemoryRef> {
       try {
+        const bodyContent = Array.isArray(content)
+          ? { transcript: content }
+          : { content };
         const res = await request(baseUrl, apiKey, c('/memory'), {
           method: 'POST',
-          body: { scope, content, ...deployment },
+          body: { scope, ...bodyContent, source: opts?.source ?? 'entry', ...deployment },
         });
         const id = typeof res?.refId === 'string' ? res.refId : `dreem:${scope}:${Date.now()}`;
         return { id };
@@ -129,10 +134,16 @@ export function makeDreemProvider(config: DreemProviderConfig): MemoryProvider {
       }
     },
     async grounding(opts?: { scope?: MemoryScope; maxChars?: number }): Promise<string> {
-      void opts;
       try {
-        const res = await request(baseUrl, apiKey, c('/grounding'), { method: 'GET' });
-        return typeof res?.digest === 'string' ? res.digest : '';
+        // Forward the scope so the backend returns a scoped digest, then
+        // self-police the maxChars ceiling at the provider level (contract S5).
+        const q = opts?.scope ? `?scope=${encodeURIComponent(opts.scope)}` : '';
+        const res = await request(baseUrl, apiKey, c(`/grounding${q}`), { method: 'GET' });
+        const digest = typeof res?.digest === 'string' ? res.digest : '';
+        if (opts?.maxChars && digest.length > opts.maxChars) {
+          return digest.slice(0, opts.maxChars);
+        }
+        return digest;
       } catch (e) {
         logger.warn({ component: 'memory-dreem', op: 'grounding' }, `dreem grounding degraded: ${(e as Error).message}`);
         return '';
@@ -150,6 +161,41 @@ export function makeDreemProvider(config: DreemProviderConfig): MemoryProvider {
             method: body !== undefined ? 'POST' : 'GET',
             body,
           });
+          return res;
+        } catch (e) {
+          logger.warn({ component: 'memory-dreem', op: path }, `dreem ${path} degraded: ${(e as Error).message}`);
+          return { error: `dreem ${path} unavailable` };
+        }
+      };
+
+      // Surface array-shaped backend responses as structured data-table views
+      // (reeboot's view system) rather than raw text.
+      const tableView = (path: string, body?: unknown) => async (params: unknown) => {
+        void params;
+        try {
+          const res = await request(baseUrl, apiKey, c(path), {
+            method: body !== undefined ? 'POST' : 'GET',
+            body,
+          });
+          // If the backend returned a `nodes`/`rows` array, render it as a table.
+          const rowsArr =
+            Array.isArray(res?.nodes) ? (res.nodes as Record<string, unknown>[]) :
+            Array.isArray(res?.rows) ? (res.rows as Record<string, unknown>[]) :
+            Array.isArray(res) ? (res as Record<string, unknown>[]) : [];
+          if (rowsArr.length > 0) {
+            const allKeys = new Set<string>();
+            for (const r of rowsArr) for (const k of Object.keys(r)) allKeys.add(k);
+            const columns = [...allKeys];
+            const rows = rowsArr.map((r) => {
+              const row: Record<string, unknown> = {};
+              for (const c of columns) row[c] = r[c] ?? '';
+              return row;
+            });
+            return {
+              content: `Returned ${rowsArr.length} row${rowsArr.length === 1 ? '' : 's'}.`,
+              view: { type: 'data-table', columns, rows },
+            };
+          }
           return res;
         } catch (e) {
           logger.warn({ component: 'memory-dreem', op: path }, `dreem ${path} degraded: ${(e as Error).message}`);
@@ -176,7 +222,7 @@ export function makeDreemProvider(config: DreemProviderConfig): MemoryProvider {
           name: 'graph',
           description: 'Explore the dreem knowledge graph.',
           parameters: {},
-          execute: capCall('/graph'),
+          execute: tableView('/graph'),
         },
         {
           name: 'health',
@@ -188,7 +234,7 @@ export function makeDreemProvider(config: DreemProviderConfig): MemoryProvider {
           name: 'tree',
           description: 'Inspect the dreem knowledge tree.',
           parameters: {},
-          execute: capCall('/tree'),
+          execute: tableView('/tree'),
         },
         {
           name: 'deep-search',

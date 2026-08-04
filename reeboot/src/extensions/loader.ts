@@ -296,13 +296,9 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
     }));
   }
 
-  // Hot memory extension — always loaded (no feature flag).
-  // Registers session_shutdown and before_agent_start hooks for session
-  // awareness across inactivity boundaries.
-  factories.push(withAdapter(async (api) => {
-    const mod = await importExt('hot-memory');
-    if (mod?.default) await (mod.default as any)(api, config);
-  }));
+  // Hot memory — folded under the memory provider (builtin owns hot injection via
+  // grounding() and session distillation via store(source:'session')). It is no
+  // longer a standalone extension, so we do NOT register a hot-memory factory here.
 
   // Capabilities discovery extension — always loaded (no feature flag).
   // Discovers all registered tools and injects a capabilities block into

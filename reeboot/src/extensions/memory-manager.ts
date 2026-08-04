@@ -13,7 +13,8 @@
  */
 
 import type { ExtensionAPI } from './extension-api.js';
-import { MemoryManager, type MemoryProvider, type MemoryTarget, type MemoryScope, type MemoryRef, type MemoryHit, type CapabilityDef, namespaceCapability, hasCapability, STANDARD_CAPABILITIES } from '../memory-provider.js';
+import type { ToolView } from '../structured-views.js';
+import { MemoryManager, type MemoryProvider, type MemoryTarget, type MemoryScope, type MemoryRef, type MemoryHit, type CapabilityDef, type SessionTranscript, type StoreOptions, namespaceCapability, hasCapability, STANDARD_CAPABILITIES } from '../memory-provider.js';
 import { scanContent as scanInjection } from '../security/injection-scanner.js';
 import { declareExternalSourceTool } from '../security/external-tools.js';
 import { Type } from 'typebox';
@@ -23,11 +24,11 @@ import {
   readFileSync,
   writeFileSync,
 } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { getLogger } from '../observability/logger.js';
-import { setReebootHotMemoryEnabled } from './memory-hot-routing.js';
 import { setReebootModelConfig } from './memory-model-config.js';
+import { parseHotMemoryFile, formatHotMemoryEntry, pruneEntries, HOT_MEMORY_HEADER } from './hot-memory.js';
 import type Database from 'better-sqlite3';
 import type { SchedulerToolsTarget } from '../scheduler.js';
 
@@ -101,6 +102,14 @@ const CREDENTIAL_PATTERNS = [
 ];
 
 const INVISIBLE_UNICODE = /[\u200b\u200c\u200d\u200e\u200f\ufeff\u00ad]/;
+
+/**
+ * Derive the hot-memory file path from a memory dir; hot memory lives beside
+ * MEMORY.md/USER.md as hot-memory.md.
+ */
+export function hotMemoryPathFor(paths: MemoryFilePaths): string {
+  return join(dirname(paths.memoryPath), 'hot-memory.md');
+}
 
 /**
  * Scans content for security issues. Returns a rejection reason string if
@@ -394,7 +403,8 @@ async function applyOpViaProvider(
   const scope: MemoryScope = op.target === 'user' ? 'human' : 'self';
   try {
     if (op.action === 'add' && op.content) {
-      await provider.store(scope, op.content);
+      // Consolidation writes directly to cold (long-term) memory.
+      await provider.store(scope, op.content, { source: 'consolidation' });
       return 'ok';
     }
     if (op.action === 'replace' && op.oldText && op.content) {
@@ -746,30 +756,141 @@ export function registerServerJobs(
  * `forget` locate the entry containing that substring (previously the direct
  * `old_text` surface, now addressed via an opaque ref).
  */
+
+/**
+ * Fold hot-memory under the provider as builtin's recall layer: match the query
+ * against hot-memory entries (title/summary/conclusions) and return them as
+ * self-scoped MemoryHits so the consumer gets hot+cold from one recall call.
+ */
+export function readHotHits(hotPath: string, query: string, limit?: number): MemoryHit[] {
+  const content = readMemoryFile(hotPath);
+  if (!content) return [];
+  const entries = parseHotMemoryFile(content);
+  if (entries.length === 0) return [];
+  const q = query.toLowerCase();
+  const matched = entries.filter((e) => {
+    const blob = `${e.title} ${e.summary} ${e.conclusions ?? ''}`.toLowerCase();
+    return blob.includes(q);
+  });
+  const sliced = limit && limit > 0 ? matched.slice(0, limit) : matched;
+  return sliced.map((e) => ({
+    ref: { id: e.title },
+    scope: 'self' as MemoryScope,
+    content: formatHotMemoryEntry(e).trim(),
+  }));
+}
+
+/**
+ * Serialize a single hot-memory entry to `hot-memory.md`, pruning to the rolling
+ * window. This is the builtin provider's internal hot write path (used for
+ * `source:'entry'`/`source:'session'` writes) — the provider owns hot vs cold.
+ */
+export function writeHotEntry(hotPath: string, entry: { title: string; summary: string; conclusions?: string }): void {
+  const current = readMemoryFile(hotPath);
+  const existing = parseHotMemoryFile(current);
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 16).replace('T', ' ');
+  const newEntry = { date: dateStr, ...entry };
+  const pruned = pruneEntries([newEntry, ...existing]);
+  const formatted = pruned.map(formatHotMemoryEntry).join('');
+  mkdirSync(dirname(hotPath), { recursive: true });
+  writeFileSync(hotPath, HOT_MEMORY_HEADER + formatted, 'utf-8');
+}
+
+/** Derive a short hot-memory title from free-form content. */
+function titleFrom(text: string): string {
+  const firstLine = text.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? text;
+  const words = firstLine.split(/\s+/).filter(Boolean);
+  return words.slice(0, 6).join(' ').slice(0, 60) || 'Session note';
+}
+
 export function builtinMemoryProvider(
   paths: MemoryFilePaths,
-  limits: { memory: number; user: number }
+  limits: { memory: number; user: number },
+  deps: { llmCall?: (prompt: string) => Promise<string> } = {}
 ): MemoryProvider {
   const scopeTarget = (scope: MemoryScope): MemoryTarget => scopeToTarget(scope);
+  const hotPath = hotMemoryPathFor(paths);
+
+  /** Distill a raw session transcript into hot memory (provider-owned distillation). */
+  const storeSession = async (transcript: SessionTranscript): Promise<MemoryRef> => {
+    const text = transcript
+      .map((t) => `[${t.role}] ${t.content}`)
+      .join('\n');
+    const rejection = scanContent(text);
+    if (rejection) throw new Error(rejection);
+
+    const excerpt = text.slice(0, 4000);
+    if (deps.llmCall) {
+      try {
+        const { parseDistillResponse } = await import('./hot-memory.js');
+        const prompt =
+          'Generate a 2-3 line summary of this conversation. Include the main topic, ' +
+          'key conclusions, and any open threads. Be brief. Then suggest a short title ' +
+          '(max 6 words).\n' +
+          'Format:\n' +
+          'TITLE: <title>\n' +
+          'SUMMARY: <summary>\n' +
+          'CONCLUSIONS: <conclusions>\n' +
+          'If nothing noteworthy to summarize, respond with "NO_NEW_INSIGHTS".\n\n' +
+          `CONVERSATION:\n${excerpt}`;
+        const response = await deps.llmCall(prompt);
+        const entry = parseDistillResponse(response);
+        if (entry) {
+          writeHotEntry(hotPath, {
+            title: entry.title,
+            summary: entry.summary,
+            conclusions: entry.conclusions,
+          });
+          return { id: entry.title };
+        }
+      } catch {
+        // best-effort distillation — fall through to direct hot write below
+      }
+    }
+
+    // Fallback: no LLM available or distillation failed — record the raw
+    // transcript as a hot entry so no session is silently dropped.
+    writeHotEntry(hotPath, { title: titleFrom(text), summary: text.slice(0, 500) });
+    return { id: text.trim() };
+  };
 
   return {
     id: 'builtin',
-    async store(scope: MemoryScope, content: string): Promise<MemoryRef> {
+    async store(scope: MemoryScope, content: string | SessionTranscript, opts?: StoreOptions): Promise<MemoryRef> {
+      const source = opts?.source ?? 'entry';
+
+      // `session` — a raw transcript the provider distills into hot memory.
+      if (source === 'session') {
+        return storeSession(content as SessionTranscript);
+      }
+
+      // `entry` (default) — everything is hot first: write to hot memory.
+      if (source === 'entry') {
+        const text = typeof content === 'string' ? content : String(content);
+        const rejection = scanContent(text);
+        if (rejection) throw new Error(rejection);
+        writeHotEntry(hotPath, { title: titleFrom(text), summary: text });
+        return { id: text.trim() };
+      }
+
+      // `consolidation` — write directly to cold (long-term) memory.
+      const coldContent = typeof content === 'string' ? content : String(content);
       const target = scopeTarget(scope);
       const info = getTargetInfo(target, paths);
       if (!info) throw new Error(`Unknown scope: ${scope}`);
 
-      const rejection = scanContent(content);
+      const rejection = scanContent(coldContent);
       if (rejection) throw new Error(rejection);
 
       const current = readMemoryFile(info.path);
       const entries = getEntries(current, info.header);
 
-      if (entries.includes(content.trim())) {
+      if (entries.includes(coldContent.trim())) {
         throw new Error('No duplicate added — entry already exists');
       }
 
-      const newEntries = [...entries, content.trim()];
+      const newEntries = [...entries, coldContent.trim()];
       const newContent = buildContent(newEntries, info.header);
 
       if (newContent.length > limits[target]) {
@@ -780,7 +901,7 @@ export function builtinMemoryProvider(
       }
 
       writeFileSync(info.path, newContent, 'utf-8');
-      return { id: content.trim() };
+      return { id: coldContent.trim() };
     },
     async update(scope: MemoryScope, ref: MemoryRef, content: string) {
       const target = scopeTarget(scope);
@@ -836,8 +957,20 @@ export function builtinMemoryProvider(
           content: e,
         }));
 
+      // builtin owns the hot-vs-cold split internally: hot-memory entries are a
+      // recall layer folded under the provider, so the consumer never cares which
+      // backing store held the match.
+      const hotHits = readHotHits(hotMemoryPathFor(paths), query, limit ?? 0);
+
       if (scope === 'both') {
-        return [...toHits(readTarget('memory'), 'self'), ...toHits(readTarget('user'), 'human')];
+        return [
+          ...toHits(readTarget('memory'), 'self'),
+          ...toHits(readTarget('user'), 'human'),
+          ...hotHits,
+        ];
+      }
+      if (scope === 'self') {
+        return [...toHits(readTarget('memory'), 'self'), ...hotHits];
       }
       return toHits(readTarget(scopeTarget(scope)), scope);
     },
@@ -849,12 +982,20 @@ export function builtinMemoryProvider(
       }
     },
     async grounding(opts?: { scope?: MemoryScope; maxChars?: number }): Promise<string> {
-      const block = buildMemoryBlock(
+      const coldBlock = buildMemoryBlock(
         readMemoryFile(paths.memoryPath),
         readMemoryFile(paths.userPath),
         limits.memory,
         limits.user
       );
+      // Provider owns the hot-vs-cold split: hot (working/session) memory is
+      // surfaced alongside cold (long-term) memory in the same digest. Order is
+      // hot-then-cold (working memory first, then long-term), per the contract.
+      const hotContent = readMemoryFile(hotPath);
+      const hotBlock = hotContent.trim()
+        ? '\n' + ['[HOT MEMORY]', 'Below are brief summaries of your last few sessions.', '', hotContent.trim()].join('\n') + '\n'
+        : '';
+      let block = hotBlock + coldBlock;
       if (opts?.maxChars && block.length > opts.maxChars) return block.slice(0, opts.maxChars);
       return block;
     },
@@ -865,24 +1006,34 @@ export function builtinMemoryProvider(
         {
           name: 'hot-memory',
           description: 'Recall enhancement across session boundaries via hot-memory summaries.',
-          parameters: {},
+          parameters: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'Short title for the hot-memory entry.' },
+              summary: { type: 'string', description: 'Concise summary to persist.' },
+              conclusions: { type: 'string', description: 'Optional conclusions / open threads.' },
+            },
+            required: ['title', 'summary'],
+          },
           key: STANDARD_CAPABILITIES.hotMemory,
+          async execute(params: any) {
+            const title = typeof params?.title === 'string' ? params.title : '';
+            const summary = typeof params?.summary === 'string' ? params.summary : '';
+            const conclusions = typeof params?.conclusions === 'string' ? params.conclusions : undefined;
+            if (!title || !summary) {
+              return { ok: false, error: 'title and summary are required' };
+            }
+            // Consume the input defensively (trust boundary): do not let injected
+            // content become a new injection vector when persisted/handled later.
+            const rejection = scanContent(`${title}\n${summary}\n${conclusions ?? ''}`);
+            if (rejection) return { ok: false, error: rejection };
+            writeHotEntry(hotPath, { title, summary, conclusions });
+            return { ok: true, title };
+          },
         },
       ];
     },
   };
-}
-
-/**
- * Whether reeboot should run its own hot-memory wiring for the active provider.
- * A provider that SELF-SERVES retrieval (declares the `hotMemory` capability and
- * is not builtin, e.g. dreem) prevents reeboot's own hot-memory wiring — the
- * backend owns retrieval. builtin declares hotMemory but relies on reeboot's layer.
- */
-export function shouldRunReebootHotMemory(provider: MemoryProvider): boolean {
-  const declaresHot = hasCapability(provider, STANDARD_CAPABILITIES.hotMemory);
-  if (declaresHot && provider.id !== 'builtin') return false;
-  return true;
 }
 
 // ─── Provider factory registry ──────────────────────────────────────────────
@@ -990,8 +1141,20 @@ export function registerCapabilityTools(
         } else {
           result = `[${name}] declared without a handler`;
         }
+        // A provider may return a structured view (reeboot's view system) alongside
+        // content for non-tool-schema surfaces — propagate it to the ToolResult.
+        let view: ToolView | undefined;
+        if (result && typeof result === 'object' && !Array.isArray(result)) {
+          const r = result as { content?: unknown; view?: ToolView };
+          if (r.view !== undefined && r.view !== null) {
+            view = r.view;
+            result = r.content ?? '';
+          }
+        }
         const text = typeof result === 'string' ? result : JSON.stringify(result);
-        return { content: [{ type: 'text' as const, text }], details: {} };
+        return view !== undefined
+          ? ({ content: [{ type: 'text' as const, text }], details: {}, view } as never)
+          : { content: [{ type: 'text' as const, text }], details: {} };
       },
     });
   }
@@ -1062,10 +1225,6 @@ export function makeMemoryExtension(
   const viaFactory = resolveProvider(providerFactoryRegistry, providerId, memoryConfig.providerConfig);
   if (viaFactory) manager.register(viaFactory);
   manager.select(providerId);
-
-  // Fold hot-memory routing under the active provider: a backend that self-serves
-  // retrieval prevents reeboot's own hot-memory wiring.
-  setReebootHotMemoryEnabled(shouldRunReebootHotMemory(manager.active));
 
   // Surface reeboot's active model config so the provider can share reeboot's LLM
   // (unless providerConfig.llm overrides).
@@ -1154,7 +1313,10 @@ export function makeMemoryExtension(
             result = 'Error: content is required for add action';
           } else {
             try {
-              await manager.store(scope, content);
+              // Everything is hot first (Option B): the explicit memory tool lands
+              // in the provider's hot (working) memory as an 'entry'. Promotion to
+              // cold long-term memory is the consolidation job's decision.
+              await manager.store(scope, content, { source: 'entry' });
               result = `Added to ${target === 'user' ? 'USER.md' : 'MEMORY.md'}.`;
             } catch (e) {
               result = (e as Error).message;
@@ -1192,6 +1354,39 @@ export function makeMemoryExtension(
       },
     });
   }
+
+  // ── session_shutdown — forward the full conversation to the provider ───
+  // The manager assembles the raw transcript from the messages log and hands it
+  // to the active provider through the contract's single store action with the
+  // `session` source signal. Distillation is a provider job (builtin LLM-distills
+  // to hot; a delegating provider ingests the raw session). The manager never
+  // distills on the provider's behalf.
+  pi.on('session_shutdown', async (event: any) => {
+    if (event.reason !== 'new') return;
+
+    try {
+      const { getDb } = await import('../db/index.js');
+      const db: Database.Database | undefined = getDb();
+      if (!db) return;
+
+      // Forward the FULL conversation transcript — no cap. Distillation is the
+      // provider's job (builtin truncates internally; a delegating backend
+      // ingests the raw session), so the manager must not hard-cut it here.
+      const rows = db.prepare(
+        `SELECT role, content, created_at FROM messages ORDER BY created_at DESC`
+      ).all() as Array<{ role: string; content: string; created_at: string }>;
+      if (rows.length === 0) return;
+
+      const transcript: SessionTranscript = rows.reverse().map((r) => ({
+        role: r.role,
+        content: r.content,
+        created_at: r.created_at,
+      }));
+      await manager.store('self', transcript, { source: 'session' });
+    } catch {
+      // best-effort — never fail teardown because a session could not be forwarded
+    }
+  });
 
   // ── Provider capability registry — one namespaced tool per declaration ───
   registerCapabilityTools(pi, manager);

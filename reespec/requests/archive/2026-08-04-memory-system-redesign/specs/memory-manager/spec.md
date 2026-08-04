@@ -38,6 +38,15 @@ a logged warning, hosts the capability registry, and applies the uniform trust g
 - **THEN** it passes only opaque refs and scope tokens to the provider — never transforms
   results, never inspects ref internals, never assumes backend addressing.
 
+## S5b — session end routes the full conversation through manager → provider (provider distills)
+
+- **GIVEN** the agent session ends (`session_shutdown`, reason `'new'`)
+- **WHEN** the manager handles the event
+- **THEN** it assembles the full conversation transcript (from the messages log) and calls
+  `store(scope, transcript, { source: 'session' })` on the active provider — the manager
+  forwards the raw transcript and does **not** distill; the provider owns distillation
+  (builtin LLM-distills to hot; a delegating provider ingests the raw session itself).
+
 ## S6 — Capability registry returns the active provider's declared capabilities
 
 - **GIVEN** an active provider with `listCapabilities()`

@@ -15,8 +15,6 @@
 
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
-import { isReebootHotMemoryEnabled } from './memory-hot-routing.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -340,142 +338,8 @@ export function parseHotMemoryFile(content: string): HotMemoryEntry[] {
   return entries;
 }
 
-// ─── Extension wiring ─────────────────────────────────────────────────────────
-
-/**
- * Creates and registers the hot-memory extension hooks.
- *
- * Registers:
- *   - session_shutdown (reason: 'new') → distills session into hot memory
- *   - before_agent_start → injects hot memory block into system prompt
- */
-export function makeHotMemoryExtension(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  pi: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  config: any = {}
-): void {
-  const memoriesDir = join(homedir(), '.reeboot', 'memories');
-
-  // Ensure hot memory file exists
-  initHotMemoryFile(memoriesDir);
-
-  // ── before_agent_start — inject hot memory block ───────────────────────
-  pi.on('before_agent_start', async (event: any) => {
-    if (!isReebootHotMemoryEnabled()) return undefined;
-    const content = readHotMemoryFile(memoriesDir);
-    const block = buildHotMemoryBlock(content);
-    if (!block) return undefined;
-    return { systemPrompt: (event.systemPrompt ?? '') + '\n' + block };
-  });
-
-  // ── session_shutdown — distill session into hot memory ────────────────
-  pi.on('session_shutdown', async (event: any) => {
-    if (event.reason !== 'new') return;
-    if (!isReebootHotMemoryEnabled()) return;
-
-    try {
-      const { getDb } = await import('../db/index.js');
-      const db = getDb();
-      if (!db) return;
-
-      // Build the production LLM call using the agent's configured model
-      const modelConfig = config?.agent?.model ?? {};
-      const provider: string = modelConfig.provider ?? '';
-      const modelId: string = modelConfig.id ?? '';
-
-      if (!provider || !modelId) {
-        // No model configured — can't distill
-        return;
-      }
-
-      const llmCall = await makeLLMCall(provider, modelId, config);
-
-      await distillSession({
-        db,
-        hotMemoryDir: memoriesDir,
-        llmCall,
-      });
-    } catch {
-      // Swallow — best effort
-    }
-  });
-}
-
-/**
- * Creates an LLM call function that uses the agent's configured model.
- * Resolves the API key from env vars and makes a direct HTTP request.
- */
-async function makeLLMCall(
-  provider: string,
-  modelId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  config: any
-): Promise<(prompt: string) => Promise<string>> {
-  // Resolve API key from the same env vars the runner uses
-  const { resolveProviderEnvKey } = await import('../agent-runner/pi-runner.js');
-  const apiKey = resolveProviderEnvKey(provider) || config?.agent?.model?.apiKey || '';
-
-  if (!apiKey) {
-    // No API key available — return a no-op
-    return async () => 'NO_NEW_INSIGHTS';
-  }
-
-  // Build the provider endpoint and request format
-  const endpoint = getProviderEndpoint(provider);
-  if (!endpoint) {
-    return async () => 'NO_NEW_INSIGHTS';
-  }
-
-  return async (prompt: string) => {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          { role: 'user', content: prompt },
-        ],
-        max_tokens: 300,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`LLM call failed: ${response.status}`);
-    }
-
-    const data = await response.json() as any;
-    // Extract text from various provider response formats
-    const text =
-      data?.choices?.[0]?.message?.content ??
-      data?.content?.[0]?.text ??
-      data?.completion ??
-      JSON.stringify(data);
-    return String(text);
-  };
-}
-
-/**
- * Returns the chat completions endpoint URL for a given provider.
- * Returns null for unsupported providers.
- */
-function getProviderEndpoint(provider: string): string | null {
-  const endpoints: Record<string, string> = {
-    anthropic: 'https://api.anthropic.com/v1/messages',
-    openai: 'https://api.openai.com/v1/chat/completions',
-    google: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
-    groq: 'https://api.groq.com/openai/v1/chat/completions',
-    openrouter: 'https://openrouter.ai/api/v1/chat/completions',
-    mistral: 'https://api.mistral.ai/v1/chat/completions',
-  };
-  return endpoints[provider.toLowerCase()] ?? null;
-}
-
-// ─── Extension default export ─────────────────────────────────────────────────
-
-export default function hotMemoryExtension(api: any, config?: any): void {
-  makeHotMemoryExtension(api, config ?? {});
-}
+// Note: the hot-memory EXTENSION wiring (before_agent_start injection +
+// session_shutdown distillation) moved into the memory provider — builtin owns
+// hot injection via grounding() and session distillation via store(source:
+// 'session'). This module now only provides the pure distill/data-model helpers
+// used by the provider and by tests.

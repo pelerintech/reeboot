@@ -716,3 +716,30 @@ Post-evaluation gap: dreem's declared capability tools (`dream`/`hot-retrieval`/
 ### registerDreemProviderFactory is best-effort (loader-context unhandled rejection) — 2026-08-04 (Request: memory-system-redesign)
 
 The loader (`loader.ts`) calls `registerDreemProviderFactory()`, whose unguarded async IIFE dynamic-imports `memory-manager.js` and calls `registerProvider`. `loader-context.test.ts` mocks `memory-manager.js` as `{ default: vi.fn() }` (no `registerProvider` export), so the IIFE threw an unhandled rejection that failed the suite. The factory registration is now best-effort: the dynamic import + `registerProvider` call is wrapped in try/catch that degrades silently (the configured dreem provider simply isn't selectable if the registry is unavailable). Behavior-neutral in production — the registry always exists there.
+
+### Everything is hot first; one store action, source-signalled (Option B) — 2026-08-04 (Request: memory-system-redesign)
+
+The memory model resolves to **"everything is hot, later consolidated."** There is a single `store` write action carrying an explicit `source` signal, and distillation is a **provider job**. `store(scope, content, { source })`:
+- `source:'entry'` (default) → writes the provider's **hot** (working) memory; a candidate for later consolidation to cold.
+- `source:'session'` → a raw conversation transcript; the **provider owns distillation** — builtin LLM-distills a transcript into hot memory via its own internal write path; a delegating provider (dreem) ingests the raw session into its own tooling (its own LLM/Dream). The manager never distills on the provider's behalf.
+- `source:'consolidation'` → writes directly to **cold** (long-term MEMORY.md/USER.md).
+
+Reeboot's consolidation job stays in the extension layer, mines the `messages` table (reliable/countable/retryable — unchanged source), and writes insights via `store('self', insight, { source: 'consolidation' })`. MemoryManager assembles the full conversation transcript (from the messages log) on `session_shutdown` (reason `'new'`) and forwards it via `store(scope, transcript, { source: 'session' })` — the manager forwards the raw session and does not distill. The provider decides hot-vs-cold internally based on the source; the consumer is agnostic. This supersedes the prior "memory `add` writes cold directly" byte-parity contract (builtin S3 amended to hot-first: `memory add` writes hot, consolidation later promotes to cold; grounding surfaces hot + cold).
+
+Why Option B over Option A: the user's settled model is that the explicit memory tool and any write land hot, and promotion to long-term is the consolidation job's decision — so `store('entry')` is hot, not cold. Forced `store('entry')`-to-cold (Option A) would keep the S3 default contract but split write semantics between "long-term for tool add" and "hot for sessions", which the user rejected as inconsistent. See memory-provider-contract S1b, builtin-provider S1/S1b/S3/S5, memory-manager S5b, dreem-provider S2b.
+
+### Hot-memory extension wiring removed — provider owns inject + distill (2026-08-04, Request: memory-system-redesign)
+
+The standalone `makeHotMemoryExtension` wiring (its `before_agent_start` injection and `session_shutdown` distill) was removed from `src/extensions/hot-memory.ts` and unloaded from `loader.ts`. Hot injection now lives in builtin's `grounding()` (which surfaces hot + cold) and session distillation lives in the provider's `store(source:'session')` — so hot memory is owned entirely by the provider, matching the fold-under-provider decision (builtin S1b/S4). This eliminated a double-injection of the `[HOT MEMORY]` block and duplicate session distillation. `hot-memory.ts` remains as a pure data-model/distill helper module (`parseHotMemoryFile`/`formatHotMemoryEntry`/`pruneEntries`/`buildHotMemoryBlock`/`distillSession`/`parseDistillResponse`); `hot-memory-wiring.test.ts` was rewritten to assert the folded contract (no standalone extension, pure helpers only). The `shouldRunReebootHotMemory` routing coordinator remains for the capability-driven gate, but the extension it gated is gone.
+
+### Evaluation follow-up: memory-tool add is hot-first, grounding hot-then-cold, no transcript cap — 2026-08-04 (Request: memory-system-redesign)
+
+The 21:15 evaluation follow-up confirmed three divergences from Option B and this entry records their resolution:
+
+1. **`memory add` → hot, not cold.** The memory tool's `add` previously routed `store(scope, content, { source: 'consolidation' })` (a direct cold MEMORY.md/USER.md write), justified only by an in-code "remember permanently" comment with no decision-log backing — contradicting the Option B decision ("everything is hot, later consolidated"). Now `add` routes `store(..., { source: 'entry' })` → hot (working) memory; promotion to cold is the consolidation job's decision. Rejected Option A (tool add → cold) which split write semantics between "long-term for tool add" and "hot for sessions" as inconsistent. `default-parity.test.ts` updated to assert hot-first.
+
+2. **Grounding surfaces hot-then-cold.** `builtinMemoryProvider.grounding()` emitted cold-then-hot (`coldBlock + hotBlock`); the contract/spec says "hot + cold ... hot-then-cold". Reordered to `hotBlock + coldBlock`. No recorded rationale existed for the reversal, so the spec wins.
+
+3. **No `LIMIT 200` on the session transcript.** The `session_shutdown` handler capped the forwarded conversation at the last 200 messages; the contract says "full conversation transcript". The cap was an inherited idiom from hot-memory/consolidation-mining, not a decision. Removed — the manager forwards the full messages-log transcript and lets the provider distill/truncate internally (builtin `text.slice`, dreem ingests raw). `session-end.test.ts` now injects 250 rows and asserts all 250 are forwarded.
+
+See decisions "Everything is hot first; one store action, source-signalled (Option B)" and the memory-manager/builtin-provider specs.

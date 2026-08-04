@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readFileSync, existsSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -58,7 +58,7 @@ const MEMORY_HEADER = '# MEMORY\n\n';
 const USER_HEADER = '# USER PROFILE\n\n';
 
 describe('default builtin behaviour preserved (regression)', () => {
-  it('memory tool writes the same MEMORY.md/USER.md entries as before', async () => {
+  it('memory tool writes hot first (Option B); cold only via consolidation', async () => {
     const { pi, getTool } = makeMockPi();
     const dir = join(tmpDir, 'memories');
     makeMemoryExtension(pi as any, {
@@ -74,27 +74,33 @@ describe('default builtin behaviour preserved (regression)', () => {
     await callTool(tool, { action: 'add', target: 'memory', content: 'prefers concise answers' });
     await callTool(tool, { action: 'add', target: 'user', content: 'Owner names: Sam' });
 
-    const memoryContent = readFileSync(join(dir, 'MEMORY.md'), 'utf-8');
-    const userContent = readFileSync(join(dir, 'USER.md'), 'utf-8');
+    // Hot first: `add` writes to hot-memory.md, NOT to MEMORY.md/USER.md.
+    const hotContent = readFileSync(join(dir, 'hot-memory.md'), 'utf-8');
+    expect(hotContent).toContain('prefers concise answers');
+    expect(hotContent).toContain('Owner names: Sam');
+    // Cold files remain header-only until consolidation promotes an entry.
+    expect(readFileSync(join(dir, 'MEMORY.md'), 'utf-8')).toBe(MEMORY_HEADER);
+    expect(readFileSync(join(dir, 'USER.md'), 'utf-8')).toBe(USER_HEADER);
 
-    // Byte-for-byte identical to the old helper output.
-    expect(memoryContent).toBe(MEMORY_HEADER + 'prefers concise answers\n');
-    expect(userContent).toBe(USER_HEADER + 'Owner names: Sam\n');
-
-    // replace + remove still reach the same file state
+    // replace + remove still reach COLD entries (e.g. after consolidation
+    // promotes an entry into MEMORY.md). Seed a cold entry and edit it via the tool.
+    writeFileSync(join(dir, 'MEMORY.md'), MEMORY_HEADER + 'prefers concise answers\n', 'utf-8');
     await callTool(tool, { action: 'replace', target: 'memory', old_text: 'concise', content: 'prefers terse answers' });
     expect(readFileSync(join(dir, 'MEMORY.md'), 'utf-8')).toBe(MEMORY_HEADER + 'prefers terse answers\n');
+    writeFileSync(join(dir, 'USER.md'), USER_HEADER + 'Owner names: Sam\n', 'utf-8');
     await callTool(tool, { action: 'remove', target: 'user', old_text: 'Owner' });
     expect(readFileSync(join(dir, 'USER.md'), 'utf-8')).toBe(USER_HEADER);
   });
 
-  it('before_agent_start grounding reproduces the old system-prompt block', async () => {
+  it('before_agent_start grounding surfaces hot-then-cold', async () => {
     const { pi, fireBeforeAgentStart, getTool } = makeMockPi();
     const dir = join(tmpDir, 'memories');
     initMemoryFiles(dir);
     const memoryPath = join(dir, 'MEMORY.md');
     const userPath = join(dir, 'USER.md');
-    // Write known content via the extension tool to keep state consistent
+    // Seed cold content directly; `add` lands in hot memory.
+    writeFileSync(memoryPath, MEMORY_HEADER + 'system prompt note\n', 'utf-8');
+    writeFileSync(userPath, USER_HEADER + 'User from Paris\n', 'utf-8');
     makeMemoryExtension(pi as any, {
       memory: {
         enabled: true,
@@ -104,14 +110,24 @@ describe('default builtin behaviour preserved (regression)', () => {
       },
     } as any, dir, []);
     const tool = getTool('memory');
-    await callTool(tool, { action: 'add', target: 'memory', content: 'system prompt note' });
-    await callTool(tool, { action: 'add', target: 'user', content: 'User from Paris' });
+    await callTool(tool, { action: 'add', target: 'memory', content: 'hot entry note' });
+    await callTool(tool, { action: 'add', target: 'user', content: 'hot user entry' });
 
     const memContent = readFileSync(memoryPath, 'utf-8');
     const userContent = readFileSync(userPath, 'utf-8');
-    const expected = buildMemoryBlock(memContent, userContent, 2200, 1375);
+    const coldBlock = buildMemoryBlock(memContent, userContent, 2200, 1375);
+    const hotContent = readFileSync(join(dir, 'hot-memory.md'), 'utf-8');
+    const hotBlock = hotContent.trim()
+      ? '\n' + ['[HOT MEMORY]', 'Below are brief summaries of your last few sessions.', '', hotContent.trim()].join('\n') + '\n'
+      : '';
+    // Provider-owned digest surfaces hot-then-cold in the same block.
+    const expected = hotBlock + coldBlock;
 
     const prompt = await fireBeforeAgentStart();
     expect(prompt).toBe(expected);
+    const hotIdx = prompt.indexOf('[HOT MEMORY]');
+    const coldIdx = prompt.indexOf('MEMORY (your personal notes)');
+    expect(hotIdx).toBeGreaterThan(-1);
+    expect(coldIdx).toBeGreaterThan(hotIdx);
   });
 });

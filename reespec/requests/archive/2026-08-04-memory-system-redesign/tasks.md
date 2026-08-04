@@ -99,7 +99,7 @@
       routing; current job writes files directly).
 - [x] **ACTION** — Add the standard `selfConsolidating` capability declaration; gate the
       `__memory_consolidation__` scheduler job on the active provider's status; route builtin's
-      job through `provider.store`.
+      job through `provider.store('self', insight, { source: 'consolidation' })` (cold write).
 - [x] **GREEN** — `npx vitest run tests/memory-plug/consolidation-routing.test.ts` +
       `tests/memory-consolidation*.test.ts` → passes.
 
@@ -178,3 +178,65 @@
       reeboot-owned boundaries) to `reespec/decisions.md`.
 - [x] **GREEN** — Verify each decision is captured with its request reference → assertion
       passes.
+
+## 16. One store action, hot-first, source-signalled (everything is hot, later consolidated)
+
+- [x] **RED** — Extend `tests/memory-plug/contract.test.ts`: `store(scope, content, opts?)`
+      accepts a `source` of `'entry' | 'session' | 'consolidation'` (default `'entry'`), and
+      content may be a raw `SessionTranscript`; a `MEMORY_SOURCES` runtime const exists →
+      fails until the widened contract lands.
+- [x] **ACTION** — Widen `src/memory-provider.ts`: add `SessionTurn`/`SessionTranscript`,
+      `StoreOptions{ source }`, `MEMORY_SOURCES` runtime const; widen `store` to
+      `(scope, content: string | SessionTranscript, opts?)` and mirror on the manager.
+- [x] **GREEN** — `npx vitest run tests/memory-plug/contract.test.ts` → passes.
+
+## 17. Session end routes the full conversation through manager → provider (provider distills)
+
+- [x] **RED** — Write `tests/memory-plug/session-end.test.ts`: on `session_shutdown`
+      (reason `'new'`), the manager assembles the full transcript from the messages log and
+      calls `store(scope, transcript, { source: 'session' })` on the active provider — and a
+      delegating provider (dreem) receives the raw transcript → fails until the wiring lands.
+- [x] **ACTION** — Wire the manager's `session_shutdown` handler to assemble the transcript
+      from the messages table and forward it via `store(..., { source: 'session' })`;
+      the manager does not distill.
+- [x] **GREEN** — `npx vitest run tests/memory-plug/session-end.test.ts` → passes.
+
+## 18. builtin distills session transcripts into hot memory (provider job)
+
+- [x] **RED** — Extend `tests/memory-plug/builtin-provider.test.ts`: `store(scope, transcript,
+      { source: 'session' })` on builtin LLM-distills into hot memory via its internal write
+      path → fails until builtin owns the distill.
+- [x] **ACTION** — Implement builtin's `source:'session'` path: LLM-distill the transcript
+      into a summary and write to hot memory using the builtin's own write method.
+- [x] **GREEN** — `npx vitest run tests/memory-plug/builtin-provider.test.ts` → passes.
+
+## 19. dreem ingests raw session transcripts itself
+
+- [x] **RED** — Extend `tests/memory-plug/dreem-provider.test.ts`: `store(scope, transcript,
+      { source: 'session' })` on dreem receives the raw session (no manager distillation)
+      → fails.
+- [x] **ACTION** — Ensure the dreem provider routes `source:'session'` transcripts through to
+      its knowledge write path unchanged.
+- [x] **GREEN** — `npx vitest run tests/memory-plug/dreem-provider.test.ts` → passes.
+
+## 20. builtin store is hot-first; recall/grounding merge hot + cold
+
+- [x] **RED** — Extend `tests/memory-plug/builtin-provider.test.ts` + `default-parity.test.ts`:
+      builtin `store` (default) writes hot (working memory) and `source:'consolidation'`
+      writes cold; `recall`/`grounding` surface hot + cold (same block, hot-then-cold)
+      → fails until hot-first routing lands.
+- [x] **ACTION** — Route builtin `store`: default → hot (hot-memory / working memory path),
+      `source:'consolidation'` → cold (MEMORY.md/USER.md); merge hot + cold in `recall` and
+      `grounding`. Update `default-parity.test.ts` to the new hot-first contract.
+- [x] **GREEN** — `npx vitest run tests/memory-plug/builtin-provider.test.ts` +
+      `default-parity.test.ts` → passes.
+
+## 21. Integration + docs + full-suite green + coverage gate (Option B)
+
+- [x] **RED** — Run `cd reeboot && npm run test:coverage`; confirm thresholds
+      (statements/lines/functions ≥ 80, branches ≥ 72) still hold after the Option B changes
+      → RED while any gap remains.
+- [x] **ACTION** — Update docs / decisions for the hot-first source-signalled store,
+      session-end routing, and provider-owned distillation.
+- [x] **GREEN** — `cd reeboot && npx vitest run` and `npm run test:run` report full-suite
+      green, `tsc --noEmit` clean, and `npm run test:coverage` passes the thresholds.

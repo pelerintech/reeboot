@@ -17,11 +17,12 @@ function config(overrides: Partial<DreemProviderConfig> = {}): DreemProviderConf
   return { baseUrl: 'http://dreem.test', ...overrides };
 }
 
-function stubFetch() {
+function stubFetch(handler?: (url: string, init: any) => any) {
   const bodies: string[] = [];
   const fetchMock = vi.fn(async (url: any, init: any) => {
+    const body = handler ? handler(String(url), init) : {};
     bodies.push(`${init?.method} ${url} ${init?.body ?? ''}`);
-    return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' };
+    return { ok: !(body && body.__error), status: body && body.__error ? 500 : 200, json: async () => (body && body.__error ? {} : body), text: async () => (body && body.__error ? '' : JSON.stringify(body)) };
   });
   vi.stubGlobal('fetch', fetchMock);
   return bodies;
@@ -101,5 +102,29 @@ describe('dreem provider — capabilities + self-consolidating + LLM sharing', (
     const result = await health.execute!({});
     expect(bodies.join('|')).toContain('health');
     expect(result).not.toContain('declared without a handler');
+  });
+
+  it('registered capability tools surface reeboot structured views for non-tool-schema data (S5)', async () => {
+    const { makeMemoryExtension } = await import('../../src/extensions/memory-manager.js');
+    const registered = new Map<string, any>();
+    const pi = { registerTool: (d: any) => registered.set(d.name, d), on: () => {} } as any;
+    const provider = makeDreemProvider(config());
+    makeMemoryExtension(pi, {
+      memory: { provider: 'dreem', enabled: true, providerConfig: { baseUrl: 'http://dreem.test' } },
+    } as any, '/tmp/mem', [provider]);
+
+    // graph returns an array of node records → must surface as a data-table view.
+    stubFetch((url: string, init: any) => {
+      if (String(url).includes('/graph')) {
+        return { nodes: [{ id: 'n1', kind: 'fact' }, { id: 'n2', kind: 'preference' }] };
+      }
+      return {};
+    });
+    const graphTool = registered.get('memory::dreem::graph');
+    expect(graphTool).toBeDefined();
+    const out = await graphTool.execute('id', {});
+    const view = out.view ?? out.details?.view;
+    expect(view).toBeDefined();
+    expect(view?.type).toBe('data-table');
   });
 });

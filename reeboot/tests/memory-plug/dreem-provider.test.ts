@@ -39,6 +39,29 @@ describe('dreem provider — core ops + delegation (S1, S2, S6)', () => {
     expect(calls.some((c) => c.includes('likes terse answers'))).toBe(true);
   });
 
+  it('store(source: session) forwards the raw transcript unchanged (S2b — dreem ingests itself)', async () => {
+    const calls: string[] = [];
+    stubFetch((url, init) => {
+      calls.push(`${init?.method} ${url} ${typeof init?.body === 'string' ? init.body : JSON.stringify(init?.body)}`);
+      return { refId: 'concepts/session/note' };
+    });
+    const provider = makeDreemProvider(config({ apiKey: 'token' }));
+
+    const transcript = [
+      { role: 'user', content: 'What is dreem?' },
+      { role: 'assistant', content: 'A memory system.' },
+    ];
+    const ref = await provider.store('self', transcript, { source: 'session' });
+    expect(ref.id).toBe('concepts/session/note');
+    // The raw session (transcript) and the session source signal reach the backend
+    // — the manager does not distill for dreem; dreem handles it internally.
+    const call = calls.find((c) => c.includes('/memory'));
+    expect(call).toBeDefined();
+    expect(call).toContain('transcript');
+    expect(call).toContain('session');
+    expect(call).toContain('What is dreem?');
+  });
+
   it('update/forget consume the ref via knowledge endpoints', async () => {
     const calls: string[] = [];
     stubFetch((url, init) => {
@@ -88,6 +111,21 @@ describe('dreem provider — core ops + delegation (S1, S2, S6)', () => {
 
     const g = await provider.grounding({ maxChars: 200 });
     expect(g).toBe('DIGEST');
+  });
+
+  it('grounding forwards scope and self-polices maxChars (S5)', async () => {
+    const calls: string[] = [];
+    stubFetch((url, init) => {
+      calls.push(`${init?.method} ${url}`);
+      if (String(url).includes('/grounding')) return { digest: 'abcdefghij' };
+      return {};
+    });
+    const provider = makeDreemProvider(config());
+
+    const g = await provider.grounding({ scope: 'human', maxChars: 5 });
+    expect(g).toBe('abcde');
+    // scope must be forwarded to the backend so the digest is scoped
+    expect(calls.some((c) => c.includes('/grounding') && c.includes('human'))).toBe(true);
   });
 
   it('degrades gracefully when the backend is unreachable (S6)', async () => {

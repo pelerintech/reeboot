@@ -10,6 +10,20 @@ and provider-owned grounding. Every provider (builtin, dreem, mem0, future) hono
 - **THEN** it accepts a `scope` of `'self' | 'human' | 'both'`, and the `self`/`human`
   distinction is preserved as distinct, non-conflated namespaces in every backend.
 
+## S1b — one `store` action, hot first, source-signalled (everything is hot, later consolidated)
+
+- **GIVEN** the provider is invoked via `store(scope, content, opts?)`
+- **WHEN** `opts.source` is unset or `'entry'`
+- **THEN** the content lands in the provider's **hot** memory (recent/working memory) and is a
+  candidate for later consolidation to cold — the same single write surface as before.
+- **GIVEN** `store(scope, content, { source: 'session' })` is invoked with a raw transcript
+- **THEN** the **provider** owns distillation: the builtin LLM-distills to hot memory; a
+  delegating provider (e.g. dreem) ingests the raw session into its own tooling.
+  The manager never distills on the provider's behalf.
+- **GIVEN** `store(scope, content, { source: 'consolidation' })` is invoked
+- **THEN** the content is written directly to **cold** (long-term) memory.
+- The provider internally decides hot-vs-cold based on the source; the consumer is agnostic.
+
 ## S2 — Composite scope 'both' merges across self+human
 
 - **GIVEN** `recall` is invoked with `scope: 'both'`

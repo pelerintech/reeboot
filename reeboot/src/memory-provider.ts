@@ -27,6 +27,36 @@ export const MEMORY_SCOPES = ['self', 'human', 'both'] as const;
 export type MemoryScope = (typeof MEMORY_SCOPES)[number];
 
 /**
+ * Source kinds that flow through the single `store` action. The provider is
+ * responsible for deciding whether (and how) content is distilled or routed
+ * hot-vs-cold based on the source.
+ * - `entry`: a finished memory entry — write directly (hot).
+ * - `session`: a raw conversation transcript — the provider distills it
+ *   (builtin LLM-distills → hot; dreem ingests the raw session into its own
+ *   tooling).
+ * - `consolidation`: an insight produced by reeboot's consolidation job —
+ *   write directly to cold (long-term) memory.
+ */
+export const MEMORY_SOURCES = ['entry', 'session', 'consolidation'] as const;
+export type MemorySource = (typeof MEMORY_SOURCES)[number];
+
+/** A raw conversation turn as it would be stored in the messages table. */
+export interface SessionTurn {
+  role: string;
+  content: string;
+  created_at?: string;
+}
+
+/** A raw conversation transcript passed to `store` for provider-side distillation. */
+export type SessionTranscript = SessionTurn[];
+
+/** Options for the single `store` action. */
+export interface StoreOptions {
+  /** How the provider should handle the content; defaults to `entry`. */
+  source?: MemorySource;
+}
+
+/**
  * Opaque, backend-specific handle. The manager never inspects the shape.
  * The provider owns the translation (file substring, concept path, memory id).
  */
@@ -65,7 +95,7 @@ export interface MemoryProvider {
   readonly id: string;
 
   // core — every provider honors these
-  store(scope: MemoryScope, content: string): Promise<MemoryRef>;
+  store(scope: MemoryScope, content: string | SessionTranscript, opts?: StoreOptions): Promise<MemoryRef>;
   update(scope: MemoryScope, ref: MemoryRef, content: string): Promise<void>;
   forget(scope: MemoryScope, ref: MemoryRef): Promise<void>;
   recall(scope: MemoryScope, query: string, limit?: number): Promise<MemoryHit[]>;
@@ -151,8 +181,8 @@ export class MemoryManager {
   // it never transforms results, never inspects ref internals, never assumes
   // backend addressing.
 
-  store(scope: MemoryScope, content: string): Promise<MemoryRef> {
-    return this.activeProvider.store(scope, content);
+  store(scope: MemoryScope, content: string | SessionTranscript, opts?: StoreOptions): Promise<MemoryRef> {
+    return this.activeProvider.store(scope, content, opts);
   }
   update(scope: MemoryScope, ref: MemoryRef, content: string): Promise<void> {
     return this.activeProvider.update(scope, ref, content);

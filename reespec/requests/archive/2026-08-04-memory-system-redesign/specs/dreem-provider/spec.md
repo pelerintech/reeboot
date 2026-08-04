@@ -19,6 +19,12 @@ level only when a backend cannot honor an operation.
   (`self`/`human` → a dreem type/namespace), returning and consuming opaque refs (concept
   path).
 
+## S2b — dreem ingests raw session transcripts itself
+
+- **GIVEN** `store(scope, content, { source: 'session' })` is invoked with a raw transcript
+- **THEN** dreem receives the raw session and uses its own internal tooling (its own LLM
+  and Dream consolidation) to distill it — the manager does not distill for it.
+
 ## S3 — dreem is self-consolidating; reeboot's consolidation job is skipped
 
 - **GIVEN** dreem declares `selfConsolidating`
