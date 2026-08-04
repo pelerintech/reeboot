@@ -16,11 +16,14 @@ import { homedir } from 'node:os';
 import type { ExtensionAPI } from './extension-api.js';
 import type { Config } from '../config.js';
 import { scanContent } from '../security/injection-scanner.js';
+import { effectiveExternalSourceTools } from '../security/external-tools.js';
 
 export default function injectionGuardExtension(pi: ExtensionAPI, config: Config): void {
   const guard = config?.security?.injection_guard;
   const enabled = guard?.enabled ?? true;
-  const externalSourceTools: string[] = guard?.external_source_tools ?? ['fetch_url', 'web_fetch'];
+  const externalSourceTools = effectiveExternalSourceTools(
+    guard?.external_source_tools ?? ['fetch_url', 'web_fetch']
+  );
 
   pi.on('before_agent_start', async (event: any) => {
     if (!enabled) return undefined;

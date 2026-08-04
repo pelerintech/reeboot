@@ -56,13 +56,17 @@
   "$comment_memory": "Persistent memory (MEMORY.md + USER.md). On by default.",
   "memory": {
     "enabled": true,
-    "memoryCharLimit": 2200,
-    "userCharLimit": 1375,
-    "consolidation": {
-      "enabled": true,
-      "schedule": "0 2 * * *"
+    "provider": "builtin",
+    "providerConfig": {
+      "memoryCharLimit": 2200,
+      "userCharLimit": 1375,
+      "consolidation": {
+        "enabled": true,
+        "schedule": "0 2 * * *"
+      }
     }
   },
+  "$comment_dreem_memory": "To switch the memory backend to the dreem sidekick, set provider + providerConfig (baseUrl required): {\"provider\":\"dreem\",\"providerConfig\":{\"baseUrl\":\"http://localhost:8787\",\"apiKey\":\"optional-token\",\"consolidationInterval\":\"0 * * * *\",\"llm\":{}}}. The provider inherits reeboot's active model config by default.",
   "$comment_knowledge": "Domain knowledge corpus (local RAG). Off by default.",
   "knowledge": {
     "enabled": false,

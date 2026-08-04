@@ -8,7 +8,7 @@ describe('memory.provider config', () => {
   });
 
   it('accepts an explicit dreem provider', () => {
-    const cfg = ConfigSchema.parse({ memory: { provider: 'dreem' } });
+    const cfg = ConfigSchema.parse({ memory: { provider: 'dreem', providerConfig: { baseUrl: 'http://x' } } });
     expect(cfg.memory.provider).toBe('dreem');
   });
 

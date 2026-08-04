@@ -288,17 +288,43 @@ Controls which context handles messages from which channel or peer.
 
 Personal memory persists facts, preferences, and corrections across sessions. Memory is on by default.
 
+Memory is a **pluggable backend** — exactly one provider is active per deployment. The `memory` block is a discriminated union on `memory.provider`, so each provider's `providerConfig` is strongly typed to the keys it needs.
+
+### Builtin (default)
+
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `memory.enabled` | boolean | `true` | Enable personal memory. When enabled, the agent has access to the `memory` tool and `MEMORY.md`/`USER.md` are injected into every system prompt. |
-| `memory.memoryCharLimit` | number | `2200` | Maximum characters for `MEMORY.md`. When reached, the agent auto-consolidates to make room. |
-| `memory.userCharLimit` | number | `1375` | Maximum characters for `USER.md`. |
-| `memory.consolidation.enabled` | boolean | `true` | Enable background memory consolidation (mines past sessions for patterns). |
-| `memory.consolidation.schedule` | string | `"0 2 * * *"` | Cron schedule for background consolidation (default: 2 AM daily). |
+| `memory.enabled` | boolean | `true` | Enable personal memory. When enabled, the agent has access to the `memory` tool and memory grounding is injected into every system prompt. |
+| `memory.provider` | `builtin` \| `dreem` \| `mem0` | `builtin` | Which memory backend is active. |
+| `memory.providerConfig.memoryCharLimit` | number | `2200` | Maximum characters for `MEMORY.md` (builtin). |
+| `memory.providerConfig.userCharLimit` | number | `1375` | Maximum characters for `USER.md` (builtin). |
+| `memory.providerConfig.consolidation.enabled` | boolean | `true` | Enable background consolidation for the builtin provider. |
+| `memory.providerConfig.consolidation.schedule` | string | `"0 2 * * *"` | Cron schedule for builtin background consolidation. |
+
+Example (builtin is also the default when the block is omitted):
+
+```jsonc
+{ "memory": { "provider": "builtin", "providerConfig": { "memoryCharLimit": 2200 } } }
+```
+
+### Dreem backend
+
+Set `memory.provider` to `dreem` to delegate the entire memory experience (recall, consolidation via dreem's own Dream loop, hot retrieval) to a configured dreem sidekick endpoint. `baseUrl` is required.
+
+| Field | Type | Description |
+|---|---|---|
+| `memory.providerConfig.baseUrl` | string (required) | The dreem sidekick endpoint. |
+| `memory.providerConfig.apiKey` | string (optional) | Optional bearer token. |
+| `memory.providerConfig.consolidationInterval` | string (optional) | Pass-through to the backend's Dream schedule. |
+| `memory.providerConfig.llm` | object (optional) | Override for the LLM passed to the backend. Inherited from reeboot's active model config by default. |
+
+```jsonc
+{ "memory": { "provider": "dreem", "providerConfig": { "baseUrl": "http://localhost:8787" } } }
+```
 
 The `session_search` tool (full-text search over past conversations) is always available regardless of `memory.enabled`.
 
-→ See [Personal Memory](../capabilities/memory.md).
+→ See [Personal Memory](../capabilities/memory.md) and the [memory design](../../docs/memory.md).
 
 ---
 

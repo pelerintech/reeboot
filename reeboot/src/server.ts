@@ -337,8 +337,8 @@ export async function buildApp(opts: ServerOptions = {}): Promise<Hono> {
         const { createLlmCall } = await import('./llm/one-shot.js');
         const memoryConfig = (appConfig as any)?.memory ?? {};
         const memoriesDir = join(reebotDir, 'memories');
-        const memoryCharLimit = memoryConfig.memoryCharLimit ?? 2200;
-        const userCharLimit = memoryConfig.userCharLimit ?? 1375;
+        const memoryCharLimit = memoryConfig.providerConfig?.memoryCharLimit ?? memoryConfig.memoryCharLimit ?? 2200;
+        const userCharLimit = memoryConfig.providerConfig?.userCharLimit ?? memoryConfig.userCharLimit ?? 1375;
         const llmCall = createLlmCall(appConfig);
 
         const schedulerOrchestrator = {
@@ -353,6 +353,7 @@ export async function buildApp(opts: ServerOptions = {}): Promise<Hono> {
             memoriesDir,
             memoryCharLimit,
             userCharLimit,
+            config: appConfig,
           }),
         };
 

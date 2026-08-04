@@ -7,7 +7,7 @@ import {
   builtinMemoryProvider,
   initMemoryFiles,
 } from '../../src/extensions/memory-manager.js';
-import type { MemoryProvider } from '../../src/memory-provider.js';
+import type { MemoryProvider, MemoryFilePaths } from '../../src/extensions/memory-manager.js';
 
 let tmpDir: string;
 
@@ -52,16 +52,114 @@ function baseConfig(provider?: string) {
   };
 }
 
-describe('builtin memory provider', () => {
-  it('still mutates MEMORY.md as today', () => {
+function makeBuiltin(paths: MemoryFilePaths): MemoryProvider {
+  return builtinMemoryProvider(paths, { memory: 2200, user: 1375 });
+}
+
+describe('builtin memory provider — new contract', () => {
+  it('store writes to MEMORY.md (self) and returns an opaque ref', async () => {
     const dir = join(tmpDir, 'memories');
     initMemoryFiles(dir);
-    const provider = builtinMemoryProvider(
-      { memoryPath: join(dir, 'MEMORY.md'), userPath: join(dir, 'USER.md') },
-      { memory: 2200, user: 1375 }
-    );
-    provider.add('memory', 'hello world');
+    const provider = makeBuiltin({
+      memoryPath: join(dir, 'MEMORY.md'),
+      userPath: join(dir, 'USER.md'),
+    });
+
+    const ref = await provider.store('self', 'hello world');
+    expect(typeof ref.id).toBe('string');
+    expect(ref.id.length).toBeGreaterThan(0);
     expect(readFileSync(join(dir, 'MEMORY.md'), 'utf-8')).toContain('hello world');
+  });
+
+  it('update consumes the ref to replace the entry', async () => {
+    const dir = join(tmpDir, 'memories');
+    initMemoryFiles(dir);
+    const provider = makeBuiltin({
+      memoryPath: join(dir, 'MEMORY.md'),
+      userPath: join(dir, 'USER.md'),
+    });
+
+    const ref = await provider.store('self', 'original');
+    await provider.update('self', ref, 'updated entry');
+    const content = readFileSync(join(dir, 'MEMORY.md'), 'utf-8');
+    expect(content).toContain('updated entry');
+    expect(content).not.toContain('original');
+  });
+
+  it('forget consumes the ref to remove the entry', async () => {
+    const dir = join(tmpDir, 'memories');
+    initMemoryFiles(dir);
+    const provider = makeBuiltin({
+      memoryPath: join(dir, 'MEMORY.md'),
+      userPath: join(dir, 'USER.md'),
+    });
+
+    const ref = await provider.store('human', 'to remove');
+    await provider.forget('human', ref);
+    expect(readFileSync(join(dir, 'USER.md'), 'utf-8')).not.toContain('to remove');
+  });
+
+  it('recall is query-based term matching and never a full dump', async () => {
+    const dir = join(tmpDir, 'memories');
+    initMemoryFiles(dir);
+    const provider = makeBuiltin({
+      memoryPath: join(dir, 'MEMORY.md'),
+      userPath: join(dir, 'USER.md'),
+    });
+
+    await provider.store('self', 'the cat sleeps all day');
+    await provider.store('self', 'dogs love long walks');
+
+    const hits = await provider.recall('self', 'cat', 5);
+    expect(hits.length).toBe(1);
+    expect(hits[0].content).toContain('cat');
+    expect(hits[0].scope).toBe('self');
+    expect(hits.every((h) => !h.content.includes('dogs'))).toBe(true);
+  });
+
+  it("'both' concatenates recall across self + human", async () => {
+    const dir = join(tmpDir, 'memories');
+    initMemoryFiles(dir);
+    const provider = makeBuiltin({
+      memoryPath: join(dir, 'MEMORY.md'),
+      userPath: join(dir, 'USER.md'),
+    });
+
+    await provider.store('self', 'cat in memory notes');
+    await provider.store('human', 'cat in user profile');
+
+    const hits = await provider.recall('both', 'cat', 10);
+    expect(hits.length).toBe(2);
+    const scopes = hits.map((h) => h.scope).sort();
+    expect(scopes).toContain('self');
+    expect(scopes).toContain('human');
+  });
+
+  it('clear wipes a scope file', async () => {
+    const dir = join(tmpDir, 'memories');
+    initMemoryFiles(dir);
+    const provider = makeBuiltin({
+      memoryPath: join(dir, 'MEMORY.md'),
+      userPath: join(dir, 'USER.md'),
+    });
+
+    await provider.store('self', 'ephemeral note');
+    await provider.clear('self');
+    expect(readFileSync(join(dir, 'MEMORY.md'), 'utf-8')).not.toContain('ephemeral note');
+  });
+
+  it('grounding returns the memory block trimmed to maxChars', async () => {
+    const dir = join(tmpDir, 'memories');
+    initMemoryFiles(dir);
+    const provider = makeBuiltin({
+      memoryPath: join(dir, 'MEMORY.md'),
+      userPath: join(dir, 'USER.md'),
+    });
+
+    await provider.store('self', 'user prefers concise bullet summaries. '.repeat(10));
+    const block = await provider.grounding({ maxChars: 100 });
+    expect(block.length).toBeLessThanOrEqual(150); // header + trimmed content
+    expect(block.length).toBeGreaterThan(0);
   });
 });
 
@@ -71,19 +169,20 @@ describe('memory tool routed through the active provider', () => {
     const calls: string[] = [];
     const alt: MemoryProvider = {
       id: 'dreem',
-      add: (t, c) => { calls.push(`add:${t}:${c}`); return 'ok'; },
-      replace: (t) => { calls.push(`replace:${t}`); return 'ok'; },
-      remove: (t) => { calls.push(`remove:${t}`); return 'ok'; },
-      read: () => '',
-      clear: () => {},
-      buildSystemPromptContribution: () => '[dreem]',
+      async store(scope, content) { calls.push(`store:${scope}:${content}`); return { id: 'r' }; },
+      async update() {},
+      async forget() {},
+      async recall() { return []; },
+      async clear() {},
+      async grounding() { return '[dreem]'; },
+      listCapabilities() { return []; },
     };
 
     makeMemoryExtension(pi as any, baseConfig('dreem') as any, join(tmpDir, 'memories'), [alt]);
     const tool = getTool('memory');
     await callTool(tool, { action: 'add', target: 'memory', content: 'note' });
 
-    expect(calls).toContain('add:memory:note');
+    expect(calls).toContain('store:self:note');
   });
 
   it('writes to the builtin files by default', async () => {
@@ -96,14 +195,11 @@ describe('memory tool routed through the active provider', () => {
   });
 
   it('falls back to builtin when a valid-but-unregistered provider is configured (S3)', async () => {
-    // 'mem0' is a valid enum value, but no provider is registered for it.
-    // Graceful degradation: memory must NOT be silently disabled; the builtin
-    // backend stays active rather than crashing startup.
     const { pi, getTool } = makeMockPi();
     const dir = join(tmpDir, 'memories');
     makeMemoryExtension(pi as any, baseConfig('mem0') as any, dir, []);
     const tool = getTool('memory');
-    expect(tool).toBeDefined(); // memory tool remains available
+    expect(tool).toBeDefined();
     await callTool(tool, { action: 'add', target: 'memory', content: 'fallback note' });
     expect(readFileSync(join(dir, 'MEMORY.md'), 'utf-8')).toContain('fallback note');
   });

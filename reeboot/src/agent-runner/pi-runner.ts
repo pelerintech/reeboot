@@ -32,6 +32,7 @@ import type { ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { Config } from '../config.js';
 import { getLogger } from '../observability/logger.js';
 import { scanContent } from '../security/injection-scanner.js';
+import { effectiveExternalSourceTools } from '../security/external-tools.js';
 
 // ─── wrapUntrustedMessage ────────────────────────────────────────────────────
 
@@ -138,7 +139,9 @@ export class PiAgentRunner implements AgentRunner {
           // Scan tool output for prompt injection patterns (Layer 1 defense).
           // Only checks tools listed in injection_guard.external_source_tools.
           let toolResult = event.result;
-          const externalTools = this.config?.security?.injection_guard?.external_source_tools ?? [];
+          const externalTools = effectiveExternalSourceTools(
+            this.config?.security?.injection_guard?.external_source_tools ?? []
+          );
           if (externalTools.includes(event.toolName)) {
             try {
               const resultText = extractTextFromResult(toolResult);

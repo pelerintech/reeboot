@@ -62,12 +62,13 @@ describe('system-prompt contribution routed through the active provider', () => 
     const { pi, fireBeforeAgentStart } = makeMockPi();
     const alt: MemoryProvider = {
       id: 'mem0',
-      add: () => '',
-      replace: () => '',
-      remove: () => '',
-      read: () => '',
-      clear: () => {},
-      buildSystemPromptContribution: () => '[MEM0-SYSTEM-BLOCK]',
+      async store() { return { id: 'x' }; },
+      async update() {},
+      async forget() {},
+      async recall() { return []; },
+      async clear() {},
+      async grounding() { return '[MEM0-SYSTEM-BLOCK]'; },
+      listCapabilities() { return []; },
     };
     makeMemoryExtension(pi as any, baseConfig('mem0') as any, join(tmpDir, 'memories'), [alt]);
     const prompt = await fireBeforeAgentStart();

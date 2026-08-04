@@ -16,6 +16,7 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { isReebootHotMemoryEnabled } from './memory-hot-routing.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -361,6 +362,7 @@ export function makeHotMemoryExtension(
 
   // ── before_agent_start — inject hot memory block ───────────────────────
   pi.on('before_agent_start', async (event: any) => {
+    if (!isReebootHotMemoryEnabled()) return undefined;
     const content = readHotMemoryFile(memoriesDir);
     const block = buildHotMemoryBlock(content);
     if (!block) return undefined;
@@ -370,6 +372,7 @@ export function makeHotMemoryExtension(
   // ── session_shutdown — distill session into hot memory ────────────────
   pi.on('session_shutdown', async (event: any) => {
     if (event.reason !== 'new') return;
+    if (!isReebootHotMemoryEnabled()) return;
 
     try {
       const { getDb } = await import('../db/index.js');

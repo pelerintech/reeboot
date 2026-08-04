@@ -229,6 +229,9 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
   // The extension itself gates the memory tool and system prompt injection
   // on config.memory.enabled internally.
   factories.push(withAdapter(async (api) => {
+    // Register the dreem provider factory so `memory.provider='dreem'` can select it.
+    const dreem = await importExt('memory-dreem');
+    if (dreem?.registerDreemProviderFactory) dreem.registerDreemProviderFactory();
     const mod = await importExt('memory-manager');
     if (mod?.default) await (mod.default as any)(api, config);
   }));

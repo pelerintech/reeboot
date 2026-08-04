@@ -162,16 +162,77 @@ const MemoryConsolidationSchema = z.object({
   schedule: z.string().default('0 2 * * *'),
 });
 
-const MemoryConfigSchema = z.object({
-  provider: z.enum(['builtin', 'dreem', 'mem0']).default('builtin'),
-  enabled: z.boolean().default(true),
-  memoryCharLimit: z.number().int().default(2200),
-  userCharLimit: z.number().int().default(1375),
-  consolidation: MemoryConsolidationSchema.prefault(() => ({})),
+// Per-provider `providerConfig` — typed per provider, flattened, validated by
+// the discriminated union on `memory.provider`.
+const BuiltinMemoryProviderConfigSchema = z
+  .object({
+    memoryCharLimit: z.number().int().default(2200),
+    userCharLimit: z.number().int().default(1375),
+    consolidation: MemoryConsolidationSchema.prefault(() => ({})),
+  })
+  .prefault(() => ({}));
+
+const DreemMemoryProviderConfigSchema = z.object({
+  baseUrl: z.string().min(1), // sidekick endpoint (required)
+  apiKey: z.string().optional(), // optional bearer token
+  consolidationInterval: z.string().optional(), // pass-through to backend Dream schedule
+  llm: z.record(z.string(), z.unknown()).optional(), // inherited from reeboot by default
 });
+
+/**
+ * `memory` is a discriminated union on `provider` so each provider's
+ * `providerConfig` is strongly typed and holds exactly the keys it needs.
+ * A typo in `baseUrl`, an unknown `provider`, or a malformed per-provider
+ * config is rejected at parse.
+ */
+const MemoryConfigSchema = z.discriminatedUnion('provider', [
+  z.object({
+    provider: z.literal('builtin'),
+    enabled: z.boolean().default(true),
+    providerConfig: BuiltinMemoryProviderConfigSchema,
+  }),
+  z.object({
+    provider: z.literal('dreem'),
+    enabled: z.boolean().default(true),
+    providerConfig: DreemMemoryProviderConfigSchema,
+  }),
+  z.object({
+    provider: z.literal('mem0'),
+    enabled: z.boolean().default(true),
+    providerConfig: z.record(z.string(), z.unknown()).optional(), // future backend
+  }),
+]);
 
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 export type MemoryConsolidationConfig = z.infer<typeof MemoryConsolidationSchema>;
+export type BuiltinMemoryProviderConfig = z.infer<typeof BuiltinMemoryProviderConfigSchema>;
+export type DreemMemoryProviderConfig = z.infer<typeof DreemMemoryProviderConfigSchema>;
+
+/**
+ * Backward-compatible memory input: before the provider discriminated union,
+ * config stored the builtin fields flat at `memory.*` (enabled, memoryCharLimit,
+ * userCharLimit, consolidation) with NO `provider` key. Normalize such a block
+ * into the `builtin` union branch so existing configs parse cleanly (the old
+ * flat shape must remain valid — real deployments and the wizard write it).
+ */
+const MemoryConfigInputSchema = z.preprocess(
+  (val) => {
+    if (val && typeof val === 'object' && !('provider' in (val as Record<string, unknown>))) {
+      const v = val as Record<string, unknown>;
+      return {
+        provider: 'builtin',
+        enabled: v.enabled,
+        providerConfig: {
+          memoryCharLimit: v.memoryCharLimit,
+          userCharLimit: v.userCharLimit,
+          consolidation: v.consolidation,
+        },
+      };
+    }
+    return val;
+  },
+  MemoryConfigSchema
+);
 
 const SandboxConfigSchema = z.object({
   mode: z.enum(['os', 'docker']).default('os'),
@@ -366,7 +427,7 @@ export const ConfigSchema = z.object({
   permissions: PermissionsConfigSchema.prefault(() => ({})),
   security: SecurityConfigSchema.prefault(() => ({})),
   contexts: z.array(ContextConfigEntrySchema).default([]),
-  memory: MemoryConfigSchema.prefault(() => ({})),
+  memory: MemoryConfigInputSchema.prefault(() => ({ provider: 'builtin' })),
   knowledge: KnowledgeConfigSchema.prefault(() => ({})),
   resilience: ResilienceSchema.prefault(() => ({})),
   budget: BudgetConfigSchema.prefault(() => ({})),

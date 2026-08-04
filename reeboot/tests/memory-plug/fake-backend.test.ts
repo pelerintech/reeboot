@@ -27,16 +27,19 @@ function makeInMemoryProvider(): {
   return {
     provider: {
       id: 'in-memory-fake',
-      add: (_t, c) => { state.push(c); return `ok:${state.length}`; },
-      replace: (t, o, c) => {
-        const i = state.findIndex((e) => e.includes(o));
-        if (i >= 0) state[i] = c;
-        return `replace:${t}`;
+      async store(_scope, c) { state.push(c.trim()); return { id: c.trim() }; },
+      async update(_scope, ref, c) {
+        const i = state.findIndex((e) => e.includes(ref.id));
+        if (i >= 0) state[i] = c.trim();
       },
-      remove: (t) => { state.pop(); return `remove:${t}`; },
-      read: () => state.join('\n'),
-      clear: () => { state.length = 0; },
-      buildSystemPromptContribution: () => { promptBlocks.push('fake-block'); return 'FAKE-SYSTEM-BLOCK'; },
+      async forget(_scope, ref) {
+        const i = state.findIndex((e) => e.includes(ref.id));
+        if (i >= 0) state.splice(i, 1);
+      },
+      async recall(_scope) { return state.map((e) => ({ ref: { id: e }, scope: 'self' as const, content: e })); },
+      async clear() { state.length = 0; },
+      async grounding() { promptBlocks.push('fake-block'); return 'FAKE-SYSTEM-BLOCK'; },
+      listCapabilities() { return []; },
     },
     state,
     promptBlocks,

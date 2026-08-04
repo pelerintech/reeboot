@@ -12,20 +12,93 @@ import { getLogger } from './observability/logger.js';
 
 export type MemoryTarget = 'memory' | 'user';
 
+// ─── The reshaped, action-shaped contract ───────────────────────────────────
+// Memory is a pluggable backend. Exactly ONE provider is active per deployment
+// (selected by `memory.provider`). This contract is semantic and capability-
+// shaped rather than file-shaped: every operation is scoped, recall is
+// query-based, refs are opaque, and grounding is provider-owned.
+
+/**
+ * First-class singular scope axis threading through every operation.
+ * `self` = the agent's own notes; `human` = the owner profile;
+ * `both` = composite (recall merges + ranks across both).
+ */
+export const MEMORY_SCOPES = ['self', 'human', 'both'] as const;
+export type MemoryScope = (typeof MEMORY_SCOPES)[number];
+
+/**
+ * Opaque, backend-specific handle. The manager never inspects the shape.
+ * The provider owns the translation (file substring, concept path, memory id).
+ */
+export interface MemoryRef {
+  readonly id: string;
+}
+
+/** A recalled memory result. */
+export interface MemoryHit {
+  ref: MemoryRef;
+  scope: MemoryScope;
+  content: string;
+  /** Optional relevance score, set by backends that rank. */
+  score?: number;
+}
+
+/**
+ * A provider-declared optional capability, surfaced through the uniform
+ * capability registry as a namespaced tool.
+ */
+export interface CapabilityDef {
+  /** Namespaced: `memory::<providerId>::<name>` */
+  readonly name: string;
+  readonly description: string;
+  /** Tool schema (TypeBox TSchema or plain JSON schema). */
+  readonly parameters: unknown;
+  /** Stable identifier for a standard, manager-recognised declaration (e.g. `selfConsolidating`). */
+  readonly key?: string;
+  /** Minimum auth level required for this tool to be visible (permission-tier gate). */
+  readonly minAuthLevel?: 'anonymous' | 'customer' | 'admin';
+  /** Provider-owned handler invoked when the declared tool is called. */
+  execute?(params: unknown): Promise<unknown> | unknown;
+}
+
 export interface MemoryProvider {
   readonly id: string;
-  /** Add content to a target. Returns a human-readable result string. */
-  add(target: MemoryTarget, content: string): string;
-  /** Replace the entry containing `oldText` in a target. Returns a result string. */
-  replace(target: MemoryTarget, oldText: string, content: string): string;
-  /** Remove the entry matching `content` in a target. Returns a result string. */
-  remove(target: MemoryTarget, content: string): string;
-  /** Read the full current content of a target. */
-  read(target: MemoryTarget): string;
-  /** Clear a target. */
-  clear(target: MemoryTarget): void;
-  /** Contribution injected into the system prompt at session start. */
-  buildSystemPromptContribution(): string;
+
+  // core — every provider honors these
+  store(scope: MemoryScope, content: string): Promise<MemoryRef>;
+  update(scope: MemoryScope, ref: MemoryRef, content: string): Promise<void>;
+  forget(scope: MemoryScope, ref: MemoryRef): Promise<void>;
+  recall(scope: MemoryScope, query: string, limit?: number): Promise<MemoryHit[]>;
+  clear(scope: MemoryScope): Promise<void>;
+  grounding(opts?: { scope?: MemoryScope; maxChars?: number }): Promise<string>;
+
+  // optional capability surface — uniform registry
+  listCapabilities(): CapabilityDef[];
+}
+
+/**
+ * Standard, manager-recognised capability keys. `selfConsolidating` gates
+ * reeboot's own consolidation job: true → the backend's own loop owns it;
+ * false/absent → reeboot runs its job through the provider contract.
+ */
+export const STANDARD_CAPABILITIES = {
+  selfConsolidating: 'selfConsolidating',
+  hotMemory: 'hotMemory',
+} as const;
+
+/**
+ * Test whether a provider declares an optional capability matching `key`.
+ */
+export function hasCapability(provider: MemoryProvider, key: string): boolean {
+  return provider.listCapabilities().some((c) => c.key === key);
+}
+
+/**
+ * Namespace a capability name for filterability, logging, and audit attribution.
+ * @example namespaceCapability('dreem', 'graph') → 'memory::dreem::graph'
+ */
+export function namespaceCapability(providerId: string, name: string): string {
+  return `memory::${providerId}::${name}`;
 }
 
 /**
@@ -71,5 +144,34 @@ export class MemoryManager {
 
   get active(): MemoryProvider {
     return this.activeProvider;
+  }
+
+  // ── Core dispatch — routes exclusively via the provider contract (S5) ──
+  // The manager passes ONLY opaque refs + scope tokens to the active provider;
+  // it never transforms results, never inspects ref internals, never assumes
+  // backend addressing.
+
+  store(scope: MemoryScope, content: string): Promise<MemoryRef> {
+    return this.activeProvider.store(scope, content);
+  }
+  update(scope: MemoryScope, ref: MemoryRef, content: string): Promise<void> {
+    return this.activeProvider.update(scope, ref, content);
+  }
+  forget(scope: MemoryScope, ref: MemoryRef): Promise<void> {
+    return this.activeProvider.forget(scope, ref);
+  }
+  recall(scope: MemoryScope, query: string, limit?: number): Promise<MemoryHit[]> {
+    return this.activeProvider.recall(scope, query, limit);
+  }
+  clear(scope: MemoryScope): Promise<void> {
+    return this.activeProvider.clear(scope);
+  }
+  grounding(opts?: { scope?: MemoryScope; maxChars?: number }): Promise<string> {
+    return this.activeProvider.grounding(opts);
+  }
+
+  /** The active provider's declared capabilities (uniform registry). */
+  listCapabilities(): CapabilityDef[] {
+    return this.activeProvider.listCapabilities();
   }
 }
