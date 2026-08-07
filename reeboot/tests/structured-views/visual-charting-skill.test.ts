@@ -5,7 +5,7 @@ describe('Visual charting skill', () => {
     const fs = await import('fs');
     // Check the file exists and has guidelines
     const source = fs.readFileSync(
-      new URL('../../skills/visual-charting.md', import.meta.url),
+      new URL('../../skills/internal/visual-charting.md', import.meta.url),
       'utf-8'
     );
     expect(source).toContain('render_chart');

@@ -25,6 +25,7 @@ import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import type { Config } from '../config.js';
 import type { ContextConfig } from '../agent-runner/interface.js';
+import { activeSkillPaths } from '../skills/paths.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -35,7 +36,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // importExt() falls back to .ts for that case.
 const PACKAGE_ROOT = resolve(__dirname, '../../');
 const BUNDLED_EXTENSIONS_DIR = join(__dirname);
-const BUNDLED_SKILLS_DIR = join(PACKAGE_ROOT, 'skills');
 
 // ─── getBundledFactories ─────────────────────────────────────────────────────
 // Returns the list of bundled ExtensionFactory functions based on config toggles.
@@ -442,6 +442,8 @@ export function createLoader(context: ContextConfig, config: Config): ResourceLo
     agentDir,
     extensionFactories,
     additionalExtensionPaths,
-    additionalSkillPaths: [BUNDLED_SKILLS_DIR],
+    // Only enabled user skills + internal skills are handed to the SDK — never
+    // the whole catalog dir (disabled skills are hidden and can't be loaded).
+    additionalSkillPaths: activeSkillPaths(config),
   });
 }

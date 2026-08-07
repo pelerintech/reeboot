@@ -112,6 +112,8 @@ const SkillsConfigSchema = z.object({
   permanent: z.array(z.string()).default([]),
   ephemeral_ttl_minutes: z.number().int().min(1).default(60),
   catalog_path: z.string().default(''),
+  catalog_url: z.string().default(''),
+  remote_catalog_path: z.string().default(''),
 });
 export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
 

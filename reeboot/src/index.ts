@@ -858,15 +858,13 @@ skillsCmd
 
 skillsCmd
   .command('update')
-  .description('Update extended skill catalog')
+  .description('Update the curated skill catalog (fetch + install)')
   .action(async () => {
-    const { fileURLToPath } = await import('url');
-    const { dirname, join } = await import('path');
-    const { getSkillsUpdateMessage } = await import('./skills-cli.js');
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = dirname(__filename);
-    const skillsDir = join(__dirname, '..', 'skills');
-    console.log(getSkillsUpdateMessage(skillsDir));
+    const { loadConfig } = await import('./config.js');
+    const { updateSkillCatalog } = await import('./skills-cli.js');
+    const config = loadConfig();
+    const { message } = await updateSkillCatalog(config);
+    console.log(message);
     process.exit(0);
   });
 

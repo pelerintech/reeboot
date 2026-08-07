@@ -19,7 +19,7 @@ const SKILLS_DIR = resolve(__dirname, '../skills');
 function getSkillDirs(): string[] {
   if (!existsSync(SKILLS_DIR)) return [];
   return readdirSync(SKILLS_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory())
+    .filter(d => d.isDirectory() && d.name !== 'internal')
     .map(d => d.name);
 }
 
@@ -46,21 +46,11 @@ function parseFrontmatter(content: string): Record<string, string> {
 // ─── 1.1 catalog structure ───────────────────────────────────────────────────
 
 const EXPECTED_SKILLS = [
-  'docker',
-  'files',
   'gcal',
   'gdrive',
   'github',
   'gmail',
-  'hubspot',
-  'linear',
-  'notion',
-  'postgres',
-  'reeboot-tasks',
-  'send-message',
   'slack',
-  'sqlite',
-  'web-research',
 ];
 
 describe('Skills catalog structure', () => {
@@ -118,26 +108,72 @@ describe('listBundledSkills()', () => {
 
 // ─── 1.3 reeboot skills update stub ─────────────────────────────────────────
 
-import { getSkillsUpdateMessage } from '@src/skills-cli.js';
+import { updateSkillCatalog } from '@src/skills-cli.js';
 
-describe('getSkillsUpdateMessage()', () => {
-  it('returns a non-empty string', () => {
-    const msg = getSkillsUpdateMessage(SKILLS_DIR);
-    expect(typeof msg).toBe('string');
-    expect(msg.length).toBeGreaterThan(0);
+async function cliFixture() {
+  const AdmZip: any = (await import('adm-zip')).default;
+  const { mkdtempSync, rmSync } = await import('fs');
+  const { join } = await import('path');
+  const { tmpdir } = await import('os');
+  const remoteDir = mkdtempSync(join(tmpdir(), 'reeboot-cli-remote-'));
+  const stateFile = join(mkdtempSync(join(tmpdir(), 'reeboot-cli-state-')), 'skills-state.json');
+
+  const zipBuf = (name: string) => {
+    const zip = new AdmZip();
+    zip.addFile('SKILL.md', Buffer.from(`---\nname: ${name}\ndescription: CLI skill ${name}\n---\n# ${name}\n`));
+    return zip.toBuffer();
+  };
+  const zips: Record<string, Buffer> = { hubspot: zipBuf('hubspot'), notion: zipBuf('notion') };
+  const index = {
+    name: 'cli-catalog',
+    skills: [
+      { name: 'hubspot', description: 'CLI skill hubspot', version: '1.0', category: 'crm', zip: 'http://local/hubspot.zip' },
+      { name: 'notion', description: 'CLI skill notion', version: '1.0', category: 'prod', zip: 'http://local/notion.zip' },
+    ],
+    tools: [],
+  };
+  const fetcher = async (url: string) => {
+    if (url.endsWith('/index.json')) return { ok: true, json: () => Promise.resolve(index) } as any;
+    const key = url.split('/').pop()!.replace(/\.zip$/, '');
+    if (zips[key]) return { ok: true, arrayBuffer: () => Promise.resolve(zips[key].buffer.slice(zips[key].byteOffset, zips[key].byteOffset + zips[key].byteLength)) } as any;
+    return { ok: false, status: 404, json: () => Promise.resolve({}) } as any;
+  };
+  const config = {
+    skills: {
+      catalog_url: 'http://local/index.json',
+      remote_catalog_path: remoteDir,
+      enabled_state_path: stateFile,
+    },
+  } as any;
+  const cleanup = () => { rmSync(remoteDir, { recursive: true, force: true }); rmSync(join(stateFile, '..'), { recursive: true, force: true }); };
+  return { remoteDir, stateFile, fetcher, config, cleanup };
+}
+
+describe('updateSkillCatalog()', () => {
+  it('reports no remote catalog configured when catalog_url is empty', async () => {
+    const res = await updateSkillCatalog({ skills: {} } as any);
+    expect(res.ok).toBe(true);
+    expect(res.message.toLowerCase()).toContain('no remote catalog configured');
   });
 
-  it('mentions "coming soon" or "not yet available"', () => {
-    const msg = getSkillsUpdateMessage(SKILLS_DIR).toLowerCase();
-    const hasComing = msg.includes('coming soon') || msg.includes('not yet available');
-    expect(hasComing, `update message should mention upcoming feature: "${msg}"`).toBe(true);
+  it('fetches + installs available skills against a fixture catalog', async () => {
+    const f = await cliFixture();
+    try {
+      const res = await updateSkillCatalog(f.config, { fetcher: f.fetcher });
+      expect(res.ok).toBe(true);
+      expect(res.message).toMatch(/Installed: hubspot, notion/);
+      expect(existsSync(join(f.remoteDir, 'hubspot', 'SKILL.md'))).toBe(true);
+      expect(existsSync(join(f.remoteDir, 'notion', 'SKILL.md'))).toBe(true);
+    } finally { f.cleanup(); }
   });
 
-  it('includes the count of bundled skills', () => {
-    const msg = getSkillsUpdateMessage(SKILLS_DIR);
-    // Derive from the live catalog, never a hardcoded number (anti-drift).
-    const liveCount = listBundledSkills(SKILLS_DIR).length;
-    expect(msg).toContain(String(liveCount));
+  it('surfaces a fetch failure', async () => {
+    const f = await cliFixture();
+    try {
+      const res = await updateSkillCatalog(f.config, { fetcher: async () => ({ ok: false, status: 500 } as any) });
+      expect(res.ok).toBe(false);
+      expect(res.message).toMatch(/500/i);
+    } finally { f.cleanup(); }
   });
 });
 

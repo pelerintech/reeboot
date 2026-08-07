@@ -18,6 +18,8 @@ import { Type } from 'typebox';
 import type { ExtensionAPI } from './extension-api.js';
 import type { Config } from '../src/config.js';
 import { getLogger } from '../observability/logger.js';
+import { createSkillsStore } from '../skills/enabled-store.js';
+import { listUserSkills, isInternalSkillName } from '../skills/catalog.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -232,6 +234,11 @@ export function skillManagerExtension(
   const store = new ActiveSkillStore();
   const catalogRoots = resolveCatalogRoots(config);
 
+  // Enabled-set store — live-read per call. Defaults to all user-facing skills
+  // enabled (bundled + uploaded); toggling any skill persists the file, which
+  // then becomes authoritative. No restart needed.
+  const enabledStore = () => createSkillsStore(config);
+
   // ── Restore persisted active skills on startup ────────────────────────────
   const restored = restoreStore(persistPath, Date.now());
   if (restored.length > 0) {
@@ -315,6 +322,19 @@ export function skillManagerExtension(
         };
       }
 
+      // Gate on the enabled set (live). Internal/harness skills are always
+      // available; everything else must be enabled.
+      if (!isInternalSkillName(skillName) && !enabledStore().isEnabled(skillName)) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `skill "${skillName}" is not available (disabled)`,
+            },
+          ],
+        };
+      }
+
       const meta = readSkillMeta(skillDir);
       const description = meta?.description ?? skillName;
 
@@ -392,29 +412,12 @@ export function skillManagerExtension(
     async execute(_id: string, params: any, _signal: any, _onUpdate: any, _ctx: any) {
       const query: string | undefined = params.query;
 
-      // Scan all catalog roots for skills
-      const allSkills: Array<{ name: string; description: string }> = [];
-      const seen = new Set<string>();
-
-      for (const root of catalogRoots) {
-        if (!existsSync(root)) continue;
-        try {
-          const entries = readdirSync(root, { withFileTypes: true });
-          for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            const skillDir = join(root, entry.name);
-            const skillMdPath = join(skillDir, 'SKILL.md');
-            if (!existsSync(skillMdPath)) continue;
-            const meta = readSkillMeta(skillDir);
-            if (!meta) continue;
-            if (seen.has(meta.name)) continue; // bundled takes priority
-            seen.add(meta.name);
-            allSkills.push({ name: meta.name, description: meta.description });
-          }
-        } catch {
-          // Root not accessible — skip
-        }
-      }
+      // Only enabled user-facing skills are available.
+      const userSkills = listUserSkills(config);
+      const store = enabledStore();
+      const allSkills = userSkills
+        .filter((s) => store.isEnabled(s.name))
+        .map((s) => ({ name: s.name, description: s.description }));
 
       // Apply keyword filter if provided
       let results = allSkills;

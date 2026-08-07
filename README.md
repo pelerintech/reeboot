@@ -37,7 +37,7 @@ First run launches the setup wizard. Subsequent runs start the agent directly.
 | **Resilience** | Crash recovery, outage detection, scheduler catchup on restart |
 | **Multi-context** | Separate conversation threads (work, personal, projects) |
 | **Extensions** | Pi-compatible TypeScript extensions — tools, hooks, custom prompts |
-| **Skills** | 15 bundled Markdown skill files; load more on demand |
+| **Skills** | Bundled + user-uploaded skills, managed live from the web UI |
 | **Packages** | Install community tool packages: `reeboot install npm:reeboot-github-tools` |
 | **Sandbox** | OS-level confinement for bash tool execution (macOS + Linux) |
 | **Daemon mode** | Run as a background service (launchd on macOS, systemd on Linux) |

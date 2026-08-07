@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bundle-lean skill catalog** — the shipped user-facing catalog is pruned from
+  12 to a lean core of 5 (`gmail`, `gcal`, `slack`, `github`, `gdrive`); the 7 cut
+  skills (notion, linear, docker, postgres, sqlite, hubspot, files) are relocated
+  into an independent **remote curated catalog** (operator-configured via
+  `skills.catalog_url`) and installed on demand. `reeboot skills update` now
+  fetches + installs (replacing the count-only stub), skills land with a third
+  `remote` source (`bundled | user | remote`), and the Skills page gains a
+  catalog browse/install section alongside the existing toggle/upload/remove.
 - **Multi-user support for the ree SDK** — a single process can now serve many concurrent, mutually-private customer conversations, each an isolated chat with its own history, created on demand from a client-supplied conversation id.
 - **Observability audit view** — a new turn-grouped Activity page (backed by a `GET /api/events` endpoint) that gives the operator a window into what the agent did over time and why each task succeeded or failed.
 

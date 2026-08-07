@@ -5,6 +5,13 @@
 
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import {
+  configuredCatalogUrl,
+  fetchCatalogIndex,
+  listAvailable,
+  installCatalogSkill,
+} from './skills/remote-catalog.js';
+import type { Config } from './config.js';
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -38,14 +45,48 @@ export function listBundledSkills(skillsDir: string): SkillEntry[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// ─── getSkillsUpdateMessage ───────────────────────────────────────────────────
+// ─── updateSkillCatalog ──────────────────────────────────────────────────
 
 /**
- * Return the stub message for `reeboot skills update`.
+ * Fetch + install the curated remote catalog for `reeboot skills update`.
+ * Reads the catalog address from `config.skills.catalog_url` (never hardcoded).
+ * If unset, reports "no remote catalog configured" without erroring.
+ * Returns a summary ready for the CLI to print; exit code is the caller's
+ * concern (command keeps exit 0, matching the previous stub).
  */
-export function getSkillsUpdateMessage(skillsDir: string): string {
-  const count = listBundledSkills(skillsDir).length;
-  return `Extended skill catalog update coming soon. Currently using ${count} bundled skills.`;
+export async function updateSkillCatalog(
+  config?: Config,
+  deps: { fetcher?: (u: string) => Promise<Response> } = {}
+): Promise<{ ok: boolean; message: string }> {
+  const url = configuredCatalogUrl(config);
+  if (!url) {
+    return {
+      ok: true,
+      message: 'No remote catalog configured. Set skills.catalog_url in config.json to enable the curated catalog.',
+    };
+  }
+
+  const fetched = await fetchCatalogIndex(url, deps.fetcher);
+  if (!fetched.ok || !fetched.index) {
+    return { ok: false, message: fetched.error ?? 'Catalog fetch failed' };
+  }
+
+  const available = listAvailable(fetched.index, config);
+  const skipped = available.filter((e) => e.collision).map((e) => e.name);
+  const installed: string[] = [];
+  const failed: string[] = [];
+  for (const entry of available) {
+    if (entry.collision) continue;
+    const res = await installCatalogSkill(entry.name, { index: fetched.index, config, fetcher: deps.fetcher });
+    if (res.ok && res.name) installed.push(res.name);
+    else failed.push(entry.name);
+  }
+
+  let message = `Fetched ${available.length} catalog entries.`;
+  message += installed.length ? ` Installed: ${installed.join(', ')}.` : ' Nothing to install.';
+  if (skipped.length) message += ` Skipped (already present): ${skipped.join(', ')}.`;
+  if (failed.length) message += ` Failed: ${failed.join(', ')}.`;
+  return { ok: failed.length === 0, message };
 }
 
 // ─── printSkillsList ──────────────────────────────────────────────────────────

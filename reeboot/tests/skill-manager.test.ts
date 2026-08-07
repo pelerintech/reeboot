@@ -383,10 +383,10 @@ describe('1.3 unload_skill tool', () => {
 // ─── 1.4 list_available_skills Tool Tests ────────────────────────────────────
 
 describe('1.4 list_available_skills tool', () => {
-  it('returns name + description for all catalog skills without loading them', async () => {
+  it('returns name + description for all enabled catalog skills without loading them', async () => {
     const catalogDir = join(tmpDir, 'catalog');
-    makeSkillDir(catalogDir, 'github', 'GitHub integration');
-    makeSkillDir(catalogDir, 'notion', 'Notion workspace');
+    makeSkillDir(catalogDir, 'alpha-gear', 'Alpha gear integration');
+    makeSkillDir(catalogDir, 'beta-gear', 'Beta gear workspace');
     const persistPath = join(tmpDir, 'active-skills.json');
 
     const { skillManagerExtension } = await import('../extensions/skill-manager.js');
@@ -402,11 +402,11 @@ describe('1.4 list_available_skills tool', () => {
     const skills = JSON.parse(result.content[0].text);
     expect(Array.isArray(skills)).toBe(true);
     const names = skills.map((s: any) => s.name);
-    expect(names).toContain('github');
-    expect(names).toContain('notion');
+    expect(names).toContain('alpha-gear');
+    expect(names).toContain('beta-gear');
     // descriptions present
-    const github = skills.find((s: any) => s.name === 'github');
-    expect(github.description).toBe('GitHub integration');
+    const alpha = skills.find((s: any) => s.name === 'alpha-gear');
+    expect(alpha.description).toBe('Alpha gear integration');
   });
 
   it('filters by keyword (case-insensitive substring match on name or description)', async () => {
@@ -425,11 +425,10 @@ describe('1.4 list_available_skills tool', () => {
     const tool = mockPi._tools['list_available_skills'];
     const result = await tool.execute('id1', { query: 'github' }, null, null, {});
     const skills = JSON.parse(result.content[0].text);
-    expect(skills).toHaveLength(1);
-    expect(skills[0].name).toBe('github');
+    expect(skills.map((s: any) => s.name)).toContain('github');
   });
 
-  it('returns empty list when catalog is empty', async () => {
+  it('returns a non-empty bundled catalog even when catalog_path is empty', async () => {
     const catalogDir = join(tmpDir, 'catalog');
     mkdirSync(catalogDir, { recursive: true });
     const persistPath = join(tmpDir, 'active-skills.json');
@@ -443,7 +442,9 @@ describe('1.4 list_available_skills tool', () => {
     const tool = mockPi._tools['list_available_skills'];
     const result = await tool.execute('id1', {}, null, null, {});
     const skills = JSON.parse(result.content[0].text);
-    expect(skills).toHaveLength(0);
+    // Bundled user-facing skills are available by default (enabled set).
+    expect(skills.length).toBeGreaterThan(0);
+    expect(skills.map((s: any) => s.name)).toContain('github');
   });
 
   it('returns empty list when query has no matches', async () => {
@@ -465,8 +466,8 @@ describe('1.4 list_available_skills tool', () => {
 
   it('filters by description match as well', async () => {
     const catalogDir = join(tmpDir, 'catalog');
-    makeSkillDir(catalogDir, 'github', 'GitHub integration');
-    makeSkillDir(catalogDir, 'notion', 'Notion workspace tool');
+    makeSkillDir(catalogDir, 'alpha-gear', 'Alpha gear workspace tool');
+    makeSkillDir(catalogDir, 'beta-gear', 'Beta gear unique zzqtoken');
     const persistPath = join(tmpDir, 'active-skills.json');
 
     const { skillManagerExtension } = await import('../extensions/skill-manager.js');
@@ -476,10 +477,9 @@ describe('1.4 list_available_skills tool', () => {
     skillManagerExtension(mockPi as any, config as any, persistPath);
 
     const tool = mockPi._tools['list_available_skills'];
-    const result = await tool.execute('id1', { query: 'workspace' }, null, null, {});
+    const result = await tool.execute('id1', { query: 'zzqtoken' }, null, null, {});
     const skills = JSON.parse(result.content[0].text);
-    expect(skills).toHaveLength(1);
-    expect(skills[0].name).toBe('notion');
+    expect(skills.map((s: any) => s.name)).toEqual(['beta-gear']);
   });
 });
 
@@ -934,5 +934,89 @@ describe('3.x findSkill and readSkillMeta', () => {
     const removed = store.pruneExpired();
     expect(removed).toContain('github');
     expect(store.getActive()).toHaveLength(0);
+  });
+});
+
+// ─── Task 8: Enabled-set gating (live) ───────────────────────────────────────
+
+describe('8. Enabled-set gating', () => {
+  it('list_available_skills omits disabled skills and includes enabled ones', async () => {
+    const catalogDir = join(tmpDir, 'catalog');
+    makeSkillDir(catalogDir, 'alpha-gear', 'Alpha gear');
+    makeSkillDir(catalogDir, 'beta-gear', 'Beta gear');
+    const statePath = join(tmpDir, 'skills-state.json');
+    const persistPath = join(tmpDir, 'active-skills.json');
+
+    const { skillManagerExtension } = await import('../extensions/skill-manager.js');
+    const mockPi = makeMockPi();
+    const config = makeConfig({
+      skills: { catalog_path: catalogDir, enabled_state_path: statePath },
+    });
+
+    skillManagerExtension(mockPi as any, config as any, persistPath);
+
+    // Disable alpha-gear via the shared enabled store (simulates a UI toggle).
+    const { EnabledSkillsStore } = await import('../src/skills/enabled-store.js');
+    const store = new EnabledSkillsStore(statePath, config, ['alpha-gear', 'beta-gear']);
+    store.setEnabled('alpha-gear', false);
+
+    const list = mockPi._tools['list_available_skills'];
+    const result = await list.execute('id1', {}, null, null, {});
+    const skills = JSON.parse(result.content[0].text);
+    const names = skills.map((s: any) => s.name);
+    expect(names).toContain('beta-gear');
+    expect(names).not.toContain('alpha-gear');
+  });
+
+  it('load_skill errors for a disabled skill', async () => {
+    const catalogDir = join(tmpDir, 'catalog');
+    makeSkillDir(catalogDir, 'alpha-gear', 'Alpha gear');
+    const statePath = join(tmpDir, 'skills-state.json');
+    const persistPath = join(tmpDir, 'active-skills.json');
+
+    const { skillManagerExtension } = await import('../extensions/skill-manager.js');
+    const mockPi = makeMockPi();
+    const config = makeConfig({
+      skills: { catalog_path: catalogDir, enabled_state_path: statePath },
+    });
+
+    skillManagerExtension(mockPi as any, config as any, persistPath);
+
+    const { EnabledSkillsStore } = await import('../src/skills/enabled-store.js');
+    const store = new EnabledSkillsStore(statePath, config, ['alpha-gear']);
+    store.setEnabled('alpha-gear', false);
+
+    const load = mockPi._tools['load_skill'];
+    const result = await load.execute('id1', { name: 'alpha-gear' }, null, null, {});
+    expect(result.content[0].text).toMatch(/not available|disabled/i);
+  });
+
+  it('observes an enable made mid-run on the very next call (live, no re-init)', async () => {
+    const catalogDir = join(tmpDir, 'catalog');
+    makeSkillDir(catalogDir, 'alpha-gear', 'Alpha gear');
+    const statePath = join(tmpDir, 'skills-state.json');
+    const persistPath = join(tmpDir, 'active-skills.json');
+
+    const { skillManagerExtension } = await import('../extensions/skill-manager.js');
+    const mockPi = makeMockPi();
+    const config = makeConfig({
+      skills: { catalog_path: catalogDir, enabled_state_path: statePath },
+    });
+
+    skillManagerExtension(mockPi as any, config as any, persistPath);
+
+    // Initially disabled.
+    const { EnabledSkillsStore } = await import('../src/skills/enabled-store.js');
+    const store = new EnabledSkillsStore(statePath, config, ['alpha-gear']);
+    store.setEnabled('alpha-gear', false);
+
+    const list = mockPi._tools['list_available_skills'];
+    const before = JSON.parse((await list.execute('id1', {}, null, null, {})).content[0].text);
+    expect(before.map((s: any) => s.name)).not.toContain('alpha-gear');
+
+    // Enable mid-run — the existing extension instance must see it immediately.
+    store.setEnabled('alpha-gear', true);
+    const after = JSON.parse((await list.execute('id2', {}, null, null, {})).content[0].text);
+    expect(after.map((s: any) => s.name)).toContain('alpha-gear');
   });
 });

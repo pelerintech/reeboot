@@ -3,8 +3,9 @@ import Chat from './pages/Chat';
 import Channels from './pages/Channels';
 import Logs from './pages/Logs';
 import Settings from './pages/Settings';
+import Skills from './pages/Skills';
 
-type Tab = 'chat' | 'channels' | 'logs' | 'settings';
+type Tab = 'chat' | 'channels' | 'logs' | 'settings' | 'skills';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
@@ -73,6 +74,16 @@ export default function App() {
         </svg>
       ),
     },
+    {
+      id: 'skills',
+      label: 'Skills',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+      ),
+    },
   ];
 
   return (
@@ -108,6 +119,7 @@ export default function App() {
         {activeTab === 'channels' && <div className="h-full animate-fade-in"><Channels /></div>}
         {activeTab === 'logs' && <div className="h-full animate-fade-in"><Logs onIncrementErrorBadge={incrementErrorBadge} /></div>}
         {activeTab === 'settings' && <div className="h-full animate-fade-in"><Settings /></div>}
+        {activeTab === 'skills' && <div className="h-full animate-fade-in"><Skills /></div>}
       </main>
 
       {/* Mobile bottom nav */}

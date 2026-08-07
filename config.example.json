@@ -115,7 +115,9 @@
   "skills": {
     "permanent": [],
     "ephemeral_ttl_minutes": 60,
-    "catalog_path": ""
+    "catalog_path": "",
+    "catalog_url": "",
+    "remote_catalog_path": ""
   },
   "$comment_a2a": "A2A (Agent-to-Agent) protocol — cross-process agent delegation.",
   "a2a": {

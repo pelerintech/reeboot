@@ -111,6 +111,18 @@ function extractToken(c: any): string | undefined {
   return c.req.query('token') ?? undefined;
 }
 
+/**
+ * Skills REST auth gate — mirrors the WS guard. When a token is configured,
+ * non-loopback requests must present it (Bearer header or `token` query).
+ */
+function skillsAuthOk(c: any, opts: { token?: string }): boolean {
+  const serverToken = opts.token;
+  if (!serverToken) return true; // no token configured → allow
+  const clientIp = (c.env as any)?.incoming?.socket?.remoteAddress ?? '';
+  if (isLoopback(clientIp)) return true;
+  return extractToken(c) === serverToken;
+}
+
 // ─── buildApp ──────────────────────────────────────────────────────────────
 
 /** Build the full Hono app (routes + WS handlers) without binding a socket. */
@@ -494,6 +506,154 @@ export async function buildApp(opts: ServerOptions = {}): Promise<Hono> {
       channels: [],
       uptime: Math.floor((Date.now() - startTime) / 1000),
     });
+  });
+
+  // ── Skills REST API ─────────────────────────────────────────────────────
+
+  // GET /api/skills — list all user-facing skills (bundled + uploaded),
+  // excluding internal/harness skills, with enabled state from the store.
+  app.get('/api/skills', async (c) => {
+    if (!skillsAuthOk(c, opts)) return c.json({ error: 'Unauthorized' }, 401);
+    const name = c.req.query('name');
+    if (name) {
+      const { findUserSkill, readSkillMeta } = await import('./skills/catalog.js');
+      const dir = findUserSkill(name, opts.config as any);
+      if (!dir) return c.json({ error: 'skill not found' }, 404);
+      const meta = readSkillMeta(dir);
+      if (!meta) return c.json({ error: 'skill metadata missing' }, 404);
+      return c.json(meta);
+    }
+    const { listUserSkills, isInternalSkillName } = await import('./skills/catalog.js');
+    const { createSkillsStore } = await import('./skills/enabled-store.js');
+    const store = createSkillsStore(opts.config as any);
+    const skills = listUserSkills(opts.config as any)
+      .filter((s: any) => !isInternalSkillName(s.name))
+      .map((s: any) => ({
+        name: s.name,
+        description: s.description,
+        source: s.source,
+        enabled: store.isEnabled(s.name),
+      }));
+    return c.json(skills);
+  });
+
+  // PUT /api/skills — set a skill's enabled state; persists. Rejects internal.
+  app.put('/api/skills', async (c) => {
+    if (!skillsAuthOk(c, opts)) return c.json({ error: 'Unauthorized' }, 401);
+    const { isInternalSkillName, findUserSkill } = await import('./skills/catalog.js');
+    const { createSkillsStore } = await import('./skills/enabled-store.js');
+    let body: any;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+    const name: string = body?.name;
+    const enabled: boolean = body?.enabled;
+    if (!name || typeof enabled !== 'boolean') {
+      return c.json({ error: 'Missing required fields: name, enabled' }, 400);
+    }
+    if (isInternalSkillName(name)) {
+      return c.json({ error: 'Internal skills cannot be managed' }, 400);
+    }
+    if (!findUserSkill(name, opts.config as any)) {
+      return c.json({ error: 'skill not found' }, 404);
+    }
+    const store = createSkillsStore(opts.config as any);
+    store.setEnabled(name, enabled);
+    return c.json({ name, enabled });
+  });
+
+  // POST /api/skills/upload — validate + promote a skill zip; adds to enabled.
+  app.post('/api/skills/upload', async (c) => {
+    if (!skillsAuthOk(c, opts)) return c.json({ error: 'Unauthorized' }, 401);
+    const { createSkillsStore } = await import('./skills/enabled-store.js');
+    const { promoteSkillZip } = await import('./skills/upload.js');
+    let body: any;
+    try {
+      body = await c.req.parseBody();
+    } catch {
+      return c.json({ error: 'Invalid upload body' }, 400);
+    }
+    const file = body?.file;
+    if (!(file instanceof File) && !(file && typeof file.arrayBuffer === 'function')) {
+      return c.json({ error: 'Missing file field' }, 400);
+    }
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(await file.arrayBuffer());
+    } catch {
+      return c.json({ error: 'Could not read uploaded file' }, 400);
+    }
+    const result = promoteSkillZip(buf, opts.config as any);
+    if (!result.ok || !result.name) {
+      return c.json({ error: result.error }, 400);
+    }
+    const store = createSkillsStore(opts.config as any);
+    store.setEnabled(result.name, true);
+    return c.json({ name: result.name, description: result.description, source: 'user', enabled: true }, 201);
+  });
+
+  // DELETE /api/skills/:name — remove a user-uploaded or remote skill.
+  // Bundled/internal rejected (decision D6).
+  app.delete('/api/skills/:name', async (c) => {
+    if (!skillsAuthOk(c, opts)) return c.json({ error: 'Unauthorized' }, 401);
+    const name = c.req.param('name')!;
+    const { isInternalSkillName, findDeletableSkill } = await import('./skills/catalog.js');
+    const { createSkillsStore } = await import('./skills/enabled-store.js');
+    if (isInternalSkillName(name)) {
+      return c.json({ error: 'Internal skills cannot be managed' }, 400);
+    }
+    const entry = findDeletableSkill(name, opts.config as any);
+    if (!entry) {
+      return c.json({ error: 'Bundled skills cannot be deleted, or skill not found' }, 400);
+    }
+    const { rmSync } = await import('fs');
+    try {
+      rmSync(entry.skillDir, { recursive: true, force: true });
+    } catch {
+      return c.json({ error: 'Failed to delete skill' }, 500);
+    }
+    const store = createSkillsStore(opts.config as any);
+    store.setEnabled(name, false);
+    return c.json({ name, deleted: true });
+  });
+
+  // GET /api/skills/catalog — browse available remote catalog entries.
+  app.get('/api/skills/catalog', async (c) => {
+    if (!skillsAuthOk(c, opts)) return c.json({ error: 'Unauthorized' }, 401);
+    const config = opts.config as any;
+    const { configuredCatalogUrl, fetchCatalogIndex, listAvailable } = await import('./skills/remote-catalog.js');
+    const url = configuredCatalogUrl(config);
+    if (!url) return c.json({ error: 'No remote catalog configured' }, 400);
+    const fetched = await fetchCatalogIndex(url);
+    if (!fetched.ok || !fetched.index) return c.json({ error: fetched.error ?? 'Catalog fetch failed' }, 502);
+    return c.json(listAvailable(fetched.index, config));
+  });
+
+  // POST /api/skills/catalog/install — install a remote catalog skill by name.
+  app.post('/api/skills/catalog/install', async (c) => {
+    if (!skillsAuthOk(c, opts)) return c.json({ error: 'Unauthorized' }, 401);
+    const config = opts.config as any;
+    const { configuredCatalogUrl, fetchCatalogIndex, installCatalogSkill } = await import('./skills/remote-catalog.js');
+    const url = configuredCatalogUrl(config);
+    if (!url) return c.json({ error: 'No remote catalog configured' }, 400);
+    let body: any;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+    const name: string = body?.name;
+    if (!name || typeof name !== 'string') return c.json({ error: 'Missing required field: name' }, 400);
+    const fetched = await fetchCatalogIndex(url);
+    if (!fetched.ok || !fetched.index) return c.json({ error: fetched.error ?? 'Catalog fetch failed' }, 502);
+    const res = await installCatalogSkill(name, { index: fetched.index, config });
+    if (!res.ok || !res.name) return c.json({ error: res.error }, 400);
+    return c.json(
+      { name: res.name, description: res.description, source: res.source, enabled: res.enabled },
+      201
+    );
   });
 
   // ── Channel REST API ────────────────────────────────────────────────────

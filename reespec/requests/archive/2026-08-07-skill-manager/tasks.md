@@ -50,9 +50,9 @@
 ## 10. Integration & Documentation
 
 - [x] 10.1 Run full test suite — all 1.1–1.7 tests green; no regressions in existing 344 tests
-- [ ] 10.2 Manual smoke test (permanent skills): add `github` to `config.skills.permanent`, start agent, ask "what skills do you have?", verify github skill description appears
-- [ ] 10.3 Manual smoke test (ephemeral load): ask agent "load the notion skill for 30 minutes", verify it calls `load_skill("notion", 30)`, verify notion description appears in next turn's context
-- [ ] 10.4 Manual smoke test (TTL expiry): load a skill with `ttl_minutes: 1`, wait 2 minutes (advance fake clock in test), verify skill no longer in context
-- [ ] 10.5 Manual smoke test (persistence): load a skill, restart server, verify skill is still active with reduced TTL
-- [ ] 10.6 Update `README.md`: document `config.skills` block, permanent vs ephemeral skills, the three agent tools, and how to add skills to the bundled catalog
+- [x] 10.2 Manual smoke test (permanent skills): add `github` to `config.skills.permanent`, start agent, ask "what skills do you have?", verify github skill description appears
+- [x] 10.3 Manual smoke test (ephemeral load): ask agent "load the notion skill for 30 minutes", verify it calls `load_skill("notion", 30)`, verify notion description appears in next turn's context
+- [x] 10.4 Manual smoke test (TTL expiry): load a skill with `ttl_minutes: 1`, wait 2 minutes (advance fake clock in test), verify skill no longer in context
+- [x] 10.5 Manual smoke test (persistence): load a skill, restart server, verify skill is still active with reduced TTL
+- [x] 10.6 Update `README.md`: document `config.skills` block, permanent vs ephemeral skills, the three agent tools, and how to add skills to the bundled catalog
 - [x] 10.7 Log key decisions to `architecture-decisions.md`: skill TTL lifecycle model, `before_agent_start` vs `resources_discover` for ephemeral skills, `active-skills.json` persistence format, catalog resolution order

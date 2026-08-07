@@ -1,4 +1,4 @@
-type Tab = 'chat' | 'channels' | 'logs' | 'settings';
+type Tab = 'chat' | 'channels' | 'logs' | 'settings' | 'skills';
 
 interface TabConfig {
   id: Tab;
@@ -11,6 +11,7 @@ const tabs: TabConfig[] = [
   { id: 'channels', label: 'Channels', icon: '📡' },
   { id: 'logs', label: 'Logs', icon: '📋' },
   { id: 'settings', label: 'Settings', icon: '⚙️' },
+  { id: 'skills', label: 'Skills', icon: '🧩' },
 ];
 
 interface NavigationProps {

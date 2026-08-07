@@ -39,6 +39,30 @@ See request artifacts for full context.
 
 <!-- decisions below this line -->
 
+### resolveUserCatalogRoots returns {root, source} tuples, not string[] — 2026-08-07 (Request: bundle-lean-catalog)
+
+To add the third remote source, `resolveUserCatalogRoots()` was changed from returning `string[]` (bundled, uploads) to an array of `{ root, source }` tuples tagged with `bundled | remote | user`, in order (bundled → remote → uploads). This lets `listUserSkills` collate all three sources with correct source-tagging, and lets `findDeletableSkill` walk the non-bundled roots (D6). Any future caller/consumer of `resolveUserCatalogRoots` must read `.root` from each entry, not the array as a flat list of strings. Kept SDK-agnostic (no pi/ree imports).
+
+### Catalog repo configured locally, push deferred to operator credentials — 2026-08-07 (Request: bundle-lean-catalog)
+
+The independent catalog repo (`~/p/pel/ree/catalog`) was provisioned on disk (skills/ with 7 dirs + valid SKILL.md frontmatter, tools/scripts/validate.mjs, index.json, per-skill zips under zips/, git repo with `origin` set to https://github.com/pelerintech/reeboot-catalog.git) but **not pushed** — actual publish requires operator credentials/network. This is fine because the catalog address is operator-configurable via `skills.catalog_url` (D2, never hardcoded); nothing in reeboot depends on the specific repo being reachable at build/test time (the fetch/install domain is driven against local fixtures in tests). An operator points `catalog_url` at any published manifest; the `zips/` per-skill zips + raw GitHub `zip` URLs are the default example seed, not a coupling.
+
+### Skill enabled-set filter is SDK-agnostic; delivery is a per-SDK seam — 2026-08-07 (Request: skill-manager)
+
+The UI-driven enabled set and the "compute active skill paths" filter live at the reeboot layer, shared by all SDKs — one implementation. Only the delivery seam (how chosen skill paths are advertised into a given SDK's prompt) is per-SDK. For pi mode that seam exists today: filter `additionalSkillPaths` + feed enabled paths via `resources_discover`. For the ree SDK it does not yet exist (the ReeExtensionAdapter supports the full reeboot ExtensionAPI — `registerTool`/`on`/etc. — but the ReeChat runtime never emits `resources_discover` and the loader hands it no skill paths), so porting later means adding that delivery seam (emit `resources_discover` on the ReeChat emitter + consume skillPaths in the ReeRuntime prompt builder + register the skill-manager extension through the ReeExtensionAdapter) while reusing the enabled-set store and filter untouched. Skills are NOT required in ree mode for this request. Constraint: never bake the filtering into the pi loader path, or a future SDK forces a redo.
+
+### Harness/internal skills are physically separated from the user catalog — 2026-08-07 (Request: skill-manager)
+
+Skills split into two domains by folder, not metadata: internal/harness skills (visual-charting, visual-planning, web-research, send-message, reeboot-tasks — capabilities that drive the harness in relation to core tools) live in a separate folder outside the user catalog, are always-in-context, and are never user-manageable or shown in the UI. The user catalog contains only user-facing extension skills (bundled: github/gmail/hubspot/slack/... plus user-uploaded), which are toggleable. Making the boundary structural (separate directories) rather than a frontmatter flag means "everything in the catalog is user-manageable" is true by construction, and both domains stay independently extensible.
+
+### User-facing skills: enabled set replaces config-driven permanent; live-read, load-on-demand — 2026-08-07 (Request: skill-manager)
+
+For all user-facing skills, a UI-curated enabled set replaces `config.skills.permanent` as the availability model, and is read live (list_available_skills/load_skill consult it per call) so toggling takes effect next turn with no restart. Enabled skills are never pre-injected — they load on demand via the existing ephemeral TTL path. The only "always in context" skills are internal/harness ones, which live outside the catalog entirely. Note: today pi advertises the whole bundled catalog into context via `additionalSkillPaths` (loader.ts:445), so making "enabled = available but not advertised" real requires changing how the loader hands skill paths to pi, not just the UI.
+
+### Skill upload: package validated, content delegated to security policy — 2026-08-07 (Request: skill-manager)
+
+User skill uploads arrive as a zip with SKILL.md + helper files at the archive root. Validation is split into two layers. Layer 1 (the package) is solved in-feature: inspect the zip's central directory before unpacking — reject path traversal/`..` entries, decompression-bomb ratios, cap entry count + total expanded bytes, allowlist file types, reject symlinks — then extract to a temp dir, re-validate (SKILL.md present, frontmatter parses), and promote into the catalog. Layer 2 (what a skill intends) is NOT validated at upload; content trust is explicitly delegated to the existing agent security/context policies. Name collisions on upload are rejected with an error (no shadowing).
+
 ### Direct-entry guard on the CLI entrypoint — 2026-05-25 (Request: ci-zod4-fix)
 
 `src/index.ts` called `program.parse(process.argv)` unconditionally at module load, so
@@ -743,3 +767,50 @@ The 21:15 evaluation follow-up confirmed three divergences from Option B and thi
 3. **No `LIMIT 200` on the session transcript.** The `session_shutdown` handler capped the forwarded conversation at the last 200 messages; the contract says "full conversation transcript". The cap was an inherited idiom from hot-memory/consolidation-mining, not a decision. Removed — the manager forwards the full messages-log transcript and lets the provider distill/truncate internally (builtin `text.slice`, dreem ingests raw). `session-end.test.ts` now injects 250 rows and asserts all 250 are forwarded.
 
 See decisions "Everything is hot first; one store action, source-signalled (Option B)" and the memory-manager/builtin-provider specs.
+
+### Enabled set is default-on (bundled skills enabled unless disabled) — 2026-08-07 (Request: skills-ui)
+
+The enabled-set store persisted only the `{ enabled: string[] }` list, but the
+availability default needed to be **all user-facing skills on**. Rejected "default
+off" (empty enabled list) because it would hide every bundled skill at fresh install
+and break the existing convention that users discover skills immediately. Implemented
+`EnabledSkillsStore` with an explicit `defaultNames` list (the full user catalog
+from `listUserSkills`): when no state file exists the store returns the defaults;
+the first toggle persists the file which then becomes authoritative. Both the REST
+layer (`createSkillsStore`) and the skill-manager extension build the store with the
+same default catalogue, so they agree on a single live source of truth. See request
+artifacts for full context.
+
+### `src/skills/` is the shared SDK-agnostic skills domain; the legacy `extensions/` copy is broken — 2026-08-07 (Request: skills-ui)
+
+The runtime skill-manager lives in `src/extensions/skill-manager.ts`; tests imported
+`../extensions/skill-manager.ts` (a legacy copy whose `PACKAGE_ROOT` resolves one level
+too high, so it never saw the bundled catalogue). Rather than entrench the broken copy,
+all new domain logic (catalog boundary, enabled store, zip validation, active paths)
+was built in `src/skills/` — SDK-agnostic, no pi/ree imports — and wired into both the
+server routes and both skill-manager copies. The three `list_available_skills` tests
+written against the old (outdated) behavior were updated to the enabled-set model. A
+future cleanup should delete the redundant top-level `extensions/` copy. See request artifacts.
+
+### Zip upload validation added as a direct dependency (adm-zip) — 2026-08-07 (Request: skills-ui)
+
+Layer-1 package validation needed central-directory inspection and bounded extraction.
+No zip library was a direct dependency (`adm-zip` existed only as a transitive dep of
+onnxruntime-node). Added `adm-zip@^0.5.16` as a direct dependency and shipped a minimal
+ambient `src/skills/adm-zip.d.ts` (no `@types/adm-zip`). Validation runs on the central
+directory before any extraction; extraction is bounded (entry count, expanded size,
+ratio caps, allowlisted types, traversal rejection). See request artifacts.
+
+### Zip-validation rejects unix special entries via external-attribute mode bits — 2026-08-07 (Request: skills-ui)
+
+Post-evaluation gap remediation for UP-6 (symlink entries must be rejected). `validateSkillZip`
+now detects unix special entries — symlink (S_IFLNK 0xA000), char/block device, FIFO, socket —
+by reading the unix file type from the upper 16 bits of each entry's external file attributes
+(`(attr >>> 0) >> 16 & 0xf000`). Regular files (0x8000) and unknown/DOS entries (0x0000) pass;
+everything else is rejected before extraction. This is the reliable signal for symlinks because
+adm-zip 0.5.x has no `isSymbolicLink` getter and a symlink's payload is just its plain target text,
+so extension-allowlisting alone cannot catch a symlink named `helper.js` or `link.md`. Chose the
+external-attribute approach (works on the central directory, no extraction) over name heuristics.
+Covered by a new self-contained test in `tests/skills-upload-pipeline.test.ts` that builds a zip
+via adm-zip and stamps `attr = 0xa1ed0000` (S_IFLNK|0755) on an entry. Added `attr` to the
+`src/skills/adm-zip.d.ts` ambient ZipEntry typings (was missing, despite existing at runtime).
