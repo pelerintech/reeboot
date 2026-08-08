@@ -7,45 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
-### Added
-
-- **Bundle-lean skill catalog** — the shipped user-facing catalog is pruned from
-  12 to a lean core of 5 (`gmail`, `gcal`, `slack`, `github`, `gdrive`); the 7 cut
-  skills (notion, linear, docker, postgres, sqlite, hubspot, files) are relocated
-  into an independent **remote curated catalog** (operator-configured via
-  `skills.catalog_url`) and installed on demand. `reeboot skills update` now
-  fetches + installs (replacing the count-only stub), skills land with a third
-  `remote` source (`bundled | user | remote`), and the Skills page gains a
-  catalog browse/install section alongside the existing toggle/upload/remove.
-- **Multi-user support for the ree SDK** — a single process can now serve many concurrent, mutually-private customer conversations, each an isolated chat with its own history, created on demand from a client-supplied conversation id.
-- **Observability audit view** — a new turn-grouped Activity page (backed by a `GET /api/events` endpoint) that gives the operator a window into what the agent did over time and why each task succeeded or failed.
-
-### Fixed
-
-- **Extensive ree and subsystem hardening** — a large batch of correctness, security, and budget bug fixes: the ree runtime (abort/reset wedge, token metering, tool-error surfacing, extension hooks), security (SSRF IPv6/loopback blocking, injection-guard and trust-enforcer wired into ree), budget scoping, and the memory-consolidation, knowledge-index, scheduler, and crash-recovery subsystems.
-
----
-
-## [2.7.0] - 2026-07-16
+## [2.7.0] - 2026-08-08
 
 ### Added
 
 - **Ree SDK** — new multi-user chat runtime powered by TanStack AI, enabled via `sdk: "ree"` in config. Supports concurrent isolated conversations with per-chat history, idle eviction, and a dedicated session_search tool scoped to the current chat.
+- **Multi-user support for the ree SDK** — a single process can now serve many concurrent, mutually-private customer conversations, each an isolated chat with its own history, created on demand from a client-supplied conversation id.
 - **Revamped WebChat UI** — new React SPA with streaming message rendering, tool call indicators, connection status, budget settings panel, channel status page, and live log streaming.
+- **WhatsApp web reconnection** — improved QR/phone-number pairing with a reconnection dialog and cleanup when navigating away.
 - **Improved Docker support** — streamlined entrypoint with config file as single source of truth. Docker Compose full-stack deployment with SearXNG, Signal CLI, and optional Caddy reverse proxy.
+- **A2A protocol** — reeboot exposes Agent-to-Agent capability discovery (`GET /a2a/capabilities`) and invocation (`POST /a2a/invoke`) so other agents can call into it.
+- **MCP server (passive hub)** — reeboot can run as an MCP **server** (`/mcp`, Streamable HTTP), advertising a read-only subset of its real capabilities as callable MCP tools to external agents (Claude Code, Codex, Cursor, pi). Invocation is pass-through to the underlying tool; owner-only mutations are blocked for remote turns.
+- **Generic inbound webhooks** — a standalone webhook surface (`POST /webhook/:name`) with HMAC-SHA256 signature verification, configurable prompt mapping, and optional delivery to a channel.
+- **Auth-state tool gating** — tools can declare a minimum auth level (`anonymous`/`customer`/`admin`); ree deployments gate the per-chat tool registry on the conversation's auth tier, raised via `/auth_establish`.
+- **Skill manager UI** — a Skills page for browsing the catalog, toggling enabled skills (default-on), uploading user skills (with zip validation), and installing from a remote curated catalog.
+- **Jina web-reader** — optional self-hosted Jina Reader sidekick adds a `jina_read` tool for extracting readable web content.
+- **Hot memory** — session closes distill a structured summary carried across sessions and injected as ongoing awareness.
+- **Observability audit view** — a turn-grouped Activity page (backed by `GET /api/events`) giving the operator a window into what the agent did and why each task succeeded or failed.
+- **Interactive & structured tool views** — tools can return structured views (data-table, data-chart, plan, form, confirm) rendered by the UI, with channel-aware fallback.
+- **Visual planning** — `/visual-plan` and `/visual-recap` slash commands render inline diagrams (created from a brief/design or completed tasks) directly in WebChat.
 
 ### Changed
 
 - WebSocket streaming now delivers events through the orchestrator's event-forwarding path — no more duplicate text_delta or message_end events.
 - Each WS connection gets a unique session ID for peer routing, allowing multiple concurrent browser tabs.
 - Cancel messages are now sent as a proper bus signal and actually abort the running turn.
+- **Persistent web chat sessions** — web WebSocket messages are routed through the message bus and orchestrator (the same path as WhatsApp/Signal), so the web agent retains full conversation history, session search, and memory across turns.
+- **Pluggable memory backend** — memory moves behind a provider seam (`builtin` | `dreem` | `mem0`), selected by config, with the built-in backend as the default and fallback.
+- **Skills enabled set is default-on** — all bundled skills are enabled unless explicitly disabled.
 
 ### Fixed
 
 - **Ree mode was unreachable in production** — the `sdk` and `ree` config fields were silently stripped by Zod. Both are now declared in the config schema.
 - Pi-specific API endpoints (`/api/contexts`, `/api/tasks`, `/api/contexts/:id/sessions`) now return empty results in ree mode instead of querying pi-only tables.
+- **Extensive ree and subsystem hardening** — a large batch of correctness, security, and budget bug fixes: the ree runtime (abort/reset wedge, token metering, tool-error surfacing, extension hooks), security (SSRF IPv6/loopback blocking, injection-guard and trust-enforcer wired into ree and MCP/webhook), budget scoping, and the memory-consolidation, knowledge-index, scheduler, and crash-recovery subsystems.
+
+### Breaking
+
+- **Memory config is now a discriminated union** — `memory.provider` must be one of `builtin`/`dreem`/`mem0`; per-provider config is typed (@ `builtin` limits/consolidation; `dreem` requires `baseUrl`). Existing `memory.*` configs must be updated.
+- **`memory add` is hot-first** — the `memory` tool writes to working (hot) memory; promotion to long-term is the consolidation job's decision. Behavioral change from the previous add-to-long-term-write.
+- **Hot-memory is provider-owned** — hot memory no longer runs as a standalone extension; injection and session distillation live in the active provider (builtin's `grounding`).
+- **Session transcript cap removed** — `session_shutdown` now forwards the full conversation transcript to the provider instead of the last 200 messages.
+- **zod 4 migration** — config parsing moved to zod 4, changing deep-default semantics for object defaults (`.default({})` → `.prefault`).
+
+### Internal & tooling
+
+- Test-suite stabilization (283 files / 1856 tests green), ci-zod4-fix, docker-integration conveniences, and observability internals — no user-visible behavior.
 
 ---
 

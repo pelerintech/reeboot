@@ -1272,7 +1272,7 @@ export async function buildApp(opts: ServerOptions = {}): Promise<Hono> {
     const mcpOpts = { config: opts.config as any, workspacePath: join(reebotDir, 'contexts', '__mcp__', 'workspace'), externalSourceTools: (opts.config as any)?.security?.injection_guard?.external_source_tools };
     const mcpKey = (opts.config as any)?.mcp?.server?.apiKey;
     const serverName = 'reeboot';
-    const serverVersion = '2.6.0';
+    const serverVersion = '2.7.0';
     const mcpApp = buildMcpApp({
       serverName,
       serverVersion,
