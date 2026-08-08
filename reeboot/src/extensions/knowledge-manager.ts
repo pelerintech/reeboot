@@ -172,6 +172,12 @@ export interface KnowledgeExtensionOptions {
  * Core extension factory. Accepts optional directory overrides for tests.
  * Config and db are passed explicitly by the loader — no phantom pi.getXxx() calls.
  */
+
+/** True when this extension runs inside a restricted/remote runner turn. */
+function isRestrictedTurn(pi: ExtensionAPI): boolean {
+  return (pi as any).context?.restricted === true;
+}
+
 export function makeKnowledgeExtension(
   pi: ExtensionAPI,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -311,9 +317,10 @@ export function makeKnowledgeExtension(
     },
   });
 
-  // ── knowledge_ingest tool ─────────────────────────────────────────────────
-  pi.registerTool({
-    name: 'knowledge_ingest',
+  // ── knowledge_ingest tool — OWNER-ONLY (skipped for restricted/remote turns) ──
+  if (!isRestrictedTurn(pi)) {
+    pi.registerTool({
+      name: 'knowledge_ingest',
     label: 'Knowledge Ingest',
     description:
       'Ingest a document into the knowledge corpus. Extracts text, chunks, embeds, and indexes it. ' +
@@ -352,12 +359,14 @@ export function makeKnowledgeExtension(
       };
     },
   });
+  } // end owner-only knowledge_ingest
 
   // ── Wiki tools (gated by wiki.enabled) ──────────────────────────────────
   if (wikiEnabled) {
-    // knowledge_file — file a query insight as a wiki page
-    pi.registerTool({
-      name: 'knowledge_file',
+    // knowledge_file — OWNER-ONLY (skipped for restricted/remote turns)
+    if (!isRestrictedTurn(pi)) {
+      pi.registerTool({
+        name: 'knowledge_file',
       label: 'Knowledge File',
       description:
         'File a query insight or analysis as a new wiki page. ' +
@@ -405,6 +414,7 @@ export function makeKnowledgeExtension(
         };
       },
     });
+    } // end owner-only knowledge_file
 
     // knowledge_lint — health-check the wiki
     pi.registerTool({

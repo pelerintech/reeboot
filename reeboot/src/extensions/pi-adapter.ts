@@ -28,6 +28,7 @@ import type {
   ExtensionHandler,
   ToolDefinition,
 } from './extension-api.js';
+import { toolRegistry } from './tool-registry.js';
 
 /**
  * PiExtensionAdapter implements reeboot's ExtensionAPI by delegating to
@@ -57,6 +58,8 @@ export class PiExtensionAdapter implements ExtensionAPI {
     if (!this.pi) {
       throw new Error('Cannot registerTool: pi session not available (adapter created without a session)');
     }
+    // Retain the executable in the shared seam so the MCP server can invoke it headless.
+    toolRegistry.register(tool);
     this.pi.registerTool(tool);
   }
 

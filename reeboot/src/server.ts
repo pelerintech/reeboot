@@ -1166,7 +1166,7 @@ export async function buildApp(opts: ServerOptions = {}): Promise<Hono> {
       mkdirSync(workspacePath, { recursive: true });
 
       const runner = createRunner(
-        { id, workspacePath },
+        { id, workspacePath, restricted: true }, // remote turn: owner-only mutations blocked
         { ...(opts.config as any), sdk: (opts.config as any)?.sdk ?? 'pi' }
       );
 
@@ -1225,7 +1225,7 @@ export async function buildApp(opts: ServerOptions = {}): Promise<Hono> {
           const workspacePath = join(reebotDir, 'contexts', '__webhook__', id, 'workspace');
           mkdirSync(workspacePath, { recursive: true });
           const runner = createRunner(
-            { id, workspacePath },
+            { id, workspacePath, restricted: true }, // remote turn: owner-only mutations blocked
             { ...(opts.config as any), sdk: (opts.config as any)?.sdk ?? 'pi' }
           );
           if (!runner) return { ok: false, result: '', error: 'Failed to create runner' };
@@ -1262,6 +1262,25 @@ export async function buildApp(opts: ServerOptions = {}): Promise<Hono> {
     });
     app.route('/webhook', webhookApp);
   } catch { /* webhook registration is optional */ }
+
+  // ── MCP Server (Streamable HTTP) ────────────────────────────────────────
+  // Passive hub: exposes a subset of reeboot's real tools to external MCP clients
+  // as callable tools. Invocation is pass-through to the underlying tool execute.
+  try {
+    const { buildMcpApp, selectReadOnlyTools, toolToMcpTool, mcpAuthOk } = await import('./mcp-server.js');
+    const { toolRegistry } = await import('./extensions/tool-registry.js');
+    const mcpOpts = { config: opts.config as any, workspacePath: join(reebotDir, 'contexts', '__mcp__', 'workspace'), externalSourceTools: (opts.config as any)?.security?.injection_guard?.external_source_tools };
+    const mcpKey = (opts.config as any)?.mcp?.server?.apiKey;
+    const serverName = 'reeboot';
+    const serverVersion = '2.6.0';
+    const mcpApp = buildMcpApp({
+      serverName,
+      serverVersion,
+      getTools: () => selectReadOnlyTools(toolRegistry).map((t) => toolToMcpTool(t, mcpOpts)),
+      authorize: (c) => mcpAuthOk(c, { apiKey: mcpKey }),
+    });
+    app.route('/mcp', mcpApp);
+  } catch (err) { /* MCP registration is optional */ }
 
   // ── Serve built WebChat SPA (catches all non-API routes) ────────────────
   try {

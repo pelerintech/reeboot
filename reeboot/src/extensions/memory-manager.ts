@@ -1179,6 +1179,11 @@ export function isValidCapabilityDef(cap: CapabilityDef): boolean {
  * Core extension factory — accepts an optional `memoriesDir` override for tests.
  * Production code uses the default path (~/.reeboot/memories).
  */
+/** True when this extension runs inside a restricted/remote runner turn. */
+function isRestrictedTurn(pi: ExtensionAPI): boolean {
+  return (pi as any).context?.restricted === true;
+}
+
 export function makeMemoryExtension(
   pi: ExtensionAPI,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1274,8 +1279,9 @@ export function makeMemoryExtension(
     },
   });
 
-  // ── memory tool — gated by memory.enabled ────────────────────────────────
-  if (memoryConfig.enabled) {
+  // ── memory tool — gated by memory.enabled; write tool is OWNER-ONLY ────
+  // (skipped for restricted/remote runners so a remote turn cannot rewrite memory)
+  if (memoryConfig.enabled && !isRestrictedTurn(pi)) {
     pi.registerTool({
       name: 'memory',
       label: 'Memory',

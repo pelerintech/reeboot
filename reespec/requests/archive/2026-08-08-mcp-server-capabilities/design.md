@@ -109,12 +109,40 @@ server, sibling to `/a2a` and `/webhook`. No child-process lifecycle to manage
 request; if a stdio-only client setup is later needed it is a separate packaging
 concern.
 
+### Namespacing (decided)
+
+No new MCP-surface prefix. The exposed tools keep their existing names (`session_search`,
+`knowledge_search`, `jina_read`, etc.), which are already namespaced by their owning
+subsystem (memory capability tools already use `memory::<provider>::<name>`). Adding a
+`reeboot::` prefix would add noise for no benefit to MCP clients.
+
+### Graceful degradation at the edge (decided)
+
+Same idiom as everywhere in reeboot: a backend that is down/unconfigured degrades, it does
+not fail the surface. A read-only substrate tool whose backend is unavailable returns an
+explicit, honest result (e.g. `{ error: "memory provider unavailable" }`) rather than
+erroring the whole MCP connection — mirroring jina→baseline and search→DuckDuckGo fallbacks.
+
+### Capability-selection mechanism (decided)
+
+An **automatic eligibility rule**, not a hand-curated list: a tool is exposed when it is
+(1) headless-safe (no UI / agent-loop / control-plane dependency), (2) in the read-only
+substrate families, and (3) passes the edge trust plies. Implemented as a filter over the
+retained registry; excludes the UI/loop/control-plane families outright. The surfaced:
+excluded mapping in the Surface section is the concrete outcome of this rule.
+
 ## Risks
 
-<!-- Tradeoffs to be filled as branches resolve. -->
+- **Reeboot-as-MCP-server is a new remote attack surface** — mitigated by read-only
+  substrate, loopback default, and required-token for non-loopback.
+- **Pass-through tools assume a session/workspace that may not exist headless** — the
+  registry-retained executables are mostly self-contained, but any that depend on live
+  session state (budget, scheduler, ui) are excluded by the eligibility rule.
+- **MCP protocol/schema fidelity** — reeboot tools use TypeBox; the MCP surface must emit
+  JSON-Schema tool definitions and map results correctly. Watch for drift.
 
-## Open branches
+## Specs to write
 
-- Namespacing on the MCP surface (raw tool names vs a prefix).
-- Graceful degradation at the edge (backend down → degrade vs fail).
-- Capability-selection mechanism (eligibility rule as automatic filter).
+- `mcp-server` — Streamable HTTP `/mcp` route + pass-through registry seam + headless ctx.
+- `mcp-trust` — read-only substrate surface + unified trust model + token gate + edge plies.
+- (Possibly) `mcp-degradation` — backend-down behavior at the edge.

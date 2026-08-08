@@ -107,6 +107,8 @@ export interface ExtensionContext {
   sessionManager?: any;
   /** Model registry for API key resolution and model info */
   modelRegistry?: any;
+  /** True when this turn is a remote/restricted runner (owner-only tool gating). */
+  restricted?: boolean;
 }
 
 // ─── Session Entry Types ───────────────────────────────────────────────────

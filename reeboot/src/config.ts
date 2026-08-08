@@ -61,10 +61,16 @@ const McpServerSchema = z.object({
 
 const McpConfigSchema = z.object({
   servers: z.array(McpServerSchema).default([]),
+  // reeboot-as-MCP-SERVER surface (mcp-server-capabilities): optional apiKey,
+  // required for non-loopback access; loopback is trusted by default.
+  server: z.object({
+    apiKey: z.string().optional(),
+  }).prefault(() => ({})),
 });
 
 export type McpPermissions = z.infer<typeof McpPermissionsSchema>;
 export type McpServerConfig = z.infer<typeof McpServerSchema>;
+export type McpServerSideConfig = z.infer<typeof McpConfigSchema>['server'];
 export type McpConfig = z.infer<typeof McpConfigSchema>;
 
 const A2APeerSchema = z.object({

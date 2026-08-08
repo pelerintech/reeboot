@@ -71,6 +71,12 @@ export interface ContextConfig {
    * Derived from getResumedSessionPath() on startup.
    */
   sessionPath?: string;
+  /**
+   * Optional: mark this runner as a remote/restricted turn (A2A invoke, webhook).
+   * When true, owner-only mutation tools (memory-write, knowledge-corpus writes)
+   * are not registered for this runner — the local assistant keeps full access.
+   */
+  restricted?: boolean;
 }
 
 export interface AgentRunnerFactory {

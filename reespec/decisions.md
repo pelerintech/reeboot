@@ -814,3 +814,53 @@ external-attribute approach (works on the central directory, no extraction) over
 Covered by a new self-contained test in `tests/skills-upload-pipeline.test.ts` that builds a zip
 via adm-zip and stamps `attr = 0xa1ed0000` (S_IFLNK|0755) on an entry. Added `attr` to the
 `src/skills/adm-zip.d.ts` ambient ZipEntry typings (was missing, despite existing at runtime).
+
+### MCP server: fresh Server per request for stateless Streamable HTTP — 2026-08-07 (Request: mcp-server-capabilities)
+
+The Streamable HTTP `/mcp` route uses the MCP SDK's low-level `Server` (not the
+zod-coupled `McpServer`, so tool JSON Schemas come straight from `ToolDefinition.parameters`
+and pass-through is fully controlled). Stateless mode requires a **fresh `Server` per HTTP
+request** — the base `Protocol.connect` throws "Already connected to a transport" if a second
+transport is connected to a shared instance, which surfaced the moment a client sent two
+`tools/call` requests. Each request builds a new `Server`, connects a new
+`WebStandardStreamableHTTPServerTransport`, and handles it. This is the correct stateless
+streamable-HTTP pattern (per-request protocol instance); session resumability would need
+`sessionIdGenerator` + a session→transport map, deferred.
+
+### Owner-only memory/knowledge mutation via a `restricted` runner flag — 2026-08-07 (Request: mcp-server-capabilities)
+
+Rather than a global `minAuthLevel` gate on the `memory`/knowledge tools (which would break
+the local assistant's need to `memory add/remove`), the A2A and webhook server paths create
+their runners with `ContextConfig.restricted: true`, surfaced to extensions via
+`ExtensionContext.restricted` (threaded through the loader's `createExtensionContext`). The
+memory extension skips registering the `memory` write tool and the knowledge extension skips
+`knowledge_ingest`/`knowledge_file` for restricted runners, while recall/search and the local
+assistant keep them. This closes the natural-language A2A "remove X from memory" bypass at the
+runner boundary. Read-only substrate tools (session_search, knowledge_search, web, dreem graph)
+stay available to both. See mcp-trust spec + task 9.
+
+### MCP arg schema-validation ply uses TypeBox Value.Check, not a standalone JSON-Schema validator — 2026-08-07 (Request: mcp-server-capabilities)
+
+Evaluation gap remediation (mcp-trust S4): the MCP `tools/call` pass-through did not validate
+arguments against the tool's schema. Fixed in `src/mcp-server.ts` by rejecting invalid args via
+`Value.Check`/`Value.Errors` from `typebox/value` before invoking `execute()`. Chose TypeBox's
+built-in `Value` API because tool `parameters` are already declared as TypeBox `Type.Object`
+schemas (which are valid JSON Schema), so validation reuses the existing schema source with zero
+new dependencies — no ajv or separate validator was introduced. Invalid args return an
+isError result naming the failing paths; valid args pass through unchanged. Future tools that
+declare non-TypeBox `parameters` (plain JSON-Schema objects) will bypass this validation since
+TypeBox cannot Check a non-TypeBox schema — worth noting if any adapter introduces plain JSON-Schema.
+
+### MCP surface threads the minAuthLevel/applyAuthLevel tier filter (default anonymous) — 2026-08-07 (Request: mcp-server-capabilities)
+
+Evaluation-gap remediation for mcp-trust S4: `selectReadOnlyTools` in `src/mcp-server.ts`
+now takes an optional `authLevel` (default `'anonymous'`) and, after the read-only-substrate
+name filter, applies the same `AUTH_LEVEL_RANK` tier filter that `applyAuthLevel()` uses in
+ree mode — a surfaced substrate tool whose `minAuthLevel` exceeds the connection tier is
+neither advertised in `tools/list` nor callable. This closes the flagged gap (the filter
+previously had no presence in the MCP path). Rejected importing `applyAuthLevel` from the
+ree adapter into `mcp-server.ts` to avoid cross-adapter coupling; the shared
+`AUTH_LEVEL_RANK` from `extension-api.ts` gives identical semantics with a local filter.
+Currently all surfaced substrate tools are anonymous-tier, so this is behavior-neutral for
+the existing toolset — it establishes the seam for a future ree-mode token→tier mapping
+(the design's static-key model maps no MCP token to a tier today). Covered by `tests/mcp/auth-tier.test.ts`.

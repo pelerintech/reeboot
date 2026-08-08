@@ -12,6 +12,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { toolRegistry } from './tool-registry.js';
 import {
   ExtensionAPI,
   ExtensionEventMap,
@@ -70,6 +71,8 @@ export class ReeExtensionAdapter implements ExtensionAPI {
     if (this.chat.disposed) {
       throw new Error('Cannot registerTool: chat is disposed');
     }
+    // Retain the executable in the shared seam so the MCP server can invoke it headless.
+    toolRegistry.register(tool);
     this.chat.tools.set(tool.name, tool);
   }
 

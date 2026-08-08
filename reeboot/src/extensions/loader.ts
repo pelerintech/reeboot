@@ -75,6 +75,7 @@ export function getBundledFactories(context: ContextConfig, config: Config): Ext
     config,
     ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined, notify: () => {} },
     hasUI: false,
+    restricted: context.restricted ?? false,
   });
 
   /**
