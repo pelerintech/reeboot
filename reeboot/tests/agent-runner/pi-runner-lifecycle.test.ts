@@ -41,16 +41,12 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       create: vi.fn(() => ({})),
       open: vi.fn(() => ({})),
     },
-    AuthStorage: {
-      inMemory: vi.fn(() => ({ setRuntimeApiKey: vi.fn() })),
-      create: vi.fn(() => ({})),
-    },
-    ModelRegistry: {
-      create: vi.fn(() => ({})),
-    },
     SettingsManager: {
       inMemory: vi.fn(() => ({})),
       create: vi.fn(() => ({})),
+    },
+    ModelRuntime: {
+      create: vi.fn(() => Promise.resolve({ setRuntimeApiKey: vi.fn().mockResolvedValue(undefined) })),
     },
   };
 });

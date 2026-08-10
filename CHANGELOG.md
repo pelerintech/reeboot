@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.0] - 2026-08-09
+
+### Changed
+
+- **Pi SDK upgraded `0.75.4` → `0.84.1`** — reeboot's embedded pi agent runtime now pins
+  `@earendil-works/pi-coding-agent@0.84.1`, clearing the high/critical Dependabot alerts in the
+  pi runtime's bundled `undici`/`ws`, with `@earendil-works/pi-ai` and
+  `@earendil-works/pi-agent-core` added as matched, pinned direct dependencies.
+- **Custom-URL / local deployments work in pi mode** — reeboot now constructs a resolved `Model`
+  from its own config (`buildModelFromConfig`), plumbing the configured `baseUrl` through to the
+  pi session for custom / OpenAI-compatible providers and closing the previously latent `baseUrl` gap.
+- **`'pi'` auth mode simplified** — the local "use my existing pi" flow now passes `agentDir:
+  ~/.pi/agent` and lets `createAgentSession` default its runtime, dropping reeboot's own
+  `AuthStorage`/`ModelRegistry` construction.
+- **Reconciled reeboot's own directly-vulnerable deps** surfaced in the same audit (`ws`,
+  `hono`, `nanoid` bumped to compatible fixed releases).
+
+### Breaking
+
+- **Own-mode session construction** — `PiAgentRunner` now builds and passes a `model` to
+  `createAgentSession({ model })` in the production `'own'` path; existing deployments that relied
+  on reeboot injecting credentials via the removed `authStorage`/`modelRegistry` options are
+  migrated to the new model-construction surface.
+
 ## [2.7.0] - 2026-08-08
 
 ### Added

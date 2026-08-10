@@ -36,16 +36,12 @@ describe('pi-runner tool output scanning', () => {
         create: vi.fn(() => ({})),
         open: vi.fn(() => ({})),
       },
-      AuthStorage: {
-        create: vi.fn(() => ({})),
-        inMemory: vi.fn(() => ({ setRuntimeApiKey: vi.fn() })),
-      },
-      ModelRegistry: {
-        create: vi.fn(() => ({})),
-      },
       SettingsManager: {
         create: vi.fn(() => ({})),
         inMemory: vi.fn(() => ({})),
+      },
+      ModelRuntime: {
+        create: vi.fn(() => Promise.resolve({ setRuntimeApiKey: vi.fn().mockResolvedValue(undefined) })),
       },
     }));
 

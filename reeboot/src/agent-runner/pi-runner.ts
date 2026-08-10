@@ -29,6 +29,8 @@ import { join } from 'path';
 import { homedir } from 'os';
 import type { AgentRunner, ContextConfig, RunnerEvent, MessageTrust } from './interface.js';
 import type { ResourceLoader } from '@earendil-works/pi-coding-agent';
+import type { Model } from '@earendil-works/pi-ai';
+import { getBuiltinModel, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all';
 import type { Config } from '../config.js';
 import { getLogger } from '../observability/logger.js';
 import { scanContent } from '../security/injection-scanner.js';
@@ -71,6 +73,94 @@ export const PROVIDER_ENV_VARS: Record<string, string> = {
 export function resolveProviderEnvKey(provider: string): string {
   const envVar = PROVIDER_ENV_VARS[provider.toLowerCase()];
   return envVar ? (process.env[envVar] ?? '') : '';
+}
+
+// ─── buildModelFromConfig ───────────────────────────────────────────────────
+// Owns the provider→model construction matrix for the 'own' auth mode. Kept in
+// one narrow module so pi-ai construction stays the single maintenance point.
+
+const BUILTIN_PROVIDERS = new Set<string>(getBuiltinProviders());
+
+/** A local/OpenAI-compatible provider id that pi-ai has no catalog entry for. */
+function normalizeProvider(provider: string): string {
+  const p = (provider ?? '').trim().toLowerCase();
+  return p || 'custom';
+}
+
+function buildOpenAICompatibleModel(provider: string, id: string, baseUrl: string): Model<any> {
+  return {
+    id: id || 'local-model',
+    name: id || 'local-model',
+    api: 'openai-completions',
+    provider,
+    baseUrl: baseUrl || 'http://localhost:11434/v1',
+    reasoning: false,
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 4096,
+  };
+}
+
+export interface ModelBuildConfig {
+  provider: string;
+  id: string;
+  apiKey?: string;
+  baseUrl?: string;
+  api?: string;
+}
+
+export interface ModelBuildResult {
+  /** The resolved Model carrying provider/id/baseUrl (closes the baseUrl gap). */
+  model: Model<any>;
+  /** The resolved API key (config.apiKey first, then the provider env var fallback). */
+  apiKey: string;
+}
+
+/**
+ * Resolve a pi Model from reeboot's model config.
+ *
+ * - Standard cloud providers (anthropic, openai, google, groq, xai, ...) use
+ *   a real pi-ai catalog Model, overridden with reeboot's baseUrl when set.
+ * - Custom / local / OpenAI-compatible providers (ollama, lmstudio, llamacpp,
+ *   custom, or anything with its own baseUrl) construct an OpenAI-compatible
+ *   Model that carries the configured baseUrl. The API key is optional for
+ *   these (local servers are typically keyless).
+ *
+ * Key resolution mirrors the previous behavior: config apiKey wins, otherwise
+ * the provider's env var via `resolveProviderEnvKey`. The resolved key is
+ * returned alongside so the caller can apply it to the request/auth path.
+ */
+export function buildModelFromConfig(cfg: ModelBuildConfig): ModelBuildResult {
+  const provider = normalizeProvider(cfg.provider);
+  const apiKey = cfg.apiKey
+    ? cfg.apiKey
+    : cfg.provider
+      ? resolveProviderEnvKey(cfg.provider)
+      : '';
+  const baseUrl = cfg.baseUrl ?? '';
+
+  let model: Model<any>;
+  if (cfg.provider && BUILTIN_PROVIDERS.has(provider)) {
+    let builtin: Model<any> | undefined;
+    try {
+      builtin = getBuiltinModel(provider as any, cfg.id as any);
+    } catch {
+      builtin = undefined;
+    }
+    // Only use the catalog model when it resolves the *exact* configured id;
+    // otherwise fall through to an OpenAI-compatible Model that preserves the
+    // user's provider/id/baseUrl instead of silently swapping the model.
+    if (builtin && (!cfg.id || builtin.id === cfg.id)) {
+      model = baseUrl && baseUrl !== builtin.baseUrl ? { ...builtin, baseUrl } : builtin;
+    } else {
+      model = buildOpenAICompatibleModel(provider, cfg.id, baseUrl);
+    }
+  } else {
+    model = buildOpenAICompatibleModel(provider, cfg.id, baseUrl);
+  }
+
+  return { model, apiKey };
 }
 
 // ─── extractTextFromResult ───────────────────────────────────────────────────
@@ -321,11 +411,9 @@ export class PiAgentRunner implements AgentRunner {
     const {
       createAgentSession,
       SessionManager,
-      AuthStorage,
-      ModelRegistry,
       SettingsManager,
+      ModelRuntime,
     } = await import('@earendil-works/pi-coding-agent');
-    void AuthStorage; // used only in authMode="own"
 
     const authMode = (this.config?.agent?.model as any)?.authMode ?? 'own';
     const piAgentDir = join(homedir(), '.pi', 'agent');
@@ -344,51 +432,51 @@ export class PiAgentRunner implements AgentRunner {
     };
 
     if (authMode === 'pi') {
-      const settingsManager = SettingsManager.create(this.context.workspacePath, piAgentDir);
-      const authStorage = AuthStorage.create(join(piAgentDir, 'auth.json'));
-      const modelRegistry = ModelRegistry.create(authStorage, join(piAgentDir, 'models.json'));
-
+      // Local convenience: ride an already-configured ~/.pi/agent install. We no
+      // longer construct AuthStorage/ModelRegistry/SettingsManager ourselves —
+      // createAgentSession defaults its runtime from agentDir (auth.json/models.json).
       sessionOpts = {
         cwd: this.context.workspacePath,
+        agentDir: piAgentDir,
         resourceLoader: this.loader,
         sessionManager: buildSessionManager(),
-        settingsManager,
-        authStorage,
-        modelRegistry,
       };
     } else {
-      // authMode="own": inject provider/model/key from reeboot's config
-      const model = this.config?.agent?.model as any;
-      const provider: string = model?.provider ?? '';
-      const modelId: string = model?.id ?? '';
-      const configApiKey: string = model?.apiKey ?? '';
+      // authMode="own": inject provider/model/key/baseUrl from reeboot's config.
+      const modelCfg = (this.config?.agent?.model as any) ?? {};
+      const { model, apiKey } = buildModelFromConfig({
+        provider: modelCfg.provider ?? '',
+        id: modelCfg.id ?? '',
+        apiKey: modelCfg.apiKey ?? '',
+        baseUrl: modelCfg.baseUrl ?? '',
+        api: modelCfg.api,
+      });
 
-      // Key resolution: config.json → env var fallback
-      let resolvedKey = configApiKey;
-      if (!resolvedKey && provider) {
-        resolvedKey = resolveProviderEnvKey(provider);
+      // Bind a ModelRuntime to reeboot's own credential store and apply the
+      // resolved key (the new-way replacement for authStorage.setRuntimeApiKey).
+      const reebootAgentDir = join(homedir(), '.reeboot', 'agent');
+      const modelRuntime = await ModelRuntime.create({
+        authPath: join(reebootAgentDir, 'auth.json'),
+        modelsPath: join(reebootAgentDir, 'models.json'),
+        refreshOnCreate: false,
+      });
+      const provider = (modelCfg.provider ?? '').toLowerCase();
+      if (provider && apiKey) {
+        await modelRuntime.setRuntimeApiKey(provider, apiKey);
       }
 
       const settingsManager = SettingsManager.inMemory({
-        defaultProvider: provider,
-        defaultModel: modelId,
+        defaultProvider: modelCfg.provider ?? '',
+        defaultModel: modelCfg.id ?? '',
       });
-
-      const authStorage = AuthStorage.inMemory();
-      if (resolvedKey && provider) {
-        authStorage.setRuntimeApiKey(provider, resolvedKey);
-      }
-
-      const reebotAgentDir = join(homedir(), '.reeboot', 'agent');
-      const modelRegistry = ModelRegistry.create(authStorage, join(reebotAgentDir, 'models.json'));
 
       sessionOpts = {
         cwd: this.context.workspacePath,
         resourceLoader: this.loader,
         sessionManager: buildSessionManager(),
         settingsManager,
-        authStorage,
-        modelRegistry,
+        model,
+        modelRuntime,
       };
     }
 
