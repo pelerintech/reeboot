@@ -864,3 +864,37 @@ ree adapter into `mcp-server.ts` to avoid cross-adapter coupling; the shared
 Currently all surfaced substrate tools are anonymous-tier, so this is behavior-neutral for
 the existing toolset — it establishes the seam for a future ree-mode token→tier mapping
 (the design's static-key model maps no MCP token to a tier today). Covered by `tests/mcp/auth-tier.test.ts`.
+
+### pi 0.75.4 → 0.84.1 migration: own-mode model construction, new-way auth, baseUrl closure — 2026-08-08 (Request: pi-sdk-084-upgrade)
+
+Reeboot migrated from pi `0.75.4` (exact pin) to `0.84.1`, adding `@earendil-works/pi-ai` and
+`@earendil-works/pi-agent-core` as exact-pinned direct dependencies. The one SDK surface that
+changed (0.80.8) is session auth/model construction: `createAgentSession` dropped
+`authStorage`/`modelRegistry` in favour of a `model` + `modelRuntime`. Reeboot adopted the
+"new way": a narrow `buildModelFromConfig` helper (in `src/agent-runner/pi-runner.ts`) owns the
+provider→model matrix — built-in cloud providers use pi-ai's catalog Model (with a configured
+`baseUrl` overridden), and custom/local/OpenAI-compatible providers (`ollama`/`lmstudio`/
+`custom`/baseUrl) construct an OpenAI-compatible Model carrying the `baseUrl`. This closes the
+latent `baseUrl` gap (previously declared-but-dropped). Auth mode semantics are preserved:
+`authMode === 'own'` (default/production) injects reeboot's own provider/model/key/baseUrl via a
+`ModelRuntime` bound to `~/.reeboot/agent` (`setRuntimeApiKey(provider, resolvedKey)`, config key
+first then `resolveProviderEnvKey` env fallback) plus the resolved `model`; `authMode === 'pi'`
+(local convenience) now just passes `agentDir: ~/.pi/agent` and lets `createAgentSession` default
+its runtime — it no longer constructs `AuthStorage`/`ModelRegistry`/`SettingsManager`. The
+extension bridge, event mapping, `restricted` gating, and `generateSummary`/
+`loadProjectContextFiles` consumers required no changes against `0.84` (as discovery predicted).
+The obsolete `pi-registry-factory.test.ts` (asserting the removed `ModelRegistry.create` factory)
+was deleted, `pi-version.test.ts` was bumped to `0.84.1`, and all 24 runner + extension tests were
+retargeted from `AuthStorage`/`ModelRegistry` stubs to `ModelRuntime`.
+
+**Residual (documented, not silently left):** for custom/local providers to be *streamed at
+runtime* the `Model` must be backed by a provider registered on the `ModelRuntime`; reeboot
+currently builds the Model carrying `baseUrl` and applies the key via `setRuntimeApiKey`, but does
+not yet call `modelRuntime.registerProvider(...)` for non-builtin providers. Standard cloud
+providers (the common production case) fully work via the builtin provider + runtime key. Wiring
+custom/local streaming through `registerProvider` (with full `ProviderConfigInput` model metadata)
+is tracked as a follow-up. Reeboot's own directly-vulnerable direct deps in the same audit were
+upgraded compatibly (`ws ^8.20.1→^8.21.3`, `hono ^4.12.0→^4.13.1`, `nanoid ^5.0.0→^5.1.16`);
+`adm-zip ^0.5.16` (needs major `0.6.0`) is recorded in the design's residual note. Remaining
+high/critical audit items (`protobufjs` critical via baileys, `axios`, `sharp`) are transitive-only
+and out of scope. See request artifacts.
