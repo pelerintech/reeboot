@@ -183,6 +183,9 @@ export class PiAgentRunner implements AgentRunner {
   private abortController: AbortController | null = null;
   private disposed = false;
   private _currentTrust: MessageTrust = 'owner';
+  // Captures per-call tool args from tool_execution_start so the tool_call_end
+  // event can report the real input (pi's end event carries no args).
+  private _pendingToolArgs = new Map<string, unknown>();
 
   // Lazily created on first prompt
   private _session: import('@earendil-works/pi-coding-agent').AgentSession | null = null;
@@ -212,6 +215,13 @@ export class PiAgentRunner implements AgentRunner {
       // Subscribe before prompting so we don't miss early events
       const unsubscribe = session.subscribe((event) => {
         if (signal.aborted) return;
+
+        // Capture the tool args at start so they can be attached to the
+        // tool_call_end event at finish (pi's tool_execution_end event does
+        // not carry args, but the start event does).
+        if (event.type === 'tool_execution_start') {
+          this._pendingToolArgs.set(event.toolCallId, event.args);
+        }
 
         if (event.type === 'message_update') {
           const ae = event.assistantMessageEvent;
@@ -272,7 +282,14 @@ export class PiAgentRunner implements AgentRunner {
             result: toolResult,
             view: toolView,
             isError: event.isError,
+            // The real args the tool received, so the journal / WS UI report
+            // the truthful input instead of {} (captured from
+            // tool_execution_start, since the end event carries none).
+            input: this._pendingToolArgs.get(event.toolCallId),
+            tool_input: this._pendingToolArgs.get(event.toolCallId),
+            tool_output: toolResult,
           });
+          this._pendingToolArgs.delete(event.toolCallId);
         } else if (event.type === 'agent_end') {
           // Extract usage from the last assistant message if available
           let inputTokens = 0;

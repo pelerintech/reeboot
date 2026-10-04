@@ -4,8 +4,8 @@
 
 export type RunnerEvent =
   | { type: 'text_delta'; delta: string }
-  | { type: 'tool_call_start'; toolCallId: string; toolName: string; args: unknown }
-  | { type: 'tool_call_end'; toolCallId: string; toolName: string; result: unknown; isError: boolean; view?: Record<string, unknown> }
+  | { type: 'tool_call_start'; toolCallId: string; toolName: string; args: unknown; input?: unknown }
+  | { type: 'tool_call_end'; toolCallId: string; toolName: string; result: unknown; isError: boolean; view?: Record<string, unknown>; input?: unknown; tool_input?: unknown; tool_output?: unknown }
   | { type: 'message_end'; runId: string; usage: { input: number; output: number } }
   | { type: 'error'; message: string };
 

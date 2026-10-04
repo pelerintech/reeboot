@@ -99,6 +99,24 @@ describe('pi-runner event mapping (events)', () => {
     expect(end).toMatchObject({ toolCallId: 'c1', toolName: 'read', isError: false });
   });
 
+  it('attaches the real tool args to the tool_call_end event (not {})', async () => {
+    const runner = makeRunner();
+    const events: any[] = [];
+    const done = runner.prompt('hi', (e) => events.push(e));
+    await new Promise(r => setTimeout(r, 10));
+    // pi's tool_execution_end event carries no args; the args come from start.
+    emit({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'read', args: { path: 'x' } });
+    emit({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'read', result: 'ok', isError: false });
+    emit({ type: 'agent_end', messages: [] });
+    resolvePrompt();
+    await done;
+
+    const end = events.find((e) => e.type === 'tool_call_end');
+    expect(end?.input).toEqual({ path: 'x' });
+    expect(end?.tool_input).toEqual({ path: 'x' });
+    expect(end?.tool_output).toBe('ok');
+  });
+
   it('maps agent_end to a message_end RunnerEvent with a runId', async () => {
     const runner = makeRunner();
     const events: any[] = [];

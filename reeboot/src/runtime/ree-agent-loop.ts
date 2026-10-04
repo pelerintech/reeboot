@@ -299,6 +299,12 @@ export async function runReeAgentLoop(
             result: toolContent,
             view: toolView as Record<string, unknown> | undefined,
             isError,
+            // The real args the tool received, so the journal / WS UI report
+            // the truthful input instead of {} (tool args are not known at
+            // TOOL_CALL_START, only once the call completes).
+            input: parsedArgs,
+            tool_input: parsedArgs,
+            tool_output: toolContent,
           });
 
           toolCalls.delete(toolCallId);

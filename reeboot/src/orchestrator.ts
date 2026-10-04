@@ -412,15 +412,22 @@ export class Orchestrator {
         }
         if (event.type === 'tool_call_end' && this._journal) {
           stepSeq++;
+          // The tool_call_end event now carries the real input/output (via
+          // `input`/`output` or the journal-friendly `tool_input`/`tool_output`
+          // aliases). Previously only `tool_input`/`tool_output` were read, which
+          // the event did not carry, so every journal row recorded {} / null even
+          // though the tool ran with real args.
+          const journalInput = (event as any).input ?? (event as any).tool_input;
+          const journalOutput = (event as any).output ?? (event as any).tool_output ?? (event as any).result;
           this._journal.appendStep(turnId, {
             seq: stepSeq,
             toolName: event.tool_name ?? event.toolName ?? 'unknown',
-            toolInput: typeof event.tool_input === 'string'
-              ? event.tool_input
-              : JSON.stringify(event.tool_input ?? {}),
-            toolOutput: typeof event.tool_output === 'string'
-              ? event.tool_output
-              : JSON.stringify(event.tool_output ?? null),
+            toolInput: typeof journalInput === 'string'
+              ? journalInput
+              : JSON.stringify(journalInput ?? {}),
+            toolOutput: typeof journalOutput === 'string'
+              ? journalOutput
+              : JSON.stringify(journalOutput ?? null),
             isError: !!(event.is_error ?? event.isError),
           });
         }

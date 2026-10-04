@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.2] - 2026-10-04
+
+### Fixed
+
+- **Tool args reported truthfully in the journal / WS tool-call events (ree + pi)** — the
+  `tool_call_end` RunnerEvent now carries the real `input` the tool received (plus
+  journal-friendly `tool_input`/`tool_output` aliases), and the orchestrator's journal reads them.
+  Previously the event had no input field, so `turn_journal_steps.tool_input` and the WS
+  `tool_call_start`/`tool_call_end` events reported `{}` / `null` even though the tool executed
+  with the real arguments — which made a working collection flow look like the args were dropped.
+  Tool execution, the SDK, and the provider path are unchanged; this is purely the reporting
+  layer becoming truthful.
+
+### Internal & tooling
+
+- Added `tests/runtime/ree-tool-input-reporting.test.ts` (ree path) and a pi-runner event
+  assertion verifying the `tool_call_end` event carries the real tool args. Full suite
+  324 files / 2036 tests green; build + `tsc --noEmit` clean.
+
+---
+
 ## [2.9.1] - 2026-10-04
 
 ### Internal & tooling
