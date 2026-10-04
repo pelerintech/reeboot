@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.1] - 2026-10-04
+
+### Internal & tooling
+
+- **Tool-arg delivery shape matrix** — added `tests/runtime/ree-shape-matrix.test.ts`, a
+  provider-agnostic regression guard that drives the real ree `runReeAgentLoop` + the reeboot
+  OpenAI-compatible adapter through every realistic wire shape a model can emit tool-call
+  arguments (multi-delta streaming, single-shot, typed/nested/array values, optional-param
+  strict:false, `additionalProperties:false`, no-arg tools). It asserts the tool's `execute`
+  always receives the correct args, proving the SDK-normalized path is model-agnostic so a future
+  fix can't repair one model while breaking another. No behavior change.
+
+---
+
 ## [2.9.0] - 2026-10-04
 
 ### Changed
