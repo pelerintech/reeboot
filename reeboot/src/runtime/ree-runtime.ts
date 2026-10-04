@@ -22,7 +22,7 @@ import {
   pruneHistory,
 } from './ree-history.js';
 import { openaiText, createOpenaiChat } from '@tanstack/ai-openai';
-import { openaiCompatibleText } from '@tanstack/ai-openai/compatible';
+import { createReebootOpenAICompatibleText } from './ree-openai-compatible-adapter.js';
 import { anthropicText } from '@tanstack/ai-anthropic';
 import { groqText } from '@tanstack/ai-groq';
 import { resolveProviderEnvKey } from '../agent-runner/pi-runner.js';
@@ -453,7 +453,7 @@ export class ReeRuntime {
       case 'ollama':
       case 'lmstudio':
       case 'custom': {
-        return openaiCompatibleText(modelId, {
+        return createReebootOpenAICompatibleText(modelId, {
           baseURL: modelConfig.baseUrl ?? 'http://localhost:11434/v1',
           apiKey,
           ...extraOpts,

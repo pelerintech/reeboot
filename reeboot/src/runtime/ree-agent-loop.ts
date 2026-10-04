@@ -52,6 +52,9 @@ export function toTanStackTool(
     name: reeTool.name,
     description: reeTool.description,
     inputSchema: reeTool.parameters as any,
+    // Carry the original reeboot schema so the ree strict-emission policy can
+    // decide per-tool whether OpenAI strict mode is safe (see ree-tool-emission.ts).
+    metadata: { reebotSchema: reeTool.parameters as any },
   }).server(async (args: any, toolContext?: { toolCallId?: string; abortSignal?: AbortSignal; emitCustomEvent?: (name: string, value: Record<string, any>) => void }) => {
     // Bridge TanStack's (args, context) to reeboot's 5-param execute
     const toolCallId = toolContext?.toolCallId ?? 'unknown';
@@ -247,8 +250,12 @@ export async function runReeAgentLoop(
           const rawContent = (chunk as any).content;
           const entry = toolCalls.get(toolCallId);
 
-          // Derive isError from TanStack's chunk state (set when tool throws)
-          const isError = (chunk as any).state === 'output-error';
+          // Derive isError from TanStack's chunk state (set when tool throws).
+          // In @tanstack/ai 0.64 the tool-result state moved into
+          // metadata.tanstack.state, so read it there with a top-level fallback.
+          const isError =
+            (chunk as any)?.state === 'output-error' ||
+            (chunk as any)?.metadata?.tanstack?.state === 'output-error';
 
           // Parse args for the input field
           let parsedArgs: Record<string, unknown> = {};

@@ -86,6 +86,9 @@ describe('ree tool-schema layer under zod 4', () => {
     expect(params).toBeTypeOf('object');
     expect(params.type).toBe('object');
     expect(params.properties?.city).toBeDefined();
-    expect(params.properties?.units?.enum).toEqual(['c', 'f']);
+    // The field has a default so it is effectively optional; TanStack 0.64
+    // strict-mode coercion null-widens the enum union. Update the guard to the
+    // new behavior (adds `null`).
+    expect(params.properties?.units?.enum).toEqual(['c', 'f', null]);
   });
 });

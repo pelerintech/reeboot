@@ -898,3 +898,45 @@ upgraded compatibly (`ws ^8.20.1→^8.21.3`, `hono ^4.12.0→^4.13.1`, `nanoid ^
 `adm-zip ^0.5.16` (needs major `0.6.0`) is recorded in the design's residual note. Remaining
 high/critical audit items (`protobufjs` critical via baileys, `axios`, `sharp`) are transitive-only
 and out of scope. See request artifacts.
+
+### Tools are SDK-agnostic; SDK-specific strict handling lives at the integration layer — 2026-10-04 (Discovery: pi-102-upgrade)
+
+The strict-mode blocker is NOT reeboot's tool schemas. Reeboot's bundled tools (`session_search`, `delegate`) declare genuinely-optional params (`limit`, `peer`, `timeout`) correctly. The defect is that reeboot's **ree/TanStack provider layer** over-normalizes those schemas: `@tanstack/openai-base`'s `chat-completions-tool-converter` force-moves every optional prop into `required`, `null`-widens its type union, sets `additionalProperties:false`, and emits `strict:true` — which OpenRouter/OpenAI rejects with a 400 on optional-param tools. Empirically reproduced by running the agent (ree mode, incohub config) through a logging proxy to a live OpenAI-compatible backend. The FIX therefore belongs in reeboot's **ree tool-emission integration adapter** (`src/runtime/ree-agent-loop.ts`, `toTanStackTool`), NOT in the shared `session_search`/`delegate` schemas. Reason: the **same** TypeBox schema must keep working across SDKs, and forcing optionals into `required` would fix ree but break pi (pi-ai already emits these tools correctly as `strict:false` with optionals respected). Rule: tools stay SDK-agnostic; SDK-specific strict/constrained-sampling behavior is the adapter's responsibility.
+
+### pi vs ree emit the same reeboot tool differently for strict mode — 2026-10-04 (Discovery: pi-102-upgrade)
+
+Empirically confirmed by running the agent through a logging proxy against a live OpenAI-compatible backend, with the same incohub tool surface (`session_search`, `delegate`, `core.delegate:false`). For the SAME reeboot TypeBox tool schema, the two SDK paths diverge: ree/TanStack emits `session_search` as `strict:true` with `required:[query,limit]` (optional `limit` coerced in, type null-widened) via `/v1/chat/completions`; pi/pi-ai emits the same tool as `strict:false` with `required:[query]` (optionals respected) via `/v1/responses`. Conclusion: pi mode is already correct; the bug is uniquely the ree/TanStack path. This is why a shared-schema "fix" is wrong and why any fix must be isolated to the ree adapter. Note the two modes also use different endpoints (`chat/completions` for ree vs `responses` for pi's openai builtin), so conformance must be checked per-path, not assumed.
+
+### pi 1.0.2 and latest TanStack must be bumped as coordinated groups — 2026-10-04 (Discovery: pi-102-upgrade)
+
+Two dependency-group migrations, each verified at the SDK surface level. (1) **pi runtime**: `@earendil-works/pi-coding-agent`, `pi-ai`, `pi-agent-core` 0.84.1 → 1.0.2 (exact pins). Verified: `createAgentSession` options, `SessionManager`/`SettingsManager`/`ModelRuntime` statics, the `AgentSession` event shapes (`message_update`→`assistantMessageEvent`, `tool_execution_start/end`, `agent_end`→messages), `bindExtensions({shutdownHandler})`, the private `_extensionRunner.emit(session_shutdown)` and `sessionManager.getSessionFile()` reaches, and pi-ai's `getBuiltinModel`/`getBuiltinProviders` + `Model` (baseUrl/id/name) all survive. Reeboot's own tool/extension set does NOT silently gain pi 0.99+'s new built-in extensions (codemode/mcp/tool-search/llama.cpp) because reeboot constructs its own `DefaultResourceLoader` and passes only its own `extensionFactories`. (2) **TanStack**: `@tanstack/ai` 0.39.1→0.64.0, `ai-openai` 0.15.10→0.26.0, `ai-anthropic` 0.16.0→0.19.4, `ai-groq` 0.5.0→0.8.2, `ai-mcp` 0.2.2→0.7.0. Verified: `chat()`, `toolDefinition()`, `maxIterations()`, `ModelMessage`, the `chat()` options reeboot uses (adapter/systemPrompts/mcp/abortController), the provider texts (`openaiCompatibleText`/`createOpenaiChat`/`anthropicText`/`groqText`), and `createMCPClient` all survive. All provider packages peer-depend on `@tanstack/ai ^0.64.0`, so the TanStack group MUST bump together. **Update to the latest TanStack does NOT fix the strict-mode blocker** — `openai-base@0.12.2` has the identical coercion — so the integration-layer strict fix (see the first decision) remains independently required.
+
+### Strict-emission policy lives in a reeboot-owned adapter override — 2026-10-04 (Execute: pi-102-upgrade)
+
+The ree strict-mode fix is implemented as a reeboot-owned adapter subclass that extends TanStack's
+`OpenAICompatibleChatAdapter` (a new `ReebootOpenAICompatibleAdapter` in
+`src/runtime/ree-openai-compatible-adapter.ts`, factory `createReebootOpenAICompatibleText`),
+replacing the direct `openaiCompatibleText` in `ReeRuntime.createTanStackClient()`'s
+custom/ollama/lmstudio branch. The subclass overrides the protected `mapOptionsToRequest` to apply
+a **per-tool** strict policy decided from the original reeboot schema (carried onto the emitted
+tool via `metadata.reebotSchema` by `toTanStackTool` in `ree-agent-loop.ts`):
+`src/runtime/ree-tool-emission.ts`'s `isSchemaStrictCompatible` returns true only when every
+declared property appears in `required`; optional-param tools (and open/unknown schemas) are
+emitted `strict:false` with their original schema passed through, while all-required tools stay
+`strict:true`. This isolates the SDK-specific behavior entirely at the integration layer — the
+shared `session_search`/`delegate` TypeBox schemas are never mutated, so pi mode (which already
+emits these correctly) is untouched.
+
+### TanStack 0.64 moved `output-error` into metadata.tanstack.state — 2026-10-04 (Execute: pi-102-upgrade)
+
+Bumping `@tanstack/ai` to 0.64.0 changed the shape of the `TOOL_CALL_RESULT`/tool-result chunk for
+failing tools: the `state: "output-error"` field moved from the top-level chunk into
+`chunk.metadata.tanstack.state` (via `withTanstackMetadata`). `ree-agent-loop.ts` previously read
+only the top-level `chunk.state`, so ree-runner tests that assert `isError` on
+`tool_call_end`/`tool_result` for failing tools broke. The fix reads both locations:
+```js
+const isError =
+  (chunk as any)?.state === 'output-error' ||
+  (chunk as any)?.metadata?.tanstack?.state === 'output-error';
+```
+This is a TanStack-bump behavior drift, not a regression introduced by the strict-emission adapter.

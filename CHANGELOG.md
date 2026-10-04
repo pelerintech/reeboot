@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.0] - 2026-10-04
+
+### Changed
+
+- **Pi SDK upgraded `0.84.1` → `1.0.2`** — reeboot's embedded pi runtime now pins
+  `@earendil-works/pi-coding-agent@1.0.2`, with `@earendil-works/pi-ai` and
+  `@earendil-works/pi-agent-core` matched to the same `1.0.2`. Confirmed the pi-mode session/event
+  surface (`assistantMessageEvent`, `tool_execution_start/end`, `agent_end`→messages), the
+  `ModelRuntime`/`SessionManager`/`SettingsManager` statics, and `bindExtensions({shutdownHandler})`
+  all survive unchanged, and that reeboot's own tool set does not silently gain pi 0.99+'s new
+  built-in extensions (codemode/mcp/tool-search/llama.cpp).
+- **TanStack provider group upgraded to latest** — `@tanstack/ai` → `0.64.0` with `ai-openai`
+  `0.26.0`, `ai-anthropic` `0.19.4`, `ai-groq` `0.8.2`, `ai-mcp` `0.7.0` (peer-locked group).
+  Reeboot's `chat()`/`toolDefinition()`/`maxIterations()` usage, the `chat()` option surface
+  (adapter/systemPrompts/mcp/abortController), the provider texts, and `createMCPClient` all survive.
+- **Zod-4 schema serialization guard updated** — the defaulted-optional `enum` in a zod-defined
+  server tool is now null-widened by the upgraded TanStack tool converter; the
+  `zod4-ree-toolschema` guard was updated to the new (correct) behavior.
+
+### Fixed
+
+- **Ree mode `400` on optional-param tools (strict-mode blocker)** — incohub-customer
+  `register-company` collection turns, and any ree-mode turn that emitted `session_search` /
+  `delegate` (tools with genuinely-optional params), were rejected by OpenAI-compatible
+  providers with a `400` because the TanStack tool converter force-moved every optional prop into
+  `required`, null-widened its type union, and emitted `strict:true`. Fixed at the integration
+  layer via a reeboot-owned adapter (`ReebootOpenAICompatibleAdapter`) that decides strict **per
+  tool** from the original reeboot schema: optional-param tools emit `strict:false` with their
+  original schema, while all-required tools stay `strict:true`. The shared tool schemas are never
+  mutated, so pi mode (which already emitted these tools correctly) is unaffected.
+- **TanStack 0.64 error-state shape drift** — `TOOL_CALL_RESULT`/tool-result chunks for failing
+  tools moved `output-error` from the top-level chunk into `metadata.tanstack.state`; reeboot now
+  reads both locations, so failing-tool `isError` is surfaced correctly in ree mode.
+
+### Internal & tooling
+
+- New dedicated tests for strict-mode emission, shared-schema preservation, pi strict emission,
+  pi-mode event mapping, pi-mode toolset containment, and pi version pinning, plus the updated
+  zod-4 schema guard. Full suite 322 files / 2026 tests green, `npm run build` and `tsc --noEmit`
+  clean. Ree-mode strict emission and turn completion verified end-to-end against a live
+  OpenAI-compatible backend through a logging proxy.
+
+---
+
 ## [2.8.0] - 2026-08-09
 
 ### Changed
